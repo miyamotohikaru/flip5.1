@@ -36,7 +36,7 @@ function clock(hour: number): string {
 function terrainPanel(hit: Extract<ProbeHit, { kind: "terrain" }>, compact: boolean): FormulaPanel {
   const t = hit.terms;
   const here = compact
-    ? `x ${num(hit.x, 1)} z ${num(hit.z, 1)} h ${num(hit.y, 1)} m ／ ${num(hit.dist, 0)} m 先 ／ 傾き ${num(hit.slopeDeg, 0)}°`
+    ? `x ${num(hit.x, 1)} z ${num(hit.z, 1)} h ${num(hit.y, 1)} m／${num(hit.dist, 0)} m 先／傾き ${num(hit.slopeDeg, 0)}°`
     : `ここ x = ${num(hit.x, 1)}  z = ${num(hit.z, 1)}  h = ${num(hit.y, 2)} m ／ 距離 ${num(hit.dist, 0)} m ／ 傾き ${num(hit.slopeDeg, 0)}°`;
   const row = (name: string, v: number, def: string) =>
     compact ? `${pad(name, 9)}= ${num(v, 2, 6)}  ${def}` : `  ${pad(name, 10)}= ${num(v, 2, 7)}   ${def}`;
@@ -72,7 +72,7 @@ function terrainPanel(hit: Extract<ProbeHit, { kind: "terrain" }>, compact: bool
 function lakePanel(hit: Extract<ProbeHit, { kind: "lake" }>, compact: boolean): FormulaPanel {
   const w = Math.min(1.5, Math.max(0.15, hit.windSpeed / 8));
   const here = compact
-    ? `x ${num(hit.x, 1)} z ${num(hit.z, 1)} 水面 y 0 ／ 水深 ${num(hit.depth, 1)} m ／ ${num(hit.dist, 0)} m 先`
+    ? `x ${num(hit.x, 1)} z ${num(hit.z, 1)} 水面 y 0／水深 ${num(hit.depth, 1)} m／${num(hit.dist, 0)} m 先`
     : `ここ x = ${num(hit.x, 1)}  z = ${num(hit.z, 1)}  水面 y = 0 ／ 水深 ${num(hit.depth, 1)} m ／ 距離 ${num(hit.dist, 0)} m`;
   const wd = `(${num(hit.windDir.x, 2)}, ${num(hit.windDir.y, 2)})`;
   const lines = compact
@@ -103,7 +103,7 @@ function lakePanel(hit: Extract<ProbeHit, { kind: "lake" }>, compact: boolean): 
 function skyPanel(hit: Extract<ProbeHit, { kind: "sky" }>, compact: boolean): FormulaPanel {
   const sign = (v: number) => (v >= 0 ? "+" : MINUS) + Math.abs(v).toFixed(1);
   const here = compact
-    ? `仰角 ${sign(hit.elevDeg)}°  方位 ${num(hit.azDeg, 0)}° ／ 太陽 ${sign(hit.sunElevDeg)}° ／ ${clock(hit.hour)}`
+    ? `仰角 ${sign(hit.elevDeg)}° 方位 ${num(hit.azDeg, 0)}°／太陽 ${sign(hit.sunElevDeg)}°／${clock(hit.hour)}`
     : `視線 仰角 ${sign(hit.elevDeg)}°  方位 ${num(hit.azDeg, 0)}° ／ 太陽 高度 ${sign(hit.sunElevDeg)}° ／ ${clock(hit.hour)}`;
   const lines = compact
     ? [
