@@ -95,11 +95,14 @@ export class Post {
    * noflare / nosharp、表示: aoview / godview / maskview / bloomview / edgesview / weightsview
    */
   dbg: Set<string>;
+  private statsOn: boolean;
   private viewMat: THREE.ShaderMaterial;
 
   constructor(public env: Env, public q: QualitySettings) {
     const fx = q.postFx;
-    this.dbg = new Set(parseParams(typeof location !== "undefined" ? location.search : "").dbg);
+    const params = parseParams(typeof location !== "undefined" ? location.search : "");
+    this.dbg = new Set(params.dbg);
+    this.statsOn = params.stats;
     this.viewMat = fsMaterial(
       "post_view",
       { tSrc: { value: null }, uMode: { value: 0 }, uNear: { value: 0.1 }, uFar: { value: 9000 } },
@@ -136,7 +139,8 @@ export class Post {
     if (this.renderer) return;
     this.renderer = pipeline.renderer;
     this.exposure = new Exposure(this.renderer, pipeline.floatDepth);
-    this.timer = new GpuTimer(this.renderer, true);
+    // GPU タイマーは ?stats=1 のときだけ（ANGLE/Metal ではクエリごとにコマンドバッファが切れて値が当てにならない上に負荷になる）
+    this.timer = new GpuTimer(this.renderer, this.statsOn);
     this.lastTime = performance.now();
   }
 
