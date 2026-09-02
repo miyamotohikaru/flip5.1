@@ -126,10 +126,11 @@ varying float vDepthA;
 varying float vGust;
 varying vec2 vShoreDir;
 
-const float F0 = 0.02;
+// 空モジュールの flip_atmosphere が PI を #define するので、const で宣言しない（識別子が数値に置換されて構文エラーになる）
 #ifndef PI
 #define PI 3.14159265
 #endif
+#define WATER_F0 0.02
 
 vec2 projectRefl(vec3 p){
   vec4 c = uReflMatrix * vec4(p, 1.0);
@@ -172,10 +173,12 @@ vec2 water_rain(vec2 p, float t, float amount, int layers){
 }
 
 // コースティクス（湖底の光のゆらぎ）。2 方向の稜線ノイズの積
+// flip_gnoise は ±1 を超えることがあるので 0..1 に留める（負の値の pow は NaN になり、ポストのブルーム／ゴッドレイが
+// それを画面全体に筋として広げる）
 float water_caustic(vec2 p, float t){
-  float a = 1.0 - abs(flip_gnoise(p * 1.9 + vec2(t * 0.35, -t * 0.2)));
-  float b = 1.0 - abs(flip_gnoise(p * 2.3 + vec2(-t * 0.25, t * 0.3) + 5.0));
-  float c = 1.0 - abs(flip_gnoise(p * 4.1 + vec2(t * 0.5, t * 0.1) + 9.0));
+  float a = clamp(1.0 - abs(flip_gnoise(p * 1.9 + vec2(t * 0.35, -t * 0.2))), 0.0, 1.0);
+  float b = clamp(1.0 - abs(flip_gnoise(p * 2.3 + vec2(-t * 0.25, t * 0.3) + 5.0)), 0.0, 1.0);
+  float c = clamp(1.0 - abs(flip_gnoise(p * 4.1 + vec2(t * 0.5, t * 0.1) + 9.0)), 0.0, 1.0);
   return pow(a * b, 2.5) * (0.6 + 0.4 * c) * 3.0;
 }
 
@@ -301,7 +304,7 @@ void main(){
 
     // ---- フレネルと映り込み
     float NdotV = max(dot(N, V), 0.0);
-    float F = F0 + (1.0 - F0) * pow(1.0 - NdotV, 5.0);
+    float F = WATER_F0 + (1.0 - WATER_F0) * pow(1.0 - NdotV, 5.0);
     vec3 R = reflect(Vdir, N);
     // ぼかし: 縦は粗さで広く、横は視線の浅さで狭い（波の面の反射は縦に伸びる）
     // 景色の映り込みは物理どおりに全部ぼかすと「絵」にならないので、分散の 3 割だけ使う（ギラつきは全部使う）
@@ -352,13 +355,13 @@ void main(){
       float NdotL = max(dot(Ns, uSunDir), 0.0);
       float NdotH = max(dot(Ns, H), 0.0);
       float VdotH = max(dot(V, H), 0.0);
-      float Fs = F0 + (1.0 - F0) * pow(1.0 - VdotH, 5.0);
+      float Fs = WATER_F0 + (1.0 - WATER_F0) * pow(1.0 - VdotH, 5.0);
       float a2s = max(a2g, 0.0012);
       float spec = Fs * ggx(NdotH, a2s) * smithVis(NdotL, max(NdotV, 1e-3), a2s) * NdotL;
       col += sunL * min(spec, 14.0) * step(-0.02, uSunDir.y);
       vec3 Hm = normalize(V + uMoonDir);
       float NdotLm = max(dot(N, uMoonDir), 0.0);
-      float specm = F0 * ggx(max(dot(N, Hm), 0.0), max(a2, 0.002)) * smithVis(NdotLm, max(NdotV, 1e-3), max(a2, 0.002)) * NdotLm;
+      float specm = WATER_F0 * ggx(max(dot(N, Hm), 0.0), max(a2, 0.002)) * smithVis(NdotLm, max(NdotV, 1e-3), max(a2, 0.002)) * NdotLm;
       col += uMoonColor * 9.0 * min(specm, 60.0);
     }
 
@@ -394,7 +397,7 @@ void main(){
     vec3 Nd = -N;
     vec3 T = refract(Vdir, Nd, 1.333);
     bool tir = dot(T, T) < 0.5;
-    float F = tir ? 1.0 : (F0 + (1.0 - F0) * pow(1.0 - max(T.y, 0.0), 5.0));
+    float F = tir ? 1.0 : (WATER_F0 + (1.0 - WATER_F0) * pow(1.0 - max(T.y, 0.0), 5.0));
     vec3 above = uScatterColor * lightIn * 0.4;
     if (!tir) {
       vec2 uva = projectRefl(vWorld + T * 40.0);
@@ -405,7 +408,7 @@ void main(){
       above += sunL * sunT * 3.0;
     }
     vec3 body = uScatterColor * lightIn * (0.35 + 0.65 * max(dot(Nd, Vdir), 0.0));
-    col = mix(above * (1.0 - F0), body, F);
+    col = mix(above * (1.0 - WATER_F0), body, F);
     // 水面のうねりが透ける光の筋
     col += uScatterColor * sunL * (0.4 / PI) * max(dot(N, uSunDir), 0.0) * (1.0 - F) * 0.5;
     // カメラから水面までの水の吸収と散乱
