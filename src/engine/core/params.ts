@@ -21,7 +21,7 @@ export type ShotDef = {
   weather: WeatherPresetName;
   /** x, z（y は地面＋目線）。y を明示するときは第3要素 */
   pos: [number, number] | [number, number, number];
-  /** yaw（0 = −Z を向く、右回りが正）、pitch（上が正）。度 */
+  /** yaw（0 = −Z を向く。three.js の rotation.y と同じで、上から見て左回り＝反時計回りが正）、pitch（上が正）。度 */
   look: [number, number];
   flip?: number;
   flipRadius?: number;
