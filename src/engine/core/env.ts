@@ -149,6 +149,23 @@ export class Env {
     uTerrainHorizonB: { value: null as THREE.Texture | null },
     /** 高さの3成分（heightfield.ts の Heightmap.parts）。裏返しの「数式の足し算」表示に使う */
     uHeightParts: { value: null as THREE.Texture | null },
+    // ---- 空モジュール（sky/）が毎フレーム値を入れる。他モジュールは flip_atmosphere チャンクの関数経由で使う ----
+    /** 大気の透過率 LUT（Hillaire 2020。x = 視線の天頂角, y = 高度。RGBA16F 256×64） */
+    uSkyTransLut: { value: null as THREE.Texture | null },
+    /** 空の放射輝度 LUT（x = 太陽相対の方位（√圧縮）, y = 仰角（地平線に密）。雲・太陽円盤なし） */
+    uSkyViewLut: { value: null as THREE.Texture | null },
+    /** 空気遠近 LUT（3D: 方位 × 仰角 × 距離。rgb = 途中で足される散乱光, a = 透過率） */
+    uAerialLut: { value: null as THREE.Texture | null },
+    /** 雲の影（world xz → 0..1。uSkyParams.x が覆う一辺 m、原点中心） */
+    uCloudShadowMap: { value: null as THREE.Texture | null },
+    /** x = 雲影マップの一辺(m), y = 空気遠近 LUT の最大距離(m), z = 靄(haze)の密度(/km), w = 大気モデル上の地表の海抜(km) */
+    uSkyParams: { value: new THREE.Vector4(8192, 32000, 0.03, 0.5) },
+    /** 地表の霧（ミスト）: x = 湖面での密度(/m), y = 高さスケール(m), zw = むらの流れ(m) */
+    uSkyFog: { value: new THREE.Vector4(0, 14, 0, 0) },
+    /** 地表の霧の第2層（湖面に張り付く薄く濃い層）: x = 密度(/m), y = 高さスケール(m), zw = むらの流れ(m) */
+    uSkyFog2: { value: new THREE.Vector4(0, 6, 0, 0) },
+    /** 霧に当たる光（空からの平均放射輝度） */
+    uSkyFogLight: { value: new THREE.Color(0.3, 0.4, 0.55) },
   };
 
   setWeather(name: WeatherPresetName) {
