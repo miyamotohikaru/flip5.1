@@ -16,7 +16,11 @@
       "flip_half": 4,
       "flip_full": 5
     },
-    "mobile": { "golden": 4, "forest": 3, "night": 4 },
+    "mobile": {
+      "golden": 4,
+      "forest": 3,
+      "night": 4
+    },
     "blind": {
       "golden": false,
       "noon": false,
@@ -59,6 +63,75 @@
       "flip_full: 青写真には見えるが正体が画の中に無い。等高線がバーコード（terrain / vegetation / ui / sky）",
       "mobile: golden 4（雪山の面取りが目立つ、空が暗い）/ forest 3 / night 4（青い昼）",
       "不具合: 黒い四角の筋（既知）、水際の楔、白・マゼンタの輝点、昼の空の白い点（埃）、太陽の巨大な輪、携帯 HUD の迷子のスティック円、入口ヒントと N バッジの重なり、?dbg=nopost が真っ暗、yaw の注記が逆"
+    ]
+  },
+  {
+    "round": 2,
+    "date": "2026-09-03",
+    "scores": {
+      "golden": 5,
+      "noon": 4,
+      "dawn": 5,
+      "cloudy": 5,
+      "rain": 4,
+      "storm": 4,
+      "night": 5,
+      "sunset_water": 6,
+      "forest": 4,
+      "ridge": 4,
+      "flip_half": 5,
+      "flip_full": 6
+    },
+    "mobile": {
+      "golden": 5,
+      "forest": 4,
+      "night": 5
+    },
+    "blind": {
+      "golden": false,
+      "noon": false,
+      "dawn": false,
+      "cloudy": false,
+      "rain": false,
+      "storm": false,
+      "night": false,
+      "sunset_water": false,
+      "forest": false,
+      "ridge": false,
+      "flip_half": false,
+      "flip_full": false
+    },
+    "verdict": "不合格",
+    "top": [
+      "post(露出とトーン): 白飛びを直しすぎて黒潰れに振れた。golden / dawn / sunset_water / forest / flip_half の下 1/3 に情報が無い。日なたの草 0.32〜0.45、影の中 0.05〜0.09、夜の月明かり 0.02〜0.04 を目標に、露出基準 0.24/keyL → 0.30/keyL、AgX の肩を寝かせ、影に空の環境光を下限 0.03 で残す",
+      "core/lighting(影): noon / cloudy / treeline に落ち影が 1 本も無い。近カスケードを昼にも有効化して 200m までの木の落ち影を出し、post/ao は半径 0.6m・強度 0.6 で株と幹の接地を暗くする",
+      "vegetation(草の密度): 色と幅は直ったが本数を落としすぎ。目線 1.6m で 10m 先まで地面のノイズ塗りが見えないところまで戻す（今の 1.8 倍）。密度の fbm（λ12m）の谷を 30–40% → 15–20% に浅く",
+      "vegetation/impostor(矩形ぼけ): cloudy 右端 x=1280–1600 / y=440–540 と携帯 golden で木が 50×90px のぼやけた矩形に化ける。minFilter=LinearFilter（mip 無し）か anisotropy 8、切り替え距離をメッシュ側の 1.3 倍に伸ばして重ねる",
+      "water(雨の湖面の市松ノイズ): 6 倍に拡大すると 2px 周期のスペキュラのエイリアシングで映り込みが消える。varAA 上限 0.05 → 0.25、varCap の smoothstep(0.004,0.05,fp) → smoothstep(0.002,0.02,fp)、water_rain のゲート smoothstep(0.05,0.40,fp) → smoothstep(0.02,0.12,fp)、粗さの下限を距離で上げる（300m で a2 ≥ 0.004）",
+      "terrain(林床と斜面の土): fFloor が forest 定点で効いておらず針葉樹の下が砂丘。木の配置（placement.ts の forestDensity）と同じソースから作り閾値 0.004 → 0.0005、duff の混合を 0.96*fFloor → min(1.0, 2.5*fFloor)。斜面の土は λ6m / 1.5m の 2 段に。スプラットの UV を world.xz に統一してタイル継ぎ目を消す",
+      "sky(黄昏の色): 17.4 時（golden 定点そのもの）で太陽側の空が今も白いクリーム。Mie 8e-3 → 1.4e-2 /km、位相 g 0.82 → 0.86、hazeKm の増幅を sunDir.y<0.25 で ×2.5。検証は ?t=17.4&look=106,10 で R>G>B の橙になること",
+      "vegetation/shaders(葉のディザ): 葉カードのアルファが網戸模様で見える（携帯で顕著）。alphaToCoverage（MSAA 4x）か alphaTest 0.4 + 葉の縁 1px のソフト化に",
+      "terrain+vegetation(岸): 砂帯が「プールの縁」のまま、かつ水面下に草が生えている。砂帯は幅 1〜3m・縁ノイズ λ6m。草は heightAt(x,z) > uLakeLevel + 0.15 でのみ生やす",
+      "裏返し(core/flip + vegetation + terrain + ui): 波の縁を幅 8–15m の帯にし先行リップル 3 本＋火花、木を骨組み（幹＋輪生 5 段の線）、等高線の主線/副線 4:1、下の空白に「草 GRASS」のラベル"
+    ],
+    "notes": [
+      "R1 の答え合わせ: ○4（木の形 / 山と雪 / 輝点・フレアの始末 / controls・ui）、△5（草 / 夜 / 雨・嵐 / water / 裏返し）、×1（黄昏の空の色）。壊れているものを直す作業はほぼ終わり、残るのは作り込み不足の欠点",
+      "golden: 17:24 の光に色が無く、画面全体が沈んだオリーブ。黒い斜めの筋は消えた（sky / post）",
+      "noon: 影が 1 本も無い。岸の砂帯がプールの縁、水面下に草（core / post / terrain / water）",
+      "dawn: 薄明の帯に色が出たのは前進。下 1/3 が構造の無い黒い毛氈でリムライトが無い（post / vegetation / sky）",
+      "cloudy: 木の輪郭は本物になった。右端でインポスターが 50×90px の矩形に化ける（vegetation）",
+      "rain: 中〜遠景は本作で最良。湖面の白い砂嵐（2px の市松ノイズ）が残る（water / vegetation）",
+      "storm: 木の影絵と雨筋は直った。レンズ水滴が中空の輪で 20 個以上浮き、空に雲底の構造がゼロ（weather / sky）",
+      "night: 星・蛍・月の暈・水面の筋は大きく前進。下半分がまだ青い昼、湖の近景に横縞（post / water / weather）",
+      "sunset_water: 折り紙の面取りが完全に消えた（R2 最大の成果）。下 2/3 が真っ黒、空が板で雲 1 個（post / sky / terrain）",
+      "forest: 樹冠は密になった。林床が明るい砂（0.196,0.173,0.125）で下草・倒木・根が無い（terrain / vegetation）",
+      "ridge: 影は柔らかくなった。地面がぼけた水彩で矩形のタイル継ぎ目、葉のディザ（terrain / vegetation / core）",
+      "flip_half: 波の縁が無く境界は直線のポリゴンの縁（core / vegetation / weather）",
+      "flip_full: 世界の中に数式ラベルが 4 か所出て R1 の最重要指摘が直った。木が白い雫、等高線が同じ太さ（vegetation / terrain / ui）",
+      "mobile: golden 5（山の面取りと折れ線、インポスターの矩形）/ forest 4（葉のディザが顕著、林床が砂）/ night 5（遠景の砂の白線が明るすぎ）",
+      "R1 からの持ち越し 3 点の確認: 白・マゼンタの輝点は 12 定点で自動検出 0 件（完了）。水面下の草は残っている（r2b_noon x=670–1020 / y=640–700）。雨の湖面の白い砂嵐も残っている（r2bx_rain_water y=460–560）",
+      "新しい破綻: インポスターの矩形ぼけ、葉カードのアルファ・ディザ、反射バッファのブロック（reflectionScale 0.5）、地形スプラットの矩形タイル継ぎ目、湖面の横縞バンディング（night y=595–650）、岸の白い玉、空の埃の白い点、空の淡い斜めの網目、遠景の岸の橙の水平線、雷が毎回同じ位置・同じ形、裏返しの境界の直線ポリゴン縁、携帯の入口で数式が 3 行重なる",
+      "撮影は 6b87b42。途中で実験室の統合が入り forest / ridge の地面だけ変わったので、採点は後の版（shots/r2b_*）で統一した"
     ]
   }
 ]
