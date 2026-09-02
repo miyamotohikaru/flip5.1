@@ -100,7 +100,7 @@ export function buildConifer(v: TreeVariant, lod: 0 | 1): TreeGeo {
   };
 
   const up = new THREE.Vector3(0, 1, 0);
-  const nW = lod === 0 ? v.whorls : Math.max(6, Math.round(v.whorls * 0.55));
+  const nW = lod === 0 ? v.whorls : Math.max(6, Math.round(v.whorls * 0.45));
   const top = 0.93;
   let maxR = 0;
   for (let j = 0; j < nW; j++) {

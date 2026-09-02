@@ -10,16 +10,17 @@ import * as THREE from "three";
 import type { Env } from "../core/env";
 import type { Lighting } from "../core/lighting";
 import type { QualitySettings } from "../core/quality";
-import { heightAt } from "../core/heightfield";
 import { bakeVegMap, type VegMap } from "./vegmap";
 import { Grass } from "./grass";
 import { Trees } from "./trees";
+import { Rocks } from "./rocks";
 
 export class Vegetation {
   group = new THREE.Group();
   vegmap: VegMap;
   grass: Grass | null = null;
   trees: Trees | null = null;
+  rocks: Rocks | null = null;
 
   constructor(public scene: THREE.Scene, public env: Env, public lighting: Lighting, public q: QualitySettings) {
     scene.add(this.group);
@@ -30,20 +31,14 @@ export class Vegetation {
     const t1 = performance.now();
     if (!off("notrees")) this.trees = new Trees(this.group, env, lighting, q, this.vegmap);
     const t2 = performance.now();
+    if (!off("norocks")) this.rocks = new Rocks(this.group, env, lighting, q, this.vegmap);
     if (!off("nograss")) this.grass = new Grass(this.group, env, lighting, q, this.vegmap);
-    if (dbg.includes("vegtime")) console.info(`[vegetation] vegmap ${(t1 - t0).toFixed(0)}ms trees ${(t2 - t1).toFixed(0)}ms (${this.trees?.stats.trees ?? 0} trees)`);
-    if (dbg.includes("shadowtest")) {
-      // 影の動作確認用の柱（調査用）
-      const box = new THREE.Mesh(new THREE.BoxGeometry(1.5, 8, 1.5), new THREE.MeshStandardMaterial({ color: 0x884422 }));
-      box.position.set(3, heightAt(3, 364) + 4, 364);
-      box.castShadow = true;
-      box.receiveShadow = true;
-      this.group.add(box);
-    }
+    if (dbg.includes("vegtime")) console.info(`[vegetation] vegmap ${(t1 - t0).toFixed(0)}ms trees ${(t2 - t1).toFixed(0)}ms (${this.trees?.stats.trees ?? 0} trees) rocks ${(performance.now() - t2).toFixed(0)}ms (${this.rocks?.stats.rocks ?? 0} rocks)`);
   }
 
   update(_dt: number) {
     this.trees?.update();
+    this.rocks?.update();
     this.grass?.update();
   }
 }

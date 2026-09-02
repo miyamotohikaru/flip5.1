@@ -195,8 +195,9 @@ export class Trees {
   /** 落ち葉の円: 地面に沿う乗算 decal */
   private litterMaterial() {
     const dbg = typeof location !== "undefined" ? (new URLSearchParams(location.search).get("dbg") ?? "") : "";
-    const debug = dbg.includes("litterdebug2") ? 2 : dbg.includes("litterdebug") ? 1 : 0;
-    const mat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, depthWrite: false, blending: debug === 2 ? THREE.NormalBlending : THREE.MultiplyBlending, premultipliedAlpha: debug !== 2, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+    const dm = /litterdebug(\d)/.exec(dbg);
+    const debug = dm ? Number(dm[1]) : 0;
+    const mat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, depthWrite: false, blending: debug >= 2 ? THREE.NormalBlending : THREE.MultiplyBlending, premultipliedAlpha: debug < 2, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
     if (debug) mat.defines = { VEG_LITTER_DEBUG: debug };
     patchMaterial(
       mat,
@@ -251,13 +252,23 @@ export class Trees {
             float r = vLit.x;
             float nz = flip_vnoise(vLitUv);
             float a = (1.0 - smoothstep(0.2 + 0.45 * nz, 1.0, r)) * (0.7 + 0.3 * nz) * (1.0 - vLit.y) * vLit.z;
-            vec3 tint = vec3(0.40, 0.32, 0.24);
+            vec3 tint = vec3(0.34, 0.27, 0.20);
             diffuseColor.rgb = mix(vec3(1.0), tint, a);
             diffuseColor.a = 1.0;
             #if defined(VEG_LITTER_DEBUG) && VEG_LITTER_DEBUG == 1
             diffuseColor = vec4(0.15, 0.15, 0.15, 1.0);
-            #elif defined(VEG_LITTER_DEBUG)
+            #elif defined(VEG_LITTER_DEBUG) && VEG_LITTER_DEBUG == 2
             diffuseColor = vec4(1.0, 0.0, 0.0, 0.3);
+            #elif defined(VEG_LITTER_DEBUG) && VEG_LITTER_DEBUG == 3
+            diffuseColor = vec4(vec3(r), 1.0);
+            #elif defined(VEG_LITTER_DEBUG) && VEG_LITTER_DEBUG == 4
+            diffuseColor = vec4(vec3(vLit.y), 1.0);
+            #elif defined(VEG_LITTER_DEBUG) && VEG_LITTER_DEBUG == 5
+            diffuseColor = vec4(vec3(vLit.z), 1.0);
+            #elif defined(VEG_LITTER_DEBUG) && VEG_LITTER_DEBUG == 6
+            diffuseColor = vec4(vec3(nz), 1.0);
+            #elif defined(VEG_LITTER_DEBUG)
+            diffuseColor = vec4(vec3(a), 1.0);
             #endif
           }`,
           "litter fs map",

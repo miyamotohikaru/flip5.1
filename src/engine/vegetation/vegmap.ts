@@ -14,6 +14,10 @@ export type VegMap = {
   texture: THREE.DataTexture;
   /** (worldSize, 1/worldSize, res, 0) */
   info: THREE.Vector4;
+  /** 岸線からの近さ 0..1（水際で 1、12m で 0）。小石の帯に使う。R8 */
+  shore: THREE.DataTexture;
+  shoreData: Uint8Array;
+  shoreRes: number;
 };
 
 /** 林の密度（群落）。木の配置と草の間引きの両方がこれを見る。 */
@@ -63,10 +67,11 @@ export function bakeVegMap(hm: Heightmap, res = 512): VegMap {
 
       const dry = clamp(fbm2(x * 0.0065 + 8.8, z * 0.0065 + 2.1, 3) * 0.6 + 0.5 + 0.25 * smoothstep(60, 300, h), 0, 1);
 
-      // 岩: 斜面の中腹〜急斜面。ガレ場は斑
+      // 岩: 斜面の中腹〜急斜面。ガレ場は斑。ゆるい斜面にもまばらな転石
       const steep = smoothstep(0.18, 0.42, 1 - ny);
       const scree = smoothstep(0.1, 0.6, noise2(x * 0.006 + 3.3, z * 0.006 - 7.7)) * smoothstep(0.1, 0.3, 1 - ny);
-      let rock = clamp(steep * 0.8 + scree * 0.9, 0, 1) * smoothstep(3, 25, h) * (1 - smoothstep(0.75, 0.95, 1 - ny));
+      const boulder = 0.16 * smoothstep(0.04, 0.16, 1 - ny) * smoothstep(0.2, 0.7, noise2(x * 0.004 - 9.1, z * 0.004 + 2.2) * 0.5 + 0.5);
+      let rock = clamp(steep * 0.8 + scree * 0.9 + boulder, 0, 1) * smoothstep(3, 25, h) * (1 - smoothstep(0.75, 0.95, 1 - ny));
       rock *= 1 - 0.5 * forest;
 
       const k = (j * res + i) * 4;
@@ -84,7 +89,30 @@ export function bakeVegMap(hm: Heightmap, res = 512): VegMap {
   texture.generateMipmaps = false;
   texture.colorSpace = THREE.NoColorSpace;
   texture.needsUpdate = true;
-  return { res, data, texture, info: new THREE.Vector4(WORLD.size, 1 / WORLD.size, res, 0) };
+
+  // 岸線からの近さ（細かめ）
+  const shoreRes = 768;
+  const shoreData = new Uint8Array(shoreRes * shoreRes);
+  const sstep = WORLD.size / shoreRes;
+  for (let j = 0; j < shoreRes; j++) {
+    const z = (j / shoreRes - 0.5) * WORLD.size + sstep * 0.5;
+    for (let i = 0; i < shoreRes; i++) {
+      const x = (i / shoreRes - 0.5) * WORLD.size + sstep * 0.5;
+      const d = Math.hypot(x, z);
+      if (d > WORLD.lakeRadius + 160 || d < WORLD.lakeRadius - 140) continue;
+      const sd = d - shoreRadius(x, z);
+      shoreData[j * shoreRes + i] = Math.round((1 - smoothstep(1.5, 12, sd)) * smoothstep(-6, -0.5, sd) * 255);
+    }
+  }
+  const shore = new THREE.DataTexture(shoreData, shoreRes, shoreRes, THREE.RedFormat, THREE.UnsignedByteType);
+  shore.magFilter = THREE.LinearFilter;
+  shore.minFilter = THREE.LinearFilter;
+  shore.wrapS = THREE.ClampToEdgeWrapping;
+  shore.wrapT = THREE.ClampToEdgeWrapping;
+  shore.generateMipmaps = false;
+  shore.colorSpace = THREE.NoColorSpace;
+  shore.needsUpdate = true;
+  return { res, data, texture, info: new THREE.Vector4(WORLD.size, 1 / WORLD.size, res, 0), shore, shoreData, shoreRes };
 }
 
 /** CPU 側からの参照（バイリニア）。channel: 0=草 1=林 2=乾き 3=岩 */
