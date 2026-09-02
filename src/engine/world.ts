@@ -220,11 +220,28 @@ export class World {
     this.env.setWeather(w);
   }
 
-  /** 写真: 現在の画面をそのまま PNG に */
+  /** 写真: 今のカメラで 2 倍解像度（上限 4096）に描き直し、全ポストを掛けて PNG に（post/photo.ts）。画面はちらつかない */
   async takePhoto(): Promise<Blob | null> {
-    this.frame();
+    if (!this.ready) return null;
     this.audio.shutter();
-    return new Promise((resolve) => this.canvas.toBlob((b) => resolve(b), "image/png"));
+    const cam = this.env.camera;
+    return this.post.takePhoto({
+      width: this.pipeline.width,
+      height: this.pipeline.height,
+      resize: (w, h) => {
+        this.pipeline.resize(w, h);
+        this.water.resize(w, h);
+        this.post.resize(w, h);
+      },
+      render: (target) => {
+        const dbg = this.params.dbg;
+        this.pipeline.renderOpaque(cam);
+        if (!dbg.includes("noref")) this.water.renderReflection(this.pipeline, cam);
+        if (!dbg.includes("nocopy")) this.pipeline.copyScene(cam);
+        if (!dbg.includes("notrans")) this.pipeline.renderTransparent(cam);
+        this.post.render(this.pipeline, target, { photo: true });
+      },
+    });
   }
 
   frame() {
