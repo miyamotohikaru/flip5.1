@@ -163,8 +163,15 @@ export class Env {
     // 露出（昼は絞り、夜は開く）
     const dayness = smoothstep(-0.12, 0.25, s);
     this.exposure = THREE.MathUtils.lerp(3.2, 0.85, dayness);
+    this.syncUniforms();
+  }
 
-    // uniforms へ
+  /**
+   * フィールド → uniforms。update() の最後に呼ばれる。
+   * 空モジュールが sunColor / sunIntensity / exposure / skyAmbient を上書きしたあとにも呼ぶ（world.ts）。
+   */
+  syncUniforms() {
+    const w = this.weather;
     const u = this.uniforms;
     u.uTime.value = this.time;
     u.uHour.value = this.hour;

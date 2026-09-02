@@ -98,7 +98,7 @@ export class Sky {
     scene.add(this.mesh);
   }
 
-  update() {
+  update(_dt: number) {
     // 半球光の色（GLSL の flip_skyColor と同じ考え方の CPU 近似）
     const env = this.env;
     const s = env.sunDir.y;

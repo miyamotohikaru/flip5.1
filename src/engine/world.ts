@@ -208,7 +208,8 @@ export class World {
     this.controls.update(dt);
     env.cameraPos.copy(cam.position);
     env.update(dt);
-    this.sky.update();
+    this.sky.update(dt); // 太陽の色・露出・半球光を上書きしてよい
+    env.syncUniforms();
     this.lighting.update();
     this.terrain.update();
     this.vegetation.update(dt);
