@@ -1,6 +1,6 @@
 // 地形。GPU クリップマップ（同心の環 7 段）＋ 実行時 GLSL で作る材質（草・土・岩・ガレ・雪・砂・濡れ）＋ 裏返し。
 //   - 高さは flip_height（ハイトマップ）だけ。環の外縁は LOD モーフで粗いレベルの補間値へ寄せる（割れ目なし）
-//   - 影: customDepthMaterial に同じ変位を入れて CSM に落とす。normalBias はカスケードの texel 幅から毎フレーム決める
+//   - 影: customDepthMaterial に同じ変位を入れて CSM に落とす。影の質（PCF 半径・normalBias・bias）は core/lighting.ts が決める
 //   - 起動時に法線・AO・cavity・8方位の地平角を GPU で焼き（bake.ts）、env.uniforms に載せる（他モジュールも読める）
 //   - 材質の GLSL は glsl.ts
 import * as THREE from "three";
@@ -230,16 +230,6 @@ export class Terrain {
         m.position.set(sx, 0, sz);
       }
     }
-    // 影の normalBias: カスケードごとの texel 幅に比例させ（近くは薄く、遠くは厚く）、太陽が低いほど厚くする
-    // （地面と光が平行に近いと細かい起伏の影がアクネ状の斑点になる）。PCF の半径も少し広げて縁を柔らかく
-    const low = 1 + 3 * (1 - Math.min(1, Math.max(0, this.env.sunDir.y * 2)));
-    for (const light of this.lighting.csm.lights) {
-      const sh = light.shadow;
-      const c = sh.camera as THREE.OrthographicCamera;
-      const texel = (c.right - c.left) / sh.mapSize.x;
-      sh.normalBias = (0.02 + texel * 1.6) * low;
-      sh.bias = -0.0003 * low;
-      sh.radius = 2;
-    }
+    // 影の normalBias / bias / PCF 半径は core/lighting.ts が持つ（ここでは触らない）。
   }
 }
