@@ -55,8 +55,10 @@ uniform float uWetness;
 uniform vec3 uWind;
 uniform float uLakeLevel;
 uniform sampler2D uHeightParts;
+uniform sampler2D uTerrainField; // 焼いたノイズ場: r = マクロ, g = メソ, b = 林の密度, a = 岸線からの距離（(sd+20)/40）
 uniform float uDetail;
-uniform float uTerrainDebug; // 調査用: 1 太陽の見え方 2 AO 3 法線 4 cavity 5 地平角A 6 影なし
+uniform float uReflect;      // 1 = 映り込みカメラ（細部を省く）
+uniform float uTerrainDebug; // 調査用: 1 太陽の見え方 2 AO 3 法線 4 cavity 5 地平角A 6 影なし 9 細部なし
 varying vec3 vFlipWorld;
 
 // 微分つきグラディエントノイズ: x = 値, yz = 勾配（ノイズ空間）
@@ -71,6 +73,14 @@ vec3 tn_gnoised(vec2 p){
   float v = va + u.x * k0 + u.y * k1 + u.x * u.y * k2;
   vec2 d = ga + u.x * (gb - ga) + u.y * (gc - ga) + u.x * u.y * (ga - gb - gc + gd) + du * vec2(k0 + u.y * k2, k1 + u.x * k2);
   return vec3(v, d) * 1.4;
+}
+// 等高線用の細い線。fwidth が 0 のとき（成分が定数の所）に core の flip_line が NaN になるのを避け、
+// 間隔が画素より細かくなったら消す（潰れて面が白くならないように）
+float tn_line(float v, float w){
+  float d = max(fwidth(v), 1e-5);
+  float f = abs(fract(v) - 0.5);
+  float l = smoothstep(0.5 - w - d, 0.5 - w + d, f); // 整数値の近く（f ≈ 0.5）だけ 1 = 細い線
+  return l * (1.0 - smoothstep(0.25, 0.6, d));
 }
 // 細胞ノイズ: x = 最近傍距離 F1, y = F2, z = セル id（小石・岩の割れ目）
 vec3 tn_cell(vec2 p){
@@ -87,17 +97,6 @@ vec3 tn_cell(vec2 p){
   }
   return vec3(sqrt(f1), sqrt(f2), id);
 }
-// 岩肌（2D の面）: x = 明るさ, y = 亀裂 0..1
-vec2 tn_rockFace(vec2 p, float detail){
-  float grain = flip_vfbm(p * 1.6, 2) - 0.5;
-  float crack = 0.0;
-  if (detail > 0.0) {
-    vec3 c = tn_cell(p * 0.45);
-    crack = (1.0 - smoothstep(0.0, 0.16, c.y - c.x)) * detail;
-    grain += 0.3 * (c.z - 0.5) * detail; // ブロックごとに明るさが違う
-  }
-  return vec2(1.0 + 0.5 * grain, crack);
-}
 `;
 
 /**
@@ -108,7 +107,9 @@ export const TERRAIN_FRAG_MATERIAL = /* glsl */ `
 vec3 tP = vFlipWorld;
 vec2 tXZ = tP.xz;
 float tDist = distance(tP, uCamPos);
-vec4 tAux = texture2D(uTerrainAux, flip_terrainUv(tXZ));
+vec2 tUv = flip_terrainUv(tXZ);
+vec4 tAux = texture2D(uTerrainAux, tUv);
+vec4 tF = texture2D(uTerrainField, tUv);
 vec3 gN;
 { vec2 n2 = tAux.rg * 2.0 - 1.0; gN = normalize(vec3(n2.x, sqrt(max(1.0 - dot(n2, n2), 0.0)), n2.y)); }
 float tAO = tAux.b;
@@ -116,71 +117,114 @@ float tCav = tAux.a;
 float tSlope = 1.0 - gN.y;
 float tH = tP.y;
 float tAbove = tH - uLakeLevel;
-float tNear = (1.0 - smoothstep(20.0, 60.0 + 70.0 * uDetail, tDist)) * step(0.01, uDetail);
-float tMid = 1.0 - smoothstep(120.0, 400.0 + 500.0 * uDetail, tDist);
-float tMacro = flip_fbm(tXZ * 0.0016 + 4.0, 2);   // 数百 m の色むら（タイル感消し）
-float tMeso = flip_gnoise(tXZ * 0.028 + 9.0);      // 36 m
-float tPatch = flip_fbm(tXZ * 0.075 + 3.0, 2);     // 13 m の斑（枯れ草・土）
+float tMacro = tF.r * 2.0 - 1.0;   // 数百 m の色むら（タイル感消し）
+float tMeso = tF.g * 2.0 - 1.0;    // 36 m
+float forestDens = tF.b;           // 250 m 単位の林と草地
+float tShore = tF.a * 40.0 - 20.0; // 岸線からの距離（m、負が湖）
+float tPatch = flip_fbm(tXZ * 0.075 + 3.0, 2); // 13 m の斑（枯れ草・土）
+// 細部は大きさごとに別の距離で消す（画素より細かくなった模様は迷彩・水玉に見える）。映り込みでは全部省く
+float detailOn = step(0.01, uDetail) * (1.0 - uReflect);
+float dNear0 = (1.0 - smoothstep(2.0, 6.0 + 6.0 * uDetail, tDist)) * detailOn;   // 2〜8cm: 葉の筋・粒
+float dNear1 = (1.0 - smoothstep(3.0, 7.0 + 8.0 * uDetail, tDist)) * detailOn;   // 10〜30cm: 株・小石
+float dNear2 = (1.0 - smoothstep(6.0, 14.0 + 14.0 * uDetail, tDist)) * detailOn;   // 45cm: こぶ
+float tNear = dNear2;
+float tMid = (1.0 - smoothstep(120.0, 400.0 + 500.0 * uDetail, tDist)) * (1.0 - uReflect);
+if (uTerrainDebug > 8.5 && uTerrainDebug < 9.5) { dNear0 = 0.0; dNear1 = 0.0; dNear2 = 0.0; tNear = 0.0; tMid = 0.0; } // 計測用
 
-// ---- どの材質か（0..1 のマスク）----
-float rockM = smoothstep(0.30, 0.45, tSlope + 0.07 * tMeso + 0.05 * tPatch);
-rockM = max(rockM, smoothstep(330.0 + 90.0 * tMacro, 440.0 + 90.0 * tMacro, tH) * smoothstep(0.10, 0.28, tSlope + 0.1 * tMeso));
+// ---- どの材質か（0..1 のマスク）。ゾーンは数百 m 単位（tMacro）で変える。細かい斑は迷彩に見えるので使わない ----
+float rockM = smoothstep(0.28 + 0.06 * tMacro, 0.44 + 0.06 * tMacro, tSlope + 0.03 * tMeso);
+float alpine = smoothstep(300.0 + 100.0 * tMacro, 480.0 + 100.0 * tMacro, tH);
+rockM = max(rockM, alpine * smoothstep(0.10, 0.24, tSlope + 0.06 * tMacro));
 float screeM = smoothstep(0.17, 0.27, tSlope + 0.04 * tPatch) * (1.0 - rockM) * smoothstep(120.0, 260.0, tH + 60.0 * tMacro);
 float dirtM = max(smoothstep(0.17, 0.30, tSlope + 0.05 * tMeso), 1.0 - smoothstep(0.22, 0.42, tCav)) * (1.0 - rockM) * (1.0 - screeM);
 float lee = dot(gN.xz, normalize(uWind.xy + vec2(1e-4, 0.0))); // 風下斜面で正
 float snowLine = 445.0 + 60.0 * tMacro - 35.0 * lee - 25.0 * tPatch;
 float snowM = smoothstep(snowLine, snowLine + 45.0, tH) * (1.0 - smoothstep(0.40, 0.62, tSlope - 0.15 * lee));
-float sandM = (1.0 - smoothstep(1.1 + 0.3 * tMeso, 1.55 + 0.3 * tMeso, tAbove)) * (1.0 - smoothstep(0.35, 0.6, tSlope));
+// 岸: 砂は水際だけ。幅は岸線からの距離で 1〜4m（場所で変わる）。高さでも 1.5m までに限る（道路のような帯にしない）
+float beachW = 1.2 + 3.0 * smoothstep(-0.5, 0.5, tPatch + 0.5 * flip_gnoise(tXZ * 0.35 + 5.0));
+float sandM = (1.0 - smoothstep(beachW - 0.6, beachW + 0.6, tShore)) * (1.0 - smoothstep(1.1, 1.55, tAbove)) * (1.0 - smoothstep(0.35, 0.6, tSlope));
 float wetBand = 1.0 - smoothstep(0.0, 0.45, tAbove);
+float forestBand = smoothstep(8.0, 25.0, tH) * (1.0 - smoothstep(330.0 + 60.0 * tMacro, 420.0 + 60.0 * tMacro, tH)) * (1.0 - smoothstep(0.35, 0.55, tSlope));
+float forest = forestBand * forestDens;
 
 // ---- 色（線形）----
-vec3 grass = mix(vec3(0.060, 0.125, 0.030), vec3(0.215, 0.185, 0.070), smoothstep(-0.25, 0.45, tPatch + 0.3 * tMeso));
+vec3 grass = mix(vec3(0.050, 0.115, 0.025), vec3(0.235, 0.20, 0.075), smoothstep(-0.25, 0.45, tPatch + 0.3 * tMeso));
 grass *= 1.0 + 0.22 * tMacro;
 grass = mix(grass, vec3(0.19, 0.165, 0.06), smoothstep(250.0, 420.0, tH)); // 高山草地は黄ばむ
+// 林帯（10〜400m、緩斜面）: 木の下の暗い床。遠景では樹冠のざらつき
+grass = mix(grass, vec3(0.040, 0.070, 0.026) * (1.0 + 0.2 * tMacro), 0.7 * forest);
+if (forest > 0.01 && tNear < 0.99) grass *= 1.0 - 0.28 * forest * flip_vnoise(tXZ * 0.2 + 3.0) * (1.0 - tNear);
+// 中景（10〜60m）: 丈の高い草の群れ（2m）のやわらかい明暗
+if (tDist < 160.0 && uReflect < 0.5) grass *= 1.0 + 0.16 * flip_fbm(tXZ * 0.55 + 8.0, 2) * (1.0 - smoothstep(60.0, 160.0, tDist));
 vec3 dirt = vec3(0.105, 0.078, 0.052) * (1.0 + 0.2 * tMacro);
 vec3 scree = vec3(0.19, 0.185, 0.175) * (0.85 + 0.3 * tMeso);
 vec3 rock = vec3(0.17, 0.155, 0.14) * (1.0 + 0.25 * tMacro);
-vec3 snow = vec3(0.70, 0.74, 0.80) * (0.92 + 0.12 * flip_vnoise(tXZ * 0.35 + 2.0));
-vec3 sand = vec3(0.30, 0.27, 0.20) * (1.0 + 0.1 * tMeso);
+vec3 snow = vec3(0.60, 0.64, 0.71);
+if (snowM > 0.001) snow *= 0.92 + 0.12 * flip_vnoise(tXZ * 0.35 + 2.0);
+// 砂利まじりの砂: 1〜3m の濃淡と、水際に近いほど暗く湿った砂利
+vec3 sand = vec3(0.25, 0.235, 0.195) * (1.0 + 0.1 * tMeso);
+if (sandM > 0.001) {
+  sand *= 0.8 + 0.4 * flip_vnoise(tXZ * 0.7 + 4.0);
+  sand = mix(sand, vec3(0.16, 0.16, 0.15), 0.5 * smoothstep(0.55, 0.8, flip_vnoise(tXZ * 2.5 + 1.0)) * (1.0 - smoothstep(0.0, 6.0, tShore)));
+}
 vec3 wN = gN;
 
 if (tNear > 0.0) {
-  // 草: クローバーのような斑と細かい粒。砂: 粒と小石
-  float clover = flip_vnoise(tXZ * 1.9 + 4.0);
-  float grain = flip_vnoise(tXZ * 7.0 + 1.0);
-  grass = mix(grass, vec3(0.040, 0.100, 0.028), 0.55 * smoothstep(0.5, 0.8, clover) * tNear);
-  grass *= 1.0 + (0.35 * grain - 0.17) * tNear;
-  vec3 pb = tn_cell(tXZ * 3.5);
-  float pebble = (1.0 - smoothstep(0.15, 0.35, pb.x)) * step(0.72, pb.z);
-  sand = mix(sand * (0.9 + 0.2 * grain), vec3(0.22, 0.21, 0.20) * (0.7 + 0.6 * pb.z), pebble * tNear);
-  snow += 0.03 * tn_gnoised(tXZ * 1.2 + 5.0).x;
-  // 細部の法線（草・土・砂）: 0.45m と 0.13m のこぶ
-  vec3 d1 = tn_gnoised(tXZ * 2.2), d2 = tn_gnoised(tXZ * 7.5 + 3.0);
-  vec2 g = d1.yz * (2.2 * 0.10) + d2.yz * (7.5 * 0.03);
+  // 草の株: 30cm の房のなだらかなドーム（境界の線は出さない）。株ごとに色が少し違う
+  float dome = flip_vnoise(tXZ * 3.3 + 1.0);
+  float hue = flip_vnoise(tXZ * 1.7 + 6.0);
+  grass *= 1.0 + (0.45 * dome - 0.2 + 0.25 * (hue - 0.5)) * dNear1;
+  // 葉の筋（2〜5cm、風向きに少し伸びる）と粒
+  vec2 wdir = normalize(uWind.xy + vec2(1e-4, 0.0));
+  vec2 xa = vec2(dot(tXZ, wdir), dot(tXZ, vec2(-wdir.y, wdir.x)));
+  float blades = flip_vfbm(xa * vec2(16.0, 42.0) + 5.0, 2);
+  float edge = 1.0 - abs(flip_gnoise(xa * vec2(14.0, 40.0) + 9.0)); // 葉の縁が光る細い筋
+  edge = edge * edge * edge;
+  float grain = flip_vnoise(tXZ * 30.0 + 1.0);
+  grass *= 1.0 + (0.8 * blades - 0.4 + 0.5 * edge) * dNear0 + (0.4 * grain - 0.2) * dNear1;
+  // 土が透ける斑（房の間・踏み跡）
+  vec3 soil = vec3(0.075, 0.055, 0.035) * (0.8 + 0.4 * grain);
+  float bare = smoothstep(0.58, 0.8, flip_vnoise(tXZ * 0.9 + 2.0)) * (1.0 - 0.7 * dome);
+  grass = mix(grass, soil, 0.5 * bare * dNear1);
+  // 砂: 粒と小石（水際ほど多い）
+  if (sandM > 0.005) {
+    vec3 pb = tn_cell(tXZ * 3.5);
+    float pebble = (1.0 - smoothstep(0.15, 0.35, pb.x)) * step(0.55 + 0.3 * smoothstep(0.0, 6.0, tShore), pb.z);
+    sand = mix(sand * (0.85 + 0.3 * grain * dNear0), vec3(0.22, 0.21, 0.20) * (0.7 + 0.6 * pb.z), pebble * dNear1);
+  }
+  if (snowM > 0.001) snow += 0.03 * tn_gnoised(tXZ * 1.2 + 5.0).x * dNear2;
+  // 細部の法線（草・土・砂）: 0.45m / 0.13m / 0.08m のこぶ。大きさごとに別の距離で消す
+  vec3 d1 = tn_gnoised(tXZ * 2.2), d2 = tn_gnoised(tXZ * 7.5 + 3.0), d3 = tn_gnoised(tXZ * 13.0 + 9.0);
+  vec2 g = d1.yz * (2.2 * 0.035) * dNear2 + d2.yz * (7.5 * 0.02) * dNear1 + d3.yz * (13.0 * 0.01) * dNear0;
   g *= (1.0 - rockM) * (1.0 - 0.6 * snowM) * (1.0 - 0.5 * sandM);
-  wN = normalize(gN - vec3(g.x, 0.0, g.y) * gN.y * tNear);
+  wN = normalize(gN - vec3(g.x, 0.0, g.y) * gN.y);
 }
 
 if (rockM > 0.005 && tMid > 0.0) {
-  // 岩: 層理（高さの帯）＋ トライプラナーの粒・亀裂 ＋ 面に沿ったバンプ
+  // 岩: 層理（高さの帯）＋ トライプラナーの粒 ＋ 近景では支配面の亀裂 ＋ 面に沿ったバンプ
   vec3 w = pow(abs(gN), vec3(4.0));
   w /= (w.x + w.y + w.z);
   float strata = sin((tH + 3.5 * flip_gnoise(tXZ * 0.035)) * 0.85 + 1.5 * flip_gnoise(tXZ * 0.11));
   strata = smoothstep(-0.3, 0.9, strata);
-  float det = tNear * uDetail;
-  vec2 fx = tn_rockFace(tP.zy, det * step(0.15, w.x));
-  vec2 fy = tn_rockFace(tP.xz, det * step(0.15, w.y));
-  vec2 fz = tn_rockFace(tP.xy, det * step(0.15, w.z));
-  float bright = fx.x * w.x + fy.x * w.y + fz.x * w.z;
-  float crack = fx.y * w.x + fy.y * w.y + fz.y * w.z;
-  rock *= mix(0.78, 1.15, strata) * bright * (1.0 - 0.5 * crack);
-  rock = mix(rock, vec3(0.075, 0.105, 0.045), 0.6 * smoothstep(0.5, 0.75, tPatch) * (1.0 - smoothstep(0.25, 0.5, tSlope))); // 苔・地衣
+  float grain = (flip_vnoise(tP.zy * 1.6) * w.x + flip_vnoise(tP.xz * 1.6) * w.y + flip_vnoise(tP.xy * 1.6) * w.z) - 0.5;
+  float crack = 0.0;
+  float det = dNear1 * uDetail;
+  if (det > 0.0) {
+    vec2 pc = w.x > w.y ? (w.x > w.z ? tP.zy : tP.xy) : (w.y > w.z ? tP.xz : tP.xy);
+    vec3 c = tn_cell(pc * 0.45);
+    crack = (1.0 - smoothstep(0.0, 0.16, c.y - c.x)) * det;
+    grain += 0.3 * (c.z - 0.5) * det; // ブロックごとに明るさが違う
+  }
+  rock *= mix(0.78, 1.15, strata) * (1.0 + 0.5 * grain) * (1.0 - 0.5 * crack);
+  // 苔・地衣: 緩い岩の窪みに。遠くでは斑が迷彩に見えるので薄める
+  rock = mix(rock, vec3(0.075, 0.105, 0.045), 0.55 * smoothstep(0.35, 0.7, tPatch + 0.5 * (0.5 - tCav)) * (1.0 - smoothstep(0.25, 0.5, tSlope)) * (0.35 + 0.65 * tMid));
   vec3 up = abs(gN.y) < 0.98 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
   vec3 T = normalize(cross(up, gN));
   vec3 B = cross(gN, T);
   vec2 pt = vec2(dot(tP, T), dot(tP, B));
-  vec3 b1 = tn_gnoised(pt * 1.4 + 2.0), b2 = tn_gnoised(pt * 4.5 + 7.0);
-  vec2 gb = (b1.yz * (1.4 * 0.16) + b2.yz * (4.5 * 0.05)) * tMid * (0.4 + 0.6 * tNear);
+  vec3 b1 = tn_gnoised(pt * 1.4 + 2.0);
+  vec2 gb = b1.yz * (1.4 * 0.16) * tMid * (0.4 + 0.6 * dNear2);
+  if (dNear1 > 0.0) gb += tn_gnoised(pt * 4.5 + 7.0).yz * (4.5 * 0.05) * dNear1;
   vec3 rN = normalize(gN - (T * gb.x + B * gb.y));
   wN = normalize(mix(wN, rN, rockM));
 }
@@ -208,14 +252,12 @@ if (uWetness > 0.05) {
   wN = normalize(mix(wN, vec3(0.0, 1.0, 0.0), pud));
 }
 // 谷筋の陰と空の見え方
-tCol *= 0.72 + 0.56 * tCav;
-tAO = tAO * (0.85 + 0.3 * tCav);
-// 山の影（地平角マップ）: 太陽と月それぞれ
+tCol *= 0.70 + 0.60 * tCav;
+tAO = tAO * tAO * (0.85 + 0.3 * tCav);
+// 山の影（地平角マップ）: 太陽と、夜だけ月
 float tSunVis = flip_terrainSunVis(tXZ, uSunDir);
-float tMoonVis = flip_terrainSunVis(tXZ, uMoonDir);
+float tMoonVis = (uMoonColor.r + uMoonColor.g + uMoonColor.b > 0.0005) ? flip_terrainSunVis(tXZ, uMoonDir) : 1.0;
 if (uTerrainDebug > 5.5 && uTerrainDebug < 6.5) { tSunVis = 1.0; tMoonVis = 1.0; }
-if (uTerrainDebug > 6.5 && uTerrainDebug < 7.5) { tSunVis = 1.0; }
-if (uTerrainDebug > 7.5 && uTerrainDebug < 8.5) { tMoonVis = 1.0; }
 `;
 
 /** フラグメント: <normal_fragment_begin> の差し替え */
@@ -240,21 +282,25 @@ export const TERRAIN_FRAG_FOG = /* glsl */ `
 gl_FragColor.rgb = flip_applyAerial(gl_FragColor.rgb, tP);
 if (uFlipRadius > 0.001) {
   float fm = flip_mask(tP);
-  vec4 parts = texture2D(uHeightParts, flip_terrainUv(tXZ));
+  vec4 parts = texture2D(uHeightParts, tUv);
   float pm = parts.r, pb = parts.g, pf = parts.b;
-  vec3 fc = FLIP_BG * (0.75 + 0.6 * gN.y);
-  float c5 = flip_line(tH / 5.0, 0.035) * (1.0 - smoothstep(0.2, 0.5, fwidth(tH / 5.0)));
-  float c25 = flip_line(tH / 25.0, 0.06);
-  float lm = flip_line(pm / 20.0, 0.07) * smoothstep(0.5, 3.0, pm);
-  float lb = flip_line(pb / 4.0, 0.045) * (1.0 - smoothstep(0.2, 0.5, fwidth(pb / 4.0)));
-  float lf = flip_line(pf / 0.5, 0.03) * (1.0 - smoothstep(0.2, 0.45, fwidth(pf / 0.5)));
-  fc += FLIP_LINE * (0.55 * c25 + 0.2 * c5);
-  fc += vec3(0.75, 0.95, 1.0) * 0.55 * lm;
-  fc += FLIP_LINE * 0.28 * lb;
+  // 紙: 青黒。斜面の向きでごく薄く陰影をつけて形が読めるように
+  vec3 fc = FLIP_BG * (0.7 + 0.5 * gN.y + 0.6 * max(dot(gN, uSunDir), 0.0) * tSunVis);
+  float far = 1.0 - 0.6 * smoothstep(400.0, 2500.0, tDist); // 遠くほど線を薄く（密になって面が白くならないように）
+  float c5 = tn_line(tH / 5.0, 0.035);
+  float c25 = tn_line(tH / 25.0, 0.06);
+  float lm = tn_line(pm / 20.0, 0.07) * smoothstep(0.5, 3.0, pm);
+  float lb = tn_line(pb / 8.0, 0.045);
+  float lf = tn_line(pf / 0.5, 0.03);
+  fc += FLIP_LINE * (0.5 * c25 + 0.2 * c5) * far;
+  fc += vec3(0.75, 0.95, 1.0) * 0.5 * lm * far;
+  fc += FLIP_LINE * 0.25 * lb * far;
   fc += FLIP_LINE * 0.13 * lf;
   fc += FLIP_LINE * 0.08 * flip_grid(tXZ, 10.0) * (1.0 - smoothstep(200.0, 600.0, tDist));
   fc += FLIP_ACCENT * flip_edgeGlow(tP) * 1.5;
-  fc = flip_applyAerial(fc, tP) * 0.7 + fc * 0.3;
+  // 紙には空気遠近の透過率だけを効かせ、散乱光は 3 割（白く霞ませない）
+  vec4 aer = flip_aerial(tP);
+  fc = fc * aer.a + aer.rgb * 0.3;
   gl_FragColor.rgb = mix(gl_FragColor.rgb, fc, fm);
 }
 if (uTerrainDebug > 0.5 && uTerrainDebug < 5.5) {
@@ -262,7 +308,7 @@ if (uTerrainDebug > 0.5 && uTerrainDebug < 5.5) {
   if (uTerrainDebug > 1.5) dbg = vec3(tAO);
   if (uTerrainDebug > 2.5) dbg = wN * 0.5 + 0.5;
   if (uTerrainDebug > 3.5) dbg = vec3(tCav);
-  if (uTerrainDebug > 4.5) dbg = texture2D(uTerrainHorizonA, flip_terrainUv(tXZ)).rgb;
+  if (uTerrainDebug > 4.5) dbg = texture2D(uTerrainHorizonA, tUv).rgb;
   gl_FragColor.rgb = dbg * 0.5;
 }
 `;

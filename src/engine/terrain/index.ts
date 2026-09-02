@@ -76,6 +76,8 @@ export class Terrain {
   private levels: Level[] = [];
   private uDetail: THREE.IUniform<number>;
   private uDebug: THREE.IUniform<number>;
+  private uReflect: THREE.IUniform<number> = { value: 0 };
+  private uField: THREE.IUniform<THREE.Texture | null> = { value: null };
   private baking = false;
 
   constructor(public scene: THREE.Scene, public env: Env, public lighting: Lighting, public q: QualitySettings) {
@@ -102,7 +104,11 @@ export class Terrain {
         mesh.castShadow = L <= 2;
         mesh.visible = v === 0;
         mesh.frustumCulled = true;
-        mesh.onBeforeRender = (renderer) => this.ensureBaked(renderer);
+        mesh.onBeforeRender = (renderer, _scene, camera) => {
+          this.ensureBaked(renderer);
+          // 映り込みカメラ（水の鏡像）では細部を省く。材質はレベルごとに別なので描画ごとに uniform が送られる
+          this.uReflect.value = camera === this.env.camera ? 0 : 1;
+        };
         meshes.push(mesh);
         this.group.add(mesh);
       }
@@ -140,6 +146,7 @@ export class Terrain {
     u.uTerrainAux.value = b.aux.texture;
     u.uTerrainHorizonA.value = b.horizonA.texture;
     u.uTerrainHorizonB.value = b.horizonB.texture;
+    this.uField.value = b.field.texture;
     this.baking = false;
   }
 
@@ -153,6 +160,8 @@ export class Terrain {
         shader.uniforms.uHalf = { value: 96 };
         shader.uniforms.uDetail = this.uDetail;
         shader.uniforms.uTerrainDebug = this.uDebug;
+        shader.uniforms.uReflect = this.uReflect;
+        shader.uniforms.uTerrainField = this.uField;
         let vs = shader.vertexShader;
         vs = replaceOnce(vs, "#include <common>", `#include <common>\n${TERRAIN_VERT_PARS}`, "terrain vs common");
         vs = replaceOnce(vs, "#include <begin_vertex>", TERRAIN_VERT_HEIGHT, "terrain vs begin_vertex");
@@ -221,12 +230,15 @@ export class Terrain {
         m.position.set(sx, 0, sz);
       }
     }
-    // 影の normalBias: カスケードごとの texel 幅に比例させる（近くは薄く、遠くは厚く）。アクネとピーターパンの折り合い
+    // 影の normalBias: カスケードごとの texel 幅に比例させ（近くは薄く、遠くは厚く）、太陽が低いほど厚くする
+    // （地面と光が平行に近いと細かい起伏の影がアクネ状の斑点になる）。PCF の半径も少し広げて縁を柔らかく
+    const low = 1 + 3 * (1 - Math.min(1, Math.max(0, this.env.sunDir.y * 2)));
     for (const light of this.lighting.csm.lights) {
       const sh = light.shadow;
       const c = sh.camera as THREE.OrthographicCamera;
       const texel = (c.right - c.left) / sh.mapSize.x;
-      sh.normalBias = 0.02 + texel * 1.6;
+      sh.normalBias = (0.02 + texel * 1.6) * low;
+      sh.radius = 2;
     }
   }
 }

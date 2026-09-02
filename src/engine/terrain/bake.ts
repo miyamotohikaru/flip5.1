@@ -12,7 +12,24 @@ export type TerrainBake = {
   aux: THREE.WebGLRenderTarget;
   horizonA: THREE.WebGLRenderTarget;
   horizonB: THREE.WebGLRenderTarget;
+  /** 材質のノイズ場（RGBA8, 1024²）: r = マクロ, g = メソ, b = 林の密度, a = 岸線からの距離 (sd+20)/40 */
+  field: THREE.WebGLRenderTarget;
 };
+
+const FIELD_FRAG = /* glsl */ `
+#include <flip_noise>
+#include <flip_height>
+uniform sampler2D uHeightParts;
+varying vec2 vUv;
+void main(){
+  vec2 xz = (vUv - 0.5) * uHeightmapInfo.x;
+  float macro = flip_fbm(xz * 0.0016 + 4.0, 2);
+  float meso = flip_gnoise(xz * 0.028 + 9.0);
+  float forest = smoothstep(-0.1, 0.45, flip_fbm(xz * 0.004 + 11.0, 3) + 0.25);
+  float sd = texture2D(uHeightParts, vUv).a;
+  gl_FragColor = vec4(macro * 0.5 + 0.5, meso * 0.5 + 0.5, forest, clamp((sd + 20.0) / 40.0, 0.0, 1.0));
+}
+`;
 
 const AUX_FRAG = /* glsl */ `
 #include <flip_height>
@@ -120,6 +137,13 @@ export function bakeTerrainAux(renderer: THREE.WebGLRenderer, env: Env, auxRes: 
     depthTest: false,
     depthWrite: false,
   });
+  const fieldMat = new THREE.ShaderMaterial({
+    uniforms: bindEnvUniforms({}, env),
+    vertexShader: FS_VERT,
+    fragmentShader: FIELD_FRAG,
+    depthTest: false,
+    depthWrite: false,
+  });
   const mesh = new THREE.Mesh(geo, auxMat);
   mesh.frustumCulled = false;
   scene.add(mesh);
@@ -127,6 +151,7 @@ export function bakeTerrainAux(renderer: THREE.WebGLRenderer, env: Env, auxRes: 
   const aux = makeTarget(auxRes);
   const horizonA = makeTarget(horizonRes);
   const horizonB = makeTarget(horizonRes);
+  const field = makeTarget(1024);
 
   const prevTarget = renderer.getRenderTarget();
   const prevShadow = renderer.shadowMap.autoUpdate;
@@ -142,12 +167,16 @@ export function bakeTerrainAux(renderer: THREE.WebGLRenderer, env: Env, auxRes: 
   horizonMat.uniforms.uDirBase.value = 4;
   renderer.setRenderTarget(horizonB);
   renderer.render(scene, cam);
+  mesh.material = fieldMat;
+  renderer.setRenderTarget(field);
+  renderer.render(scene, cam);
   renderer.setRenderTarget(prevTarget);
   renderer.shadowMap.autoUpdate = prevShadow;
   renderer.xr.enabled = prevXr;
 
   auxMat.dispose();
   horizonMat.dispose();
+  fieldMat.dispose();
   geo.dispose();
-  return { aux, horizonA, horizonB };
+  return { aux, horizonA, horizonB, field };
 }

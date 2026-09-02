@@ -264,7 +264,7 @@ export function heightAt(x: number, z: number): number {
     if (nearT > 0) {
       const f2 = nz(x * 0.047 + 1.1, z * 0.047 - 9.3);
       const f3 = nz(x * 0.115 + 5.5, z * 0.115 + 2.2);
-      fine += (0.7 * f2 + 0.3 * f3) * shoreT * nearT;
+      fine += (0.45 * f2 + 0.18 * f3) * shoreT * nearT;
     }
   }
 
