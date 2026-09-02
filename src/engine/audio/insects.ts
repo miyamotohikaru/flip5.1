@@ -50,6 +50,8 @@ export class InsectLayer {
       h2.connect(am);
       o.start(now);
       o2.start(now);
+      // 音程がほんの少し（±0.8%）ゆっくり揺れる（ずっと同じ高さの電子音にしない）
+      lfo(ctx, r.range(0.05, 0.16), f * 0.008, o.frequency, now);
       if (kind === "bell") {
         // 空気っぽさ: 搬送波の周りの細い雑音
         const n = loop(ctx, res.noiseR, { offset: i * 0.7 });

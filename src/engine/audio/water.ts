@@ -13,6 +13,8 @@ export class WaterLayer {
   private washLP: BiquadFilterNode[] = [];
   private gFoam: GainNode;
   private dFoam: GainNode;
+  private gBub!: GainNode;
+  private dBub!: GainNode;
   private nextChap = 0;
   private rng = new Rng(4242);
   private chaps = 0;
@@ -48,6 +50,14 @@ export class WaterLayer {
     this.dFoam = control(ctx, res.ctlFoam, this.gFoam.gain, 0, 1, 0).depth;
     // 泡は波の包絡にも乗せる
     control(ctx, res.ctlWave, this.gFoam.gain, 0, 1, 0);
+    // 引き波の気泡（水面の粒を波の包絡でゲート）
+    const bub = loop(ctx, res.rainWater, { offset: 5.5, rate: 0.9 });
+    const bbp = biquad(ctx, "bandpass", 1100, 1.0);
+    this.gBub = gainNode(ctx, 0);
+    bub.connect(bbp);
+    bbp.connect(this.gBub);
+    this.gBub.connect(this.pan);
+    this.dBub = control(ctx, res.ctlWave, this.gBub.gain, 0, 1, 0.35).depth;
   }
 
   tick(s: Scene) {
@@ -64,6 +74,9 @@ export class WaterLayer {
     }
     setT(this.gFoam.gain, foam * 0.2, t, 0.4);
     setT(this.dFoam.gain, foam * 0.8, t, 0.4);
+    const bub = near * (0.08 + 0.25 * w);
+    setT(this.gBub.gain, bub * 0.1, t, 0.4);
+    setT(this.dBub.gain, bub * 0.9, t, 0.4);
     setT(this.pan.pan, s.lakePan * (s.shoreDist < -3 ? 0.15 : 0.8), t, 0.3);
     // チャプ
     if (near > 0.02 && t >= this.nextChap) {

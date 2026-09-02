@@ -50,6 +50,8 @@ export type ProbeResult = Analysis & {
   frogs: number;
   drips: number;
   ticks: number;
+  /** その場所の生態（標高から推定）と岸からの距離 */
+  scene: { altitude: number; shoreDist: number; grass: number; forest: number; rock: number } | null;
 };
 
 class FakeEnv implements AudioEnv {
@@ -173,6 +175,15 @@ export async function renderOffline(cfg: ProbeConfig): Promise<ProbeResult> {
     frogs: mixer.insects.frogs,
     drips: mixer.rain.drips,
     ticks: mixer.ticks,
+    scene: mixer.scene
+      ? {
+          altitude: Math.round(mixer.scene.altitude * 10) / 10,
+          shoreDist: Math.round(mixer.scene.shoreDist * 10) / 10,
+          grass: Math.round(mixer.scene.grass * 100) / 100,
+          forest: Math.round(mixer.scene.forest * 100) / 100,
+          rock: Math.round(mixer.scene.rock * 100) / 100,
+        }
+      : null,
   };
   if (cfg.segments) {
     out.segments = cfg.segments.map(({ t0, t1 }) => {

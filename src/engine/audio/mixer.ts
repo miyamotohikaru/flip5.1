@@ -7,6 +7,7 @@ import * as THREE from "three";
 import type { QualityTier } from "../core/env";
 import { heightAt, shoreRadius } from "../core/heightfield";
 import { PadLayer } from "./ambient";
+import { biomeAt } from "./biome";
 import { BirdLayer } from "./birds";
 import { smooth } from "./dsp";
 import { FootstepLayer } from "./footsteps";
@@ -248,9 +249,7 @@ export class Mixer {
       shoreDist: sd,
       shoreFactor: sd <= 0 ? 1 : Math.exp(-sd / 30),
       altitude: h,
-      grass: smooth(-1.5, 1.5, h) * (1 - smooth(70, 180, h)),
-      forest: smooth(9, 45, h) * (1 - smooth(300, 430, h)),
-      rock: smooth(260, 420, h),
+      ...biomeAt(h),
       speed: this.speed,
       flip: env.flip,
       flipRadius: env.flipRadius,

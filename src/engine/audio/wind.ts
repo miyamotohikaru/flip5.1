@@ -122,8 +122,8 @@ export class WindLayer {
       setT(sd.gRustle.gain, rustle * 0.3, t, 0.3);
       setT(sd.dRustle.gain, rustle * 1.4, t, 0.3);
       setT(sd.dDrift.gain, rustle * 0.35, t, 0.3);
-      setT(sd.gLeaves.gain, leaves * 0.08, t, 0.3);
-      setT(sd.dLeaves.gain, leaves * 0.9, t, 0.3);
+      setT(sd.gLeaves.gain, leaves * 0.3, t, 0.3);
+      setT(sd.dLeaves.gain, leaves * 3.2, t, 0.3);
       setT(sd.gHiss.gain, hiss * side, t, 0.3);
       setT(sd.gBuffet.gain, buffet * 0.7 * side, t, 0.3);
       setT(sd.dBuffet.gain, buffet * 2.0 * side, t, 0.3);

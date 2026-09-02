@@ -22,8 +22,8 @@ export type Note = {
   release?: number;
 };
 
-export type Species = "uguisu" | "thrush" | "tit" | "woodpecker" | "kite" | "dove" | "crow";
-export const SPECIES: readonly Species[] = ["uguisu", "thrush", "tit", "woodpecker", "kite", "dove", "crow"];
+export type Species = "uguisu" | "thrush" | "tit" | "woodpecker" | "kite" | "dove" | "crow" | "owl";
+export const SPECIES: readonly Species[] = ["uguisu", "thrush", "tit", "woodpecker", "kite", "dove", "crow", "owl"];
 
 export type Call = { species: Species; notes: Note[]; duration: number };
 
@@ -160,6 +160,25 @@ function crow(r: Rng): Call {
   return finish("crow", notes);
 }
 
+/** フクロウ「ホー…ホー」（夜の森。たまに「ゴロスケ・ホーホー」） */
+function owl(r: Rng): Call {
+  const base = r.range(0.9, 1.1);
+  const notes: Note[] = [];
+  let t = 0;
+  if (r.chance(0.35)) {
+    // ゴロスケ
+    for (let i = 0; i < 3; i++) {
+      notes.push({ t, dur: 0.11, f0: 420 * base, f1: 380 * base, amp: 0.45, wave: "soft", attack: 0.02, release: 0.05 });
+      t += 0.16;
+    }
+    t += 0.15;
+  }
+  notes.push({ t, dur: r.range(0.32, 0.4), f0: 380 * base, f1: 355 * base, amp: 0.6, wave: "soft", attack: 0.06, release: 0.12 });
+  t += r.range(0.55, 0.7);
+  notes.push({ t, dur: r.range(0.45, 0.6), f0: 350 * base, f1: 320 * base, fm: 345 * base, amp: 0.55, wave: "soft", attack: 0.06, release: 0.16 });
+  return finish("owl", notes);
+}
+
 export function birdCall(species: Species, r: Rng): Call {
   switch (species) {
     case "uguisu": return uguisu(r);
@@ -169,6 +188,7 @@ export function birdCall(species: Species, r: Rng): Call {
     case "kite": return kite(r);
     case "dove": return dove(r);
     case "crow": return crow(r);
+    case "owl": return owl(r);
   }
 }
 
@@ -187,6 +207,7 @@ export function speciesFor(b: Biome, r: Rng): Species {
     0.25 + 1.5 * b.rock, // kite
     0.6 * (b.grass + b.forest) * (0.3 + dusk + dawn), // dove
     0.35 * (b.grass + b.forest) * (0.4 + dusk), // crow
+    0, // owl は夜だけ（BirdLayer が別に呼ぶ）
   ];
   return r.weighted(SPECIES, weights);
 }

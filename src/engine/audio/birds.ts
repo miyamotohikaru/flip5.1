@@ -2,6 +2,7 @@
 // 6 つの「席」に種と位置を割り当て（場所の生態で種が変わる）、距離で減衰・空気で丸く・残響に送る。
 // 鳴き方そのものは birdsong.ts（純粋関数）。ここは AudioNode に流し込むだけ。
 import { heightAt } from "../core/heightfield";
+import { biomeAt } from "./biome";
 import { birdCall, speciesFor, type Call, type Note, type Species } from "./birdsong";
 import { smooth } from "./dsp";
 import { biquad, gainNode, oneShot, spatialChain, spatialize, type Ctx } from "./graph";
@@ -16,6 +17,7 @@ export class BirdLayer {
   private reverb: ConvolverNode;
   private slots: (Slot | null)[] = [null, null, null, null, null, null];
   private nextCall = 0;
+  private nextOwl = 0;
   private rng = new Rng(777);
   /** 鳴き声の音符はまとめて作らず、鳴る直前の tick で少しずつ作る（メインスレッドの山を作らない） */
   private queue: { n: Note; t0: number; dest: GainNode; r: Rng }[] = [];
@@ -60,6 +62,18 @@ export class BirdLayer {
     if (t < this.nextCall) return;
     const act = this.activity(s);
     if (act < 0.02) {
+      // 夜の森: たまにフクロウ（雨・嵐では鳴かない）
+      const owl = s.night * s.forest * (1 - s.rain) * (1 - s.storm);
+      if (owl > 0.15 && t >= this.nextOwl) {
+        if (this.nextOwl === 0) this.nextOwl = t + this.rng.range(4, 18);
+        else {
+          const r = this.rng;
+          const ang = r.range(0, Math.PI * 2), dist = r.logRange(25, 140);
+          const slot: Slot = { x: s.pos.x + Math.cos(ang) * dist, z: s.pos.z + Math.sin(ang) * dist, species: "owl", until: t + 60 };
+          this.play(birdCall("owl", new Rng(100 + this.calls++, 7)), slot, s, t + 0.1);
+          this.nextOwl = t + r.range(25, 70);
+        }
+      }
       this.nextCall = t + 1.5;
       return;
     }
@@ -83,17 +97,14 @@ export class BirdLayer {
     const ang = r.range(0, Math.PI * 2);
     const dist = r.logRange(12, 110);
     const x = s.pos.x + Math.cos(ang) * dist, z = s.pos.z + Math.sin(ang) * dist;
-    const h = heightAt(x, z);
-    const grass = smooth(-1.5, 1.5, h) * (1 - smooth(70, 180, h));
-    const forest = smooth(9, 45, h) * (1 - smooth(300, 430, h));
-    const rock = smooth(260, 420, h);
-    return { x, z, species: speciesFor({ grass, forest, rock, hour: s.hour }, r), until: s.t + r.range(45, 90) };
+    const b = biomeAt(heightAt(x, z));
+    return { x, z, species: speciesFor({ ...b, hour: s.hour }, r), until: s.t + r.range(45, 90) };
   }
 
   private play(call: Call, slot: Slot, s: Scene, t0: number) {
     const sp = spatialize(slot.x, slot.z, s, 30, 1.3);
     const chain = spatialChain(this.ctx, this.out, this.reverb);
-    const base = call.species === "kite" ? 0.9 : call.species === "crow" ? 0.8 : call.species === "dove" ? 0.6 : 0.7;
+    const base = call.species === "kite" ? 0.9 : call.species === "crow" ? 0.8 : call.species === "dove" ? 0.6 : call.species === "owl" ? 1.1 : 0.7;
     chain.apply(sp, base, Math.max(this.ctx.currentTime, t0 - 0.05));
     this.lastCall = { species: call.species, at: t0, dist: sp.dist };
     const r = new Rng(900 + this.calls, 3);

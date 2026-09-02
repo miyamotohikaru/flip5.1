@@ -21,7 +21,7 @@ const SEC = Number(flag("seconds", 8));
 const jsonOut = flag("json", null);
 
 const start = [0, 360];
-const forest = [180, 780];
+const forest = [0, 1000];
 const ridge = [-900, 1060];
 const far = [0, 700];
 const shore = [0, 345];
@@ -48,6 +48,8 @@ const S = [
   { name: "wind rain 5m/s", hour: 12, weather: "rain", pos: start, solo: "wind" },
   { name: "wind storm 11m/s @ridge", hour: 12, weather: "storm", pos: ridge, solo: "wind", seconds: 12 },
   { name: "wind storm 11m/s +gust1", hour: 12, weather: "storm", pos: ridge, solo: "wind", gust: 1 },
+  { name: "wind storm 11m/s @forest", hour: 12, weather: "storm", pos: forest, solo: "wind", seconds: 12 },
+  { name: "wind storm 11m/s @start(grass)", hour: 12, weather: "storm", pos: start, solo: "wind", seconds: 12 },
   // 雨
   { name: "rain rain @shore", hour: 12, weather: "rain", pos: shore, solo: "rain" },
   { name: "rain rain @forest", hour: 12, weather: "rain", pos: forest, solo: "rain" },
@@ -77,6 +79,7 @@ const S = [
   { name: "birds ridge 10h", hour: 10, weather: "clear", pos: ridge, solo: "birds", seconds: 16 },
   { name: "birds rain (fewer)", hour: 12.2, weather: "rain", pos: forest, solo: "birds", seconds: 24 },
   { name: "birds night (silent)", hour: 23.5, weather: "clear", pos: start, solo: "birds", seconds: 8 },
+  { name: "birds night owl @forest", hour: 23.5, weather: "clear", pos: forest, solo: "birds", seconds: 30 },
   // 虫
   { name: "insects night @start", hour: 23.5, weather: "clear", pos: start, solo: "insects", seconds: 10 },
   { name: "insects night @shore wet (frogs)", hour: 22, weather: "clear", pos: shore, solo: "insects", seconds: 12 },
@@ -136,6 +139,7 @@ for (const s of targets) {
   if (r.lastStrike) extra.push(`strike d=${Math.round(r.lastStrike.distance)}m +${r.lastStrike.delay.toFixed(2)}s`);
   if (s.solo === "insects") extra.push(`insect=${r.insectLevel.toFixed(2)} frogs=${r.frogs}`);
   if (s.solo === "rain") extra.push(`drips=${r.drips}`);
+  if (r.scene && (s.name.startsWith("all") || s.solo === "wind" || s.solo === "birds" || s.solo === "insects")) extra.push(`[h${r.scene.altitude} g${r.scene.grass} f${r.scene.forest} r${r.scene.rock}]`);
   console.log(
     `${s.name.padEnd(34)} ${String(r.rmsDb).padStart(6)} ${String(r.peakDb).padStart(6)} ${String(r.crestDb).padStart(6)}  ${fmtBands(r.bands)}  ${String(r.centroid).padStart(5)}  ${String(r.texture).padStart(5)} ${String(r.maxStep).padStart(5)}  ${String(r.stereo).padStart(5)}  ${extra.join(" ")} (${((Date.now() - t0) / 1000).toFixed(1)}s)`,
   );
@@ -167,6 +171,8 @@ if (w2 && w11) {
   check(w11.bands.sub + w11.bands.low > 0.3, `風: 耳元の低い唸り（sub+low ${(w11.bands.sub + w11.bands.low).toFixed(2)} > 0.3）`);
   check(w11.texture > 0.12, `風: 突風で揺れる（texture ${w11.texture} > 0.12）`);
   check(w11.stereo < 0.9, `風: ステレオ（相関 ${w11.stereo} < 0.9）`);
+  const wf = byName("wind storm 11m/s @forest"), wg = byName("wind storm 11m/s @start(grass)");
+  if (wf && wg) check(wf.bands.high + wf.bands.mid > wg.bands.high + wg.bands.mid + 0.03, `風: 森では葉のざわめきが増える（mid+high 森 ${(wf.bands.high + wf.bands.mid).toFixed(2)} > 草地 ${(wg.bands.high + wg.bands.mid).toFixed(2)}）`);
 }
 const rs = byName("rain rain @shore"), rf = byName("rain rain @forest"), rc = byName("rain clear (silent)"), rst = byName("rain storm @start");
 if (rs && rf && rc) {
@@ -222,6 +228,8 @@ if (bd && bn && br && bnight) {
   const e = bd.env250, mx = Math.max(...e), med = [...e].sort((a, b) => a - b)[Math.floor(e.length / 2)];
   check(mx - med > 8, `鳥: 鳴いては止む（250ms 包絡の最大−中央値 ${(mx - med).toFixed(1)} dB > 8）`);
   if (bridge) check(bridge.birdCalls >= 1, `鳥: 尾根でも（トビ）鳴く ${bridge.birdCalls} 回 (${bridge.lastBird})`);
+  const owl = byName("birds night owl @forest");
+  if (owl) check(owl.birdCalls >= 1 && owl.lastBird === "owl" && owl.centroid < 1200, `鳥: 夜の森はフクロウ ${owl.birdCalls} 回 (${owl.lastBird}, 重心 ${owl.centroid} Hz)`);
 }
 const iN = byName("insects night @start"), iS = byName("insects night @shore wet (frogs)"), iSt = byName("insects night storm (quiet)"), iD = byName("insects noon (silent)");
 if (iN && iD) {
