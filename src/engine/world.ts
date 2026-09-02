@@ -269,7 +269,7 @@ export class World {
     if (!dbg.includes("noref")) this.water.renderReflection(this.pipeline, cam);
     if (!dbg.includes("nocopy")) this.pipeline.copyScene(cam);
     if (!dbg.includes("notrans")) this.pipeline.renderTransparent(cam);
-    if (!dbg.includes("nopost")) this.post.render(this.pipeline, null);
+    this.post.render(this.pipeline, null); // ?dbg=nopost は post 側で「そのままトーンマップ」に切り替わる
     r.setRenderTarget(null);
 
     const ms = performance.now() - t0;

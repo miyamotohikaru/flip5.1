@@ -2,7 +2,7 @@
 //   - 半分解像度。深度から法線を再構成（左右上下の差分のうち小さい側を選ぶ＝縁で割れない）
 //   - 2 方向 × 両側 4 歩（16 サンプル）。方向と歩幅の開始を画素ごとにずらす（IGN、時間で変えない＝ちらつかない）
 //   - 深度を見るバイラテラルぼかし 2 回（水平・垂直）。G に線形深度を持ち、合成側の深度付きアップサンプルに使う
-//   - 遠く（> 250m）では消える。空（深度 1.0）は 1
+//   - 遠く（> 170m）では消える。空（深度 1.0）は 1
 import * as THREE from "three";
 import type { Pipeline } from "../core/pipeline";
 import { fsMaterial, makeRT, POST_COMMON } from "./pass";
@@ -151,9 +151,11 @@ export class AO {
         uInvProj: { value: new THREE.Matrix4() },
         uNear: { value: 0.1 },
         uFar: { value: 9000 },
+        // 半径 1.5m。株の根元・幹の接地の「濃い影」を作るのに 0.6m 以上が要る（批評ラウンド1）
         uRadius: { value: 1.5 },
-        uFalloffStart: { value: 30 },
-        uFalloffEnd: { value: 60 },
+        // 遠くの木の接地まで残す（30〜60m だと中景の幹が浮く）
+        uFalloffStart: { value: 70 },
+        uFalloffEnd: { value: 170 },
       },
       AO_FRAG,
     );
