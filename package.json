@@ -1,0 +1,26 @@
+{
+  "name": "flip5.1",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --turbopack --port 3051",
+    "build": "next build",
+    "start": "next start --port 3051",
+    "typecheck": "tsc --noEmit",
+    "shoot": "node tools/shoot.mjs"
+  },
+  "dependencies": {
+    "next": "^16.3.4",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "three": "^0.185.1"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@types/three": "^0.185.0",
+    "puppeteer-core": "^24.0.0",
+    "typescript": "^6.0.2"
+  }
+}

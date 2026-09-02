@@ -1,0 +1,60 @@
+:root {
+  --ink: #f2efe8;
+  --ink-dim: rgba(242, 239, 232, 0.66);
+  --paper: #0b1020;
+  --accent: #ffb847;
+  --line: rgba(242, 239, 232, 0.18);
+  --font-jp: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", "Noto Sans JP", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; height: 100%; background: var(--paper); color: var(--ink); font-family: var(--font-jp); overscroll-behavior: none; }
+body { overflow: hidden; -webkit-font-smoothing: antialiased; }
+canvas { display: block; }
+
+.mobile-break { display: none; }
+@media screen and (max-width: 620px) { .mobile-break { display: inline; } }
+
+.world { position: fixed; inset: 0; }
+.world canvas { width: 100%; height: 100%; touch-action: none; }
+
+/* 入口 */
+.landing { position: fixed; inset: 0; display: flex; flex-direction: column; justify-content: space-between; padding: max(28px, env(safe-area-inset-top)) 32px max(28px, env(safe-area-inset-bottom)); background: linear-gradient(180deg, rgba(4, 8, 20, 0.35), rgba(4, 8, 20, 0.75)); transition: opacity 0.9s ease; z-index: 20; }
+.landing.hidden { opacity: 0; pointer-events: none; }
+.landing-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; letter-spacing: 0.12em; color: var(--ink-dim); text-transform: uppercase; }
+.landing-body { max-width: 720px; }
+.landing-title { font-size: clamp(34px, 6vw, 64px); font-weight: 600; letter-spacing: 0.02em; line-height: 1.15; margin: 0 0 22px; }
+.landing-lead { font-size: clamp(15px, 1.9vw, 19px); line-height: 2; margin: 0 0 30px; color: var(--ink); }
+.landing-lead strong { color: var(--accent); font-weight: 600; }
+.landing-foot { display: flex; justify-content: space-between; align-items: flex-end; font-size: 12px; color: var(--ink-dim); line-height: 1.8; }
+.enter { appearance: none; border: 1px solid var(--ink); background: transparent; color: var(--ink); font: inherit; font-size: 16px; letter-spacing: 0.2em; padding: 14px 34px; cursor: pointer; border-radius: 999px; transition: background 0.2s, color 0.2s; }
+.enter:hover { background: var(--ink); color: var(--paper); }
+.enter:disabled { opacity: 0.4; cursor: wait; }
+.progress { font-family: var(--font-mono); font-size: 12px; color: var(--ink-dim); margin-top: 16px; min-height: 1.6em; }
+
+/* HUD */
+.hud { position: fixed; inset: 0; pointer-events: none; z-index: 10; font-size: 12px; letter-spacing: 0.06em; }
+.hud .corner { position: absolute; color: var(--ink-dim); line-height: 1.7; }
+.hud .tl { top: max(18px, env(safe-area-inset-top)); left: 22px; }
+.hud .tr { top: max(18px, env(safe-area-inset-top)); right: 22px; text-align: right; }
+.hud .bl { bottom: max(18px, env(safe-area-inset-bottom)); left: 22px; }
+.hud .br { bottom: max(18px, env(safe-area-inset-bottom)); right: 22px; text-align: right; }
+.hud .title { color: var(--ink); font-weight: 600; letter-spacing: 0.1em; }
+.hud .count { font-family: var(--font-mono); }
+.hud .count b { color: var(--accent); font-weight: 600; }
+.hud .panel { pointer-events: auto; display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.hud button { pointer-events: auto; appearance: none; border: 1px solid var(--line); background: rgba(6, 10, 24, 0.45); color: var(--ink); font: inherit; font-size: 12px; letter-spacing: 0.08em; padding: 8px 14px; border-radius: 999px; cursor: pointer; backdrop-filter: blur(6px); }
+.hud button.on { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.hud button.flip { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.hud button.flip.on { background: var(--accent); color: #1a1000; }
+.hud input[type="range"] { pointer-events: auto; width: 160px; accent-color: var(--accent); }
+.hud .reticle { position: absolute; left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.7); }
+.hud .hint { color: var(--ink-dim); }
+.stats { font-family: var(--font-mono); color: var(--ink-dim); }
+@media screen and (max-width: 620px) {
+  .landing { padding: max(20px, env(safe-area-inset-top)) 20px max(20px, env(safe-area-inset-bottom)); }
+  .landing-lead { line-height: 1.9; }
+  .hud .tl, .hud .bl { left: 14px; }
+  .hud .tr, .hud .br { right: 14px; }
+  .hud .hint { display: none; }
+}
