@@ -113,7 +113,7 @@ uniform vec4 uWaterA;     // reflValid, reflLodMax, foamAmount, causticStrength
 uniform vec4 uWaterB;     // underwater, tanHalfFovV, rainDetail, lambdaP
 uniform vec3 uExtinction;
 uniform vec3 uScatterColor;
-uniform float uDebug;   // 調査用 ?wdbg=1 法線 2 水の色 3 映り込み 4 屈折の元 5 分散 6 泡
+uniform float uDebug;   // 調査用 ?wdbg=1 法線 2 水の色 3 映り込み 4 屈折の元 5 分散 6 泡の元 7 太陽・月のギラつき 8 泡と岸の透け 9 水中の光路長
 uniform vec3 uWind;
 uniform vec3 uSkyAmbient;
 uniform float uRain;
@@ -137,11 +137,14 @@ vec2 projectRefl(vec3 p){
   return c.xy / max(c.w, 1e-4);
 }
 
-// 雨粒の波紋。格子ごとに 1 粒、周囲 3×3 を見て輪が格子の縁で切れないように。返り値は傾き
-float g_rainSplash = 0.0;
+// 雨粒の波紋。白い点（王冠）は出さない。法線だけのリング:
+//   振幅 4mm、半径は 0.6 m/s で広がる、L0 で約 34 個/m²/s（3 層で約 38）。
+// 格子ごとに 1 粒、周囲 3×3 を見て輪が格子の縁で切れないように（輪の最大半径 ≤ 格子の一辺）。
+// 返り値は傾き（水面の法線に足す）。しぶきの白い粒は天気モジュールの 1px リングに任せる。
 vec2 water_rain(vec2 p, float t, float amount, int layers){
   vec2 s = vec2(0.0);
-  float cellSize = 1.6;
+  float cellSize = 0.26;
+  float life = 0.44;                                     // 寿命 s（半径 0.6·life ≈ 格子の一辺）
   for (int L = 0; L < 3; L++){
     if (L >= layers) break;
     vec2 pc = p / cellSize + float(L) * 7.3;
@@ -150,24 +153,23 @@ vec2 water_rain(vec2 p, float t, float amount, int layers){
       for (int x = -1; x <= 1; x++){
         vec2 c = cell + vec2(float(x), float(y));
         vec3 h = flip_hash33(vec3(c, float(L) * 3.1));
-        if (h.z > amount * 1.15) continue;                 // 雨量で粒の数
+        if (h.z > amount) continue;                        // 雨量で粒の数
         vec2 dropPos = (c + h.xy) * cellSize;
-        float period = 1.6 + 0.6 * h.x;
+        float period = life * (0.82 + 0.36 * h.x);
         float tt = fract(t / period + h.y);                // 0..1 で一生
-        float radius = tt * 0.55;
+        float radius = tt * period * 0.6;                  // 0.6 m/s で広がる
         vec2 dv = p - dropPos;
         float r = length(dv);
         float ring = r - radius;
-        float win = 1.0 - smoothstep(0.0, 0.16, abs(ring));
-        float ampl = (1.0 - tt) * (1.0 - tt) * 0.011;
-        // 波面: sin(60 ring) の傾き
-        float dh = ampl * cos(60.0 * ring) * 60.0 * win;
-        s += dh * dv / max(r, 0.02);
-        // 落ちた瞬間の王冠（白い点）
-        g_rainSplash += (1.0 - smoothstep(0.03, 0.11, r)) * (1.0 - smoothstep(0.0, 0.14, tt));
+        float ww = 0.032;                                  // 輪の幅（ガウス）
+        float win = exp(-ring * ring / (2.0 * ww * ww));
+        float ampl = 0.004 * (1.0 - tt) * (1.0 - tt);      // 振幅 4mm、時間で減衰
+        // 波面 A·cos(k·ring) の傾き（k = 2π/10cm）
+        s += (-ampl * 62.8 * sin(62.8 * ring) * win) * dv / max(r, 0.012);
       }
     }
-    cellSize *= 0.62;
+    cellSize *= 2.1;
+    life *= 2.1;
   }
   return s;
 }
@@ -228,10 +230,12 @@ void main(){
 
   // ---- 傾き（2 カスケード。ミップで距離に応じてならされる。消えた分の分散 = 粗さ）
   float shoreFade = smoothstep(0.0, 2.2, vDepthA);
-  // 傾きテクスチャは「画素の足跡の長い方」でミップを選ぶ（浅い視線で行ごとにちらつかない）
-  vec2 fx = dFdx(vWorld.xz), fy = dFdy(vWorld.xz);
-  float fl = max(length(fx), length(fy)), fs = min(length(fx), length(fy));
-  float fp = mix(fs, fl, 0.75);
+  // 画素の足跡（湖面の上での大きさ, m）。dFdx(vWorld) から作ると、頂点変位のせいで
+  // 極座標メッシュの三角形ごとにミップが跳んで「楔状の継ぎ目」になる。カメラの幾何から解析的に出す。
+  float pixAngS = 2.0 * uWaterB.y / max(uResolution.y, 1.0);
+  float fpW = dist * pixAngS;                                       // 視線に直交する向き
+  float fpL = min(fpW / max(abs(Vdir.y), 0.004), 3000.0);           // 視線に沿う向き（浅いほど長い）
+  float fp = mix(fpW, fpL, 0.75);
   vec2 g0 = vec2(fp / uTiles.x, 0.0), g1 = vec2(fp / uTiles.y, 0.0);
   vec4 d0 = texture2DGradEXT(tDeriv0, vWorld.xz / uTiles.x, g0, g0.yx);
   vec4 d1 = texture2DGradEXT(tDeriv1, vWorld.xz / uTiles.y, g1, g1.yx);
@@ -247,17 +251,26 @@ void main(){
     float k = 6.2831853 / 9.0;
     slope += -amp * k * sin(sw.y) * vShoreDir * (1.0 - smoothstep(40.0, 140.0, dist));
   }
-  // 雨の波紋
-  float rainNear = (1.0 - smoothstep(12.0, 60.0, dist)) * uRain * (1.0 - 0.75 * smoothstep(3.0, 9.0, wind));
-  float splash = 0.0;
+  // 雨の波紋（法線のリング）。1 画素より細かくなったら描かず、粗さに預ける
+  float rainNear = uRain * (1.0 - smoothstep(0.05, 0.40, fp)) * (1.0 - 0.6 * smoothstep(3.0, 9.0, wind));
   if (rainNear > 0.005) {
     int layers = int(uWaterB.z);
     slope += water_rain(vWorld.xz, uTime, uRain, layers) * rainNear;
-    splash = min(g_rainSplash, 1.0) * rainNear;
   }
   vec3 N = normalize(vec3(-slope.x, 1.0, -slope.y));
-  // 粗さ²: 素の水 + ならされた傾きの分散 + 雨で荒れる
-  float a2 = 0.0009 + var + uRain * 0.006 * (1.0 - rainNear * 0.6) + 0.0004 * smoothstep(40.0, 600.0, dist);
+  // シミュに載らない細かいさざ波（2cm 以下＝表面張力波）。1 画素より細かい分を粗さとして戻す。
+  // これが無いと無風〜微風の湖が「完全な鏡」になる（Cox–Munk の傾き分散を湖向けに控えめにしたもの）
+  // 岸ぎわほど静か。smoothstep で切ると、深さが一定の所に「まっすぐな帯（楔）」の縁が出るので指数で
+  float calmShore = 1.0 - 0.6 * exp(-max(vDepthA, 0.0) / 2.2);
+  float mssCap = (0.0011 + 0.0021 * wind) * mix(0.25, 1.15, vGust) * calmShore;
+  float varCap = mssCap * smoothstep(0.004, 0.05, fp);
+  // 画素の中で法線が振れている分（Kaplanyan の specular AA）。白い輝点＝デッドピクセルを消す
+  vec3 dNx = dFdx(N), dNy = dFdy(N);
+  float varAA = min(0.5 * (dot(dNx, dNx) + dot(dNy, dNy)), 0.05);
+  // 雨で荒れる分（リングが見えているところは二重に数えない）
+  float varRain = uRain * 0.010 * (1.0 - 0.85 * rainNear);
+  // 粗さ²
+  float a2 = 0.0009 + var + varCap + varAA + varRain;
   float sigma = sqrt(0.5 * var + 0.00005);
 
   vec3 sunL = uSunColor;
@@ -278,22 +291,37 @@ void main(){
     float alongT = min(vert0 / max(-T.y, 0.08), 40.0);
     vec3 Pb = vWorld + T * alongT;
     vec4 cb = uViewProj * vec4(Pb, 1.0);
-    vec2 ruv = cb.xy / max(cb.w, 1e-4) * 0.5 + 0.5;
-    ruv = suv + clamp(ruv - suv, vec2(-0.06), vec2(0.06));
-    float zb = texture2D(tSceneDepth, ruv).r;
-    // 屈折先が水面より上の物（岸・木）なら使わない（岸の砂が水中に写り込むのを防ぐ）
+    vec2 rraw = cb.xy / max(cb.w, 1e-4) * 0.5 + 0.5;
+    // ずらす量の上限。±0.06（96px）は波の揺らぎに要る量よりずっと大きく、遠くの岸まで届いてしまい
+    // 「使えない → 戻す」の境目が湖の真ん中に直線の帯として出ていた
+    vec2 roff = clamp(rraw - suv, vec2(-0.02), vec2(0.02));
+    float zb = texture2D(tSceneDepth, suv + roff).r;
+    // 屈折先が水面より上の物（岸・木）や水面より手前の物なら使わない（岸の砂が水中に写り込むのを防ぐ）。
+    // 急に戻すと湖面の途中に継ぎ目の線が出るので、ずらす量をなだらかに 0 へ縮める
     float ySample = uCamPos.y + Vdir.y * (zb / cosV);
-    if (zb < vViewZ + 0.05 || ySample > uLakeLevel + 0.03 || any(lessThan(ruv, vec2(0.0))) || any(greaterThan(ruv, vec2(1.0)))) { ruv = suv; zb = sceneZ; }
+    float bad = smoothstep(uLakeLevel - 0.05, uLakeLevel + 0.55, ySample);
+    // 手前の物に当たった判定は「距離に比例した幅」でなだらかに（固定 0.9m だと浅い視線で 1px の段になる）
+    bad = max(bad, 1.0 - smoothstep(vViewZ, vViewZ + max(0.8, 0.08 * vViewZ), zb));
+    vec2 uvT = suv + roff;
+    bad = max(bad, 1.0 - smoothstep(0.0, 0.02, min(min(uvT.x, uvT.y), min(1.0 - uvT.x, 1.0 - uvT.y))));
+    roff *= 1.0 - bad;
+    vec2 ruv = suv + roff;
+    zb = mix(zb, sceneZ, bad);
     float alongR = max(zb / cosV - rayS, 0.0);
     float vert = alongR * sinDown;
-    vec3 refr = texture2D(tSceneColor, ruv).rgb;
+    if (uDebug > 8.5) { gl_FragColor = vec4(alongR * 0.0015, vert * 0.006, bad * 0.03, 1.0); return; }
+    // 上流（コピーした景色）の異常値を水中に通さない。湖底の草・小石の鏡面が 1 画素の
+    // 白／マゼンタの点になって残るのを防ぐ（発生源は地形・植生側）
+    vec3 refr = clamp(texture2D(tSceneColor, ruv).rgb, vec3(0.0), vec3(8.0));
 
     // ---- コースティクス（浅瀬の湖底）
     float causticVis = (1.0 - smoothstep(1.2, 6.0, vert)) * (1.0 - smoothstep(30.0, 120.0, dist)) * clamp(uSunDir.y * 4.0, 0.0, 1.0);
     if (causticVis > 0.002) {
       vec2 bp = (vWorld + T * alongT).xz;
       float calm = 1.0 - 0.6 * smoothstep(2.0, 9.0, wind);
-      float c = water_caustic(bp * 0.9, uTime) * calm;
+      // 網目が 1 画素より細かくなったらならす（残すと稜線の頂点が白い輝点＝デッドピクセルになる）
+      float caa = 1.0 - smoothstep(0.05, 0.30, fp);
+      float c = min(water_caustic(bp * 0.9, uTime), 2.0) * calm * caa;
       refr *= 1.0 + c * uWaterA.w * causticVis * (0.5 + 0.5 * vGust);
     }
 
@@ -307,22 +335,32 @@ void main(){
     float F = WATER_F0 + (1.0 - WATER_F0) * pow(1.0 - NdotV, 5.0);
     vec3 R = reflect(Vdir, N);
     // ぼかし: 縦は粗さで広く、横は視線の浅さで狭い（波の面の反射は縦に伸びる）
-    // 景色の映り込みは物理どおりに全部ぼかすと「絵」にならないので、分散の 3 割だけ使う（ギラつきは全部使う）
-    float sigmaR = sqrt(0.15 * var + 0.00004);
+    // 景色の映り込みは物理どおりに全部ぼかすと「絵」にならないので、FFT の分散は 3 割。
+    // 一方、細かいさざ波（varCap）は遠いほど像を崩す ＝ 遠方が鏡そのものにならない
+    // （風 3m/s・300m 先で σ ≈ 0.06。近くは像の形が残る）
+    float farMix = 0.18 + 0.55 * smoothstep(60.0, 320.0, dist);
+    float sigmaR = sqrt(0.30 * var + farMix * varCap + 0.5 * varAA + 0.35 * varRain + 0.00004);
     float pixAng = 2.0 * uWaterB.y / uReflSize.y;
     float blurPx = 2.0 * sigmaR / pixAng;
     float lod = clamp(log2(max(blurPx * max(sinDown, 0.06), 1.0)), 0.0, uWaterA.y);
-    float spread = min(2.0 * sigmaR, 0.08);
-    float dRefl = 6.0 * dist + 10.0;
+    float spread = min(2.0 * sigmaR, 0.15);
+    // 「映る物までの距離」の見当。平らな水面なら鏡像カメラは水面上の点で主カメラと一致するので、
+    // L をいくつにしても像は自分の画素（suv）に戻る。L は「波で像がどれだけずれるか」だけを決める。
+    // 以前の 6·dist+10 は遠くで像が RT の外へ飛び、clamp した縁が引き伸ばされて継ぎ目になっていた
+    float dRefl = min(6.0 * dist + 10.0, 140.0);
+    vec2 base = suv;
     vec3 refl = vec3(0.0);
     float wsum = 0.0;
     for (int k = -2; k <= 2; k++){
       float fk = float(k);
       float wk = 3.0 - abs(fk);
       vec3 Rk = R + vec3(0.0, fk * 0.5 * spread, 0.0);
-      Rk.y = max(Rk.y, 0.015);
-      vec2 uvk = projectRefl(vWorld + Rk * dRefl);
-      uvk = clamp(uvk, vec2(0.002), vec2(0.998));
+      Rk.y = max(Rk.y, 0.012);
+      vec2 off = projectRefl(vWorld + Rk * dRefl) - base;
+      // RT からはみ出す分は「縮める」（clamp すると縁の色が伸びて継ぎ目になる）
+      vec2 room = max(mix(base - 0.003, 0.997 - base, step(0.0, off)), vec2(0.0));
+      vec2 sc = min(vec2(1.0), room / max(abs(off), vec2(1e-5)));
+      vec2 uvk = clamp(base + off * min(sc.x, sc.y), vec2(0.002), vec2(0.998));
       refl += texture2DLodEXT(tReflection, uvk, lod).rgb * wk;
       wsum += wk;
     }
@@ -332,7 +370,7 @@ void main(){
       refl = flip_skyColor(normalize(Rs));
     }
     col = mix(body, refl, F);
-    if (uDebug > 0.5) {
+    if (uDebug > 0.5 && uDebug < 6.5) {
       if (uDebug < 1.5) col = vec3(N.x * 4.0 + 0.5, N.z * 4.0 + 0.5, 0.5);
       else if (uDebug < 2.5) col = body;
       else if (uDebug < 3.5) col = refl;
@@ -347,22 +385,27 @@ void main(){
     float crest = clamp(vDisp.y / max(uWaveAmp.w * 0.35, 0.02), 0.0, 1.0);
     col += uScatterColor * sunL * (0.12 / PI) * back * crest * (1.0 - F) * shoreFade;
 
-    // ---- 太陽・月のギラつき（GGX。粗さは「ならされた波」の分散 → 太陽方向に細長い帯になる）
+    // ---- 太陽・月のギラつき（GGX。粗さは「ならされた波」の分散 → 光の方向に細長い帯になる）
+    // 低い太陽・月では帯が長く伸びる（α 0.05 → 0.12）。狭いままだと 1 画素の白い輝点になる
     {
-      vec3 Ns = N;
-      float a2g = a2;
       vec3 H = normalize(V + uSunDir);
-      float NdotL = max(dot(Ns, uSunDir), 0.0);
-      float NdotH = max(dot(Ns, H), 0.0);
+      float NdotL = max(dot(N, uSunDir), 0.0);
+      float NdotH = max(dot(N, H), 0.0);
       float VdotH = max(dot(V, H), 0.0);
       float Fs = WATER_F0 + (1.0 - WATER_F0) * pow(1.0 - VdotH, 5.0);
-      float a2s = max(a2g, 0.0012);
+      float a2s = max(a2, mix(0.0025, 0.0144, 1.0 - smoothstep(0.04, 0.30, uSunDir.y)));
       float spec = Fs * ggx(NdotH, a2s) * smithVis(NdotL, max(NdotV, 1e-3), a2s) * NdotL;
-      col += sunL * min(spec, 14.0) * step(-0.02, uSunDir.y);
+      // 月（uMoonColor は放射輝度の 1/4 で入っている。sky/lighting と同じ ×4）
       vec3 Hm = normalize(V + uMoonDir);
       float NdotLm = max(dot(N, uMoonDir), 0.0);
-      float specm = WATER_F0 * ggx(max(dot(N, Hm), 0.0), max(a2, 0.002)) * smithVis(NdotLm, max(NdotV, 1e-3), max(a2, 0.002)) * NdotLm;
-      col += uMoonColor * 9.0 * min(specm, 60.0);
+      float NdotHm = max(dot(N, Hm), 0.0);
+      float VdotHm = max(dot(V, Hm), 0.0);
+      float Fm = WATER_F0 + (1.0 - WATER_F0) * pow(1.0 - VdotHm, 5.0);
+      float a2m = max(a2, mix(0.0025, 0.0144, 1.0 - smoothstep(0.04, 0.30, uMoonDir.y)));
+      float specm = Fm * ggx(NdotHm, a2m) * smithVis(NdotLm, max(NdotV, 1e-3), a2m) * NdotLm;
+      vec3 glint = sunL * min(spec, 9.0) * step(-0.02, uSunDir.y) + uMoonColor * 4.0 * min(specm, 9.0) * step(0.0, uMoonDir.y);
+      col += glint;
+      if (uDebug > 6.5 && uDebug < 7.5) { gl_FragColor = vec4(glint, 1.0); return; }
     }
 
     // ---- 泡: 波頭（ヤコビアン）＋ 岸の寄せ波
@@ -370,26 +413,34 @@ void main(){
       float foamCrest = d0.a * w0 * uWaterA.z;
       vec2 sw = water_shoreWave(vWorld.xz, vDepthA, uTime, wind);
       float wash = 0.5 + 0.5 * cos(sw.y + 1.2);
-      float shallow = 1.0 - smoothstep(0.02, 0.9 + 0.8 * smoothstep(2.0, 10.0, wind), vDepthA);
-      float foamShore = shallow * (0.1 + 0.9 * wash) * smoothstep(0.0, 0.05, vDepthA) * (0.35 + 0.65 * smoothstep(1.0, 8.0, wind)) * (1.0 - smoothstep(60.0, 220.0, dist));
-      float foamN = flip_vfbm(vWorld.xz * vec2(1.7, 1.7) + vec2(uTime * 0.12, 0.0), 3);
-      float foamN2 = flip_vnoise(vWorld.xz * 6.0 - vec2(0.0, uTime * 0.2));
+      // 岸からの距離（m）で細い帯にする。深さで作ると湖底の傾きで幅が暴れて「白い煙」になった
+      float sdist = -water_shoreDist(max(vDepthA, 0.0));
+      float bandOut = 0.75 + 0.55 * wash + 1.3 * smoothstep(2.0, 10.0, wind);   // 0.3〜1.2m（強風で広い）
+      float band = smoothstep(0.03, 0.30, sdist) * (1.0 - smoothstep(bandOut * 0.5, bandOut, sdist));
+      float foamShore = band * (0.25 + 0.75 * wash) * (0.30 + 0.70 * smoothstep(1.0, 8.0, wind));
+      float foamN = flip_vfbm(vWorld.xz * 4.5 + vec2(uTime * 0.12, 0.0), 3);
+      float foamN2 = flip_vnoise(vWorld.xz * 14.0 - vec2(0.0, uTime * 0.25));
       float m = clamp(foamCrest * 1.6 + foamShore, 0.0, 1.0);
-      float foamTex = smoothstep(0.62 - 0.3 * m, 0.82 - 0.2 * m, foamN * 0.85 + foamN2 * 0.15 + m * 0.18);
-      float texFade = 1.0 - smoothstep(0.25, 0.9, fp);   // 画素より細かい泡はならして消す
-      float foam = m * mix(foamTex * texFade, 1.0, 0.35 * smoothstep(0.75, 1.0, m));
-      foam *= 1.0 - smoothstep(60.0, 400.0, dist) * 0.5;
+      // 穴のある泡（閾値を高く、飽和させない）
+      float foamTex = smoothstep(0.78 - 0.34 * m, 0.94 - 0.24 * m, foamN * 0.8 + foamN2 * 0.2 + 0.10 * m);
+      // 画素より細かい泡は「薄い膜」ではなく消す（残すと白い煙になる）。横方向の足跡で測る
+      float texFade = 1.0 - smoothstep(0.10, 0.45, fpW);
+      float foam = min(m * foamTex * texFade, 0.6);
+      foam *= 1.0 - smoothstep(80.0, 300.0, dist);
       vec3 foamCol = (sunL * max(dot(N, uSunDir), 0.0) * 0.85 + uSkyAmbient * 0.9) / PI;
       col = mix(col, foamCol, foam);
-      col = mix(col, foamCol * 1.3, splash * 0.85);
       // 岸ぎわは透ける（水深 0 で湖底そのもの）
       // 岸線は解析的な深さ（なめらか）で、深いところの物との交線は深度バッファで
       float vertEdge = along * sinDown;
-      float ew = max(0.05, 3.0 * fwidth(vertEdge));
+      // 交線の幅。fwidth を上限なしで使うと、浅い視線では湖底のうねりで数 m まで跳ね、
+      // 湖の真ん中に「明るい破線」（湖底の砂がそのまま透ける筋）が出る。25cm で頭打ちにする
+      float ew = clamp(3.0 * fwidth(vertEdge), 0.03, 0.25);
       float edgeA = smoothstep(0.0, 0.12, vDepthA);
       float edgeD = smoothstep(0.0, ew, vertEdge) * smoothstep(0.0, 0.15, along);
-      // 深度バッファの交線は近く（地形 LOD が細かい範囲）だけ。遠くは地形メッシュの粗さで岸に点が並ぶ
-      float edge = edgeA * mix(1.0, edgeD, smoothstep(1.5, 3.0, vDepthA) * (1.0 - smoothstep(40.0, 90.0, dist)));
+      // 深度バッファの交線は近く（地形 LOD が細かい範囲）だけ。遠くは地形メッシュの粗さで岸に点が並ぶ。
+      // 深さの重みは指数（smoothstep だと深さ一定の所に真っ直ぐな帯の縁が出る）
+      float edge = edgeA * mix(1.0, edgeD, (1.0 - exp(-max(vDepthA, 0.0) / 0.8)) * (1.0 - smoothstep(40.0, 90.0, dist)));
+      if (uDebug > 7.5 && uDebug < 8.5) { gl_FragColor = vec4(foam, edge, 0.0, 1.0); return; }
       col = mix(texture2D(tSceneColor, suv).rgb, col, edge);
     }
   } else {
