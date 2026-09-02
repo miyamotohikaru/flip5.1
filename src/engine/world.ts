@@ -276,6 +276,7 @@ export class World {
     window.removeEventListener("resize", this.resize);
     this.runtime?.dispose();
     this.controls.dispose();
+    this.audio.dispose?.();
     this.pipeline.dispose();
     this.renderer.dispose();
   }
