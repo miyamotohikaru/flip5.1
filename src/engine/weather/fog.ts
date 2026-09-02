@@ -22,6 +22,7 @@ uniform vec3 uGroundAmbient;
 uniform float uLightning;
 uniform vec3 uLightningPos;
 uniform float uWxSteps;
+uniform float uWxDebug;
 varying vec2 vUv;
 varying vec3 vRay;
 
@@ -41,14 +42,15 @@ float mistDensity(vec3 p){
   float base = max(layer, creep) * step(-1.0, hag);
   // 細かいむら: 横に長く、縦に薄い「たなびき」。コントラストを強く（濃い塊と切れ目）
   vec3 q = (p + uWxFogDrift) * vec3(0.045, 0.3, 0.045);
-  float n = wx_noise3(q);
-  n = smoothstep(0.42, 0.78, n);
+  float n = wx_noise3(q) * 0.75 + 0.25 * flip_vnoise(q.xz * 3.5 + q.y * 0.5 + 3.0);
+  n = smoothstep(0.42, 0.72, n);
   // 湖面すれすれ（〜70cm）の濃い「たなびき」: 風向きに引き伸ばした 2D ノイズで筋状に
   vec2 wd = normalize(uWxFogDrift.xz + vec2(1e-3, 0.0));
   vec2 pw = vec2(dot(p.xz, wd), dot(p.xz, vec2(-wd.y, wd.x)));
+  // 33m×9m の帯 → 9m×2.5m → 3m×0.8m の3オクターブ（近景でも模様が見える細かさ）
   vec2 pn = vec2(pw.x * 0.03, pw.y * 0.11) + uWxFogDrift.xz * 0.05;
-  float n2 = 0.7 * flip_vnoise(pn) + 0.3 * flip_vnoise(pn * 3.7 + 11.0);
-  float wisp = exp(-max(hL, 0.0) / 1.0) * smoothstep(0.42, 0.62, n2) * smoothstep(3.0, -0.5, th - uWxLake) * step(-1.0, hag);
+  float n2 = 0.5 * flip_vnoise(pn) + 0.3 * flip_vnoise(pn * 3.7 + 11.0) + 0.2 * flip_vnoise(pn * 11.0 + 5.0);
+  float wisp = exp(-max(hL, 0.0) / 1.0) * smoothstep(0.44, 0.6, n2) * smoothstep(3.0, -0.5, th - uWxLake) * step(-1.0, hag);
   return base * (0.08 + 0.92 * n) + wisp * 4.0;
 }
 
@@ -57,7 +59,8 @@ vec3 stepLight(vec3 p, vec3 rd, vec3 skyH){
   float sunUp = smoothstep(-0.06, 0.04, uSunDir.y);
   float cs = dot(rd, uSunDir);
   vec3 sun = uSunColor * (wx_phaseHG(cs, 0.6) * 0.75 + 0.06) * sunUp;
-  vec3 amb = mix(uSkyAmbient * 0.6, skyH, 0.65) + uGroundAmbient * 0.15;
+  // 霧の粒は空全体の光を散らすので、地平の空より少し明るく白い
+  vec3 amb = mix(uSkyAmbient * 0.6, skyH, 0.65) * 1.35 + uGroundAmbient * 0.15;
   vec3 moon = uMoonColor * (wx_phaseHG(dot(rd, uMoonDir), 0.5) * 0.7 + 0.1) * 2.0;
   vec3 lp = uLightningPos + vec3(0.0, uWxCloudBase * 0.45, 0.0);
   float dl = distance(p, lp);
@@ -147,6 +150,25 @@ void main(){
     float iso = flip_line(odTotal * 5.0, 0.06);
     vec3 mc = (FLIP_LINE * iso * 0.9 + FLIP_BG * 0.6) * (1.0 - T);
     L = mix(L, mc, fmask);
+  }
+  if (uWxDebug > 0.5) L = vec3(1.0, 0.0, 0.0) * (1.0 - T);
+  if (uWxDebug > 1.5) {
+    // ノイズの可視化: 視線が湖面／地面に当たる点の 2D・3D ノイズ
+    vec3 pe = ro + rd * min(tEnd, 400.0);
+    vec2 wd2 = normalize(uWxFogDrift.xz + vec2(1e-3, 0.0));
+    vec2 pw2 = vec2(dot(pe.xz, wd2), dot(pe.xz, vec2(-wd2.y, wd2.x)));
+    float a = flip_vnoise(vec2(pw2.x * 0.03, pw2.y * 0.11));
+    float b = wx_noise3(pe * vec3(0.045, 0.3, 0.045));
+    L = vec3(a, b, mistDensity(vec3(pe.x, uWxLake + 0.3, pe.z)) * 0.25);
+    T = 0.0;
+  }
+  if (uWxDebug > 2.5) {
+    // 水面到達点での密度（R）・レイの長さ（G: 20m 周期）・行程数（B）
+    float tw = (ro.y > uWxLake && rd.y < 0.0) ? (uWxLake - ro.y) / rd.y : 1e9;
+    float t1d = min(tw, tEnd);
+    vec3 pw3 = ro + rd * (t1d - 0.5);
+    L = vec3(mistDensity(pw3) * 0.3, fract(t1d / 20.0), odTotal * 0.5);
+    T = 0.0;
   }
   gl_FragColor = vec4(L, T);
 }
@@ -246,7 +268,7 @@ export class GroundFog {
       magFilter: THREE.LinearFilter,
     });
     this.marchMat = new THREE.ShaderMaterial({
-      uniforms: w.bind({ uWxSteps: { value: w.counts.fogSteps } }),
+      uniforms: w.bind({ uWxSteps: { value: w.counts.fogSteps }, uWxDebug: { value: 0 } }),
       vertexShader: WX_FS_VERT,
       fragmentShader: MARCH_FRAG,
       depthTest: false,

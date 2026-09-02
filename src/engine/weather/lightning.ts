@@ -85,14 +85,14 @@ function buildBolt(seed: number, top: THREE.Vector3, bottom: THREE.Vector3): Seg
         const tmp = new THREE.Vector3(rnd() - 0.5, (rnd() - 0.5) * 0.3, rnd() - 0.5).normalize();
         const bdir = mainDir.clone().multiplyScalar(0.55).addScaledVector(tmp, 0.75).normalize();
         const remain = p.distanceTo(bottom);
-        const blen = remain * (0.12 + 0.28 * rnd());
+        const blen = Math.min(remain * (0.06 + 0.16 * rnd()), 140);
         const end = p.clone().addScaledVector(bdir, blen);
         const oo = o0 + ((o1 - o0) * (i + 1)) / n;
         channel(p, end, 3, width * (depth === 0 ? 0.45 : 0.3), oo, oo + 0.25, 0.22, depth + 1);
       }
     }
   };
-  channel(top, bottom, 7, 1, 0, 1, 0.24, 0);
+  channel(top, bottom, 7, 1, 0, 1, 0.3, 0);
   return segs.slice(0, MAX_SEG);
 }
 
@@ -140,9 +140,9 @@ varying float vW;
 void main(){
   float x = abs(vX);
   // 細い白熱の芯（〜1.5px）＋ 青白い広い光（〜16px）。枝は細く暗く
-  float core = exp(-x * x * 120.0);
+  float core = exp(-x * x * 160.0);
   float glow = exp(-x * 4.5) * 0.022 + exp(-x * 1.6) * 0.006;
-  float i = (core * 20.0 + glow * 6.0) * mix(0.35, 1.0, vW) * uBoltFlash * vVis;
+  float i = (core * 5.0 + glow * 6.0) * mix(0.35, 1.0, vW) * uBoltFlash * vVis;
   vec3 col = mix(vec3(0.7, 0.8, 1.0), vec3(1.0, 0.98, 1.0), core) * i;
   vec4 aer = flip_aerial(vWorld);
   col *= aer.a;
