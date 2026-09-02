@@ -50,6 +50,7 @@ uniform vec3 uHighlightTint;
 uniform vec2 uSplit;
 uniform float uVignette;
 uniform float uGradeOn;
+uniform float uDebug;
 uniform float uRain;
 uniform float uUnderwater;
 uniform float uAspect;
@@ -256,6 +257,10 @@ void main(){
   float scan = exp(-abs(distC - uFlipRadius) / 2.5) * step(0.001, uFlipRadius) * (1.0 - step(5990.0, uFlipRadius));
   c += FLIP_ACCENT * scan * 1.2 / max(uExposure, 0.3);
 
+  // 調査用: 裏返しの縁の値をそのまま出す（uDebug=2 は距離: R = 中心からの距離/100, G = 視線距離/100, B = 高さ/50）
+  if (uDebug > 1.5) { gl_FragColor = vec4(distC / 100.0, lin / 100.0, worldPos.y / 50.0, 1.0); return; }
+  if (uDebug > 0.5) { gl_FragColor = vec4(fm, scan, edgeK, 1.0); return; }
+
   // 自動露出（env.exposure を基準に ±）。露出後の平均輝度が uAutoRef から離れた分だけ、部分的に寄せる
   float logAvg = texture2D(tAdapt, vec2(0.5)).r;
   float L = exp2(logAvg) * uExposure;
@@ -310,7 +315,7 @@ export function gradeUniforms(): Record<string, THREE.IUniform> {
     uExposure: { value: 1 },
     uAutoStrength: { value: 0.45 },
     uAutoRef: { value: 0.5 },
-    uAutoRange: { value: new THREE.Vector2(0.6, 1.75) },
+    uAutoRange: { value: new THREE.Vector2(0.7, 1.45) },
     uWarmth: { value: 0 },
     uSaturation: { value: 0.96 },
     uContrast: { value: 1.04 },
@@ -319,6 +324,7 @@ export function gradeUniforms(): Record<string, THREE.IUniform> {
     uSplit: { value: new THREE.Vector2(0.35, 0.35) },
     uVignette: { value: 0.3 },
     uGradeOn: { value: 1 },
+    uDebug: { value: 0 },
     uRain: { value: 0 },
     uUnderwater: { value: 0 },
     uAspect: { value: 16 / 9 },

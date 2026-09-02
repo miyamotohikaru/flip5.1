@@ -151,9 +151,9 @@ export class AO {
         uInvProj: { value: new THREE.Matrix4() },
         uNear: { value: 0.1 },
         uFar: { value: 9000 },
-        uRadius: { value: 1.3 },
-        uFalloffStart: { value: 40 },
-        uFalloffEnd: { value: 90 },
+        uRadius: { value: 1.5 },
+        uFalloffStart: { value: 30 },
+        uFalloffEnd: { value: 60 },
       },
       AO_FRAG,
     );

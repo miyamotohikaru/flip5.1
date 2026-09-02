@@ -170,10 +170,11 @@ export class Post {
     (u.uSplit.value as THREE.Vector2).set(0.35 + 0.3 * night + 0.1 * storm, 0.35 + 0.35 * golden - 0.3 * night);
     u.uVignette.value = this.dbg.has("nograde") ? 0 : 0.28 + 0.12 * storm + 0.06 * night + 0.08 * rain;
     u.uGradeOn.value = this.dbg.has("nograde") ? 0 : 1;
+    u.uDebug.value = this.dbg.has("flipview") ? 1 : this.dbg.has("distview") ? 2 : 0;
     u.uBloomStrength.value = 0.055 + 0.02 * golden + 0.02 * night + 0.02 * rain;
     u.uRain.value = rain;
     u.uExposure.value = env.exposure;
-    u.uAoStrength.value = this.ao ? 1.0 : 0.0;
+    u.uAoStrength.value = this.ao ? 1.15 : 0.0;
     const underwater = smoothstep(0, 0.3, env.uniforms.uLakeLevel.value - env.cameraPos.y);
     u.uUnderwater.value = underwater;
     // 太陽の画面位置（太陽方向の遠い点をカメラで射影する）
@@ -201,8 +202,9 @@ export class Post {
     const dbg = this.dbg;
     u.uGodStrength.value = this.godrays && !dbg.has("nogod") ? (0.12 + 0.38 * golden) * (1 - 0.45 * cloud) * (1 - 0.5 * storm) * sunUp * offFade : 0;
     u.uFlareStrength.value = dbg.has("noflare") || dbg.has("nolens") ? 0 : 0.6 * sunUp * (1 - 0.7 * cloud) * (1 - storm) * (dbg.has("flarex") ? 4 : 1);
-    u.uAutoRef.value = THREE.MathUtils.lerp(0.5, 0.03, night);
-    u.uAutoStrength.value = dbg.has("noauto") ? 0 : 0.45;
+    // 自動露出の基準（露出後の平均輝度）。夜と嵐は暗いままでよい
+    u.uAutoRef.value = THREE.MathUtils.lerp(0.5, 0.12, night) * (1 - 0.45 * storm);
+    u.uAutoStrength.value = dbg.has("noauto") ? 0 : 0.4;
     if (dbg.has("nobloom")) u.uBloomStrength.value = 0;
     if (dbg.has("noao")) u.uAoStrength.value = 0;
     if (dbg.has("nolens")) u.uRain.value = 0;
@@ -329,7 +331,8 @@ export class Post {
     if (this.dbg.size > 0 && !photo) {
       const v = this.viewMat.uniforms;
       let tex: THREE.Texture | null = null, mode = 0;
-      if (this.dbg.has("aoview") && this.ao) { tex = this.ao.texture; mode = 0; }
+      if (this.dbg.has("flipview") || this.dbg.has("distview")) { tex = this.ldrA.texture; mode = 2; }
+      else if (this.dbg.has("aoview") && this.ao) { tex = this.ao.texture; mode = 0; }
       else if (this.dbg.has("aodepth") && this.ao) { tex = this.ao.texture; mode = 3; }
       else if (this.dbg.has("depthview")) { tex = depth; mode = 4; v.uNear.value = cam.near; v.uFar.value = cam.far; }
       else if (this.dbg.has("godview") && this.godrays) { tex = this.godrays.texture; mode = 0; }
