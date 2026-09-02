@@ -9,7 +9,7 @@ export type BakeResult = { heightmap: Heightmap; ms: number; mode: BakeMode; wor
 
 type WorkerMsg =
   | { type: "progress"; rows: number }
-  | { type: "done"; data: Float32Array; j0: number; j1: number; min: number; max: number };
+  | { type: "done"; data: Float32Array; parts: Uint16Array; j0: number; j1: number; min: number; max: number };
 
 /** 全体の時間切れ（低速端末の 2048² でも数秒） */
 const TIMEOUT_MS = 30000;
@@ -43,6 +43,7 @@ export async function bakeHeightmapAsync(res: number, onProgress?: (p: number) =
 function bakeInWorkers(res: number, n: number, onProgress?: (p: number) => void): Promise<Heightmap> {
   return new Promise<Heightmap>((resolve, reject) => {
     const data = new Float32Array(res * res);
+    const parts = new Uint16Array(res * res * 4);
     const rowsPer = Math.ceil(res / n);
     const workers: Worker[] = [];
     let finished = false;
@@ -88,13 +89,14 @@ function bakeInWorkers(res: number, n: number, onProgress?: (p: number) => void)
           onProgress?.(Math.min(1, doneRows / res));
         } else if (m.type === "done") {
           data.set(m.data, m.j0 * res);
+          parts.set(m.parts, m.j0 * res * 4);
           if (m.min < min) min = m.min;
           if (m.max > max) max = m.max;
           doneCount++;
           if (doneCount === workers.length) {
             finished = true;
             cleanup();
-            resolve(heightmapFromData(data, res, min, max));
+            resolve(heightmapFromData(data, res, min, max, parts));
           }
         }
       };

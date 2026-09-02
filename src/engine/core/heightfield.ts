@@ -1,10 +1,10 @@
 // 世界の形。地形の高さ heightAt() の本体は height.ts（three に依存しない。Worker からも使う）。
 // ここは three を使う部分（法線・ハイトマップのテクスチャ）と、従来の import 先としての再輸出。
 // 画像のハイトマップは読み込まない。実行時に heightAt() から焼く。
-import { ClampToEdgeWrapping, DataTexture, FloatType, LinearFilter, RedFormat, Vector3 } from "three";
+import { DataTexture, FloatType, HalfFloatType, LinearFilter, MirroredRepeatWrapping, RedFormat, RGBAFormat, Vector3 } from "three";
 import { WORLD, heightAt, bakeHeightRows } from "./height";
 
-export { WORLD, shoreRadius, heightAt, startPosition, bakeHeightRows } from "./height";
+export { WORLD, shoreRadius, heightAt, startPosition, bakeHeightRows, heightPartsAt, toHalfFloat } from "./height";
 
 /** 地形の法線（有限差分）。 */
 export function normalAt(x: number, z: number, eps = 1.5): Vector3 {
@@ -19,10 +19,29 @@ export type Heightmap = {
   texture: DataTexture;
   min: number;
   max: number;
+  /**
+   * 高さの3成分（RGBA16F、m）。r = 山脈, g = 土台（湖底・土手・上り・丘・沢筋）, b = 細部, a = 岸線からの距離（±500 で飽和）。
+   * r + g + b = 高さ。裏返しの「数式の足し算」表示に使う。texel の対応は texture と同じ。
+   */
+  parts: DataTexture;
 };
 
-/** 焼き済みの Float32Array からハイトマップ（テクスチャ込み）を組み立てる。Worker で焼いた結果の受け取りにも使う。 */
-export function heightmapFromData(data: Float32Array, res: number, min?: number, max?: number): Heightmap {
+function makeTexture(tex: DataTexture) {
+  tex.magFilter = LinearFilter;
+  tex.minFilter = LinearFilter;
+  // 端の外は鏡像で続ける（遠景の霧の中に「もう一つ向こうの山脈」が見える。端に台地の壁ができない）
+  tex.wrapS = MirroredRepeatWrapping;
+  tex.wrapT = MirroredRepeatWrapping;
+  tex.generateMipmaps = false;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+/**
+ * 焼き済みの配列からハイトマップ（テクスチャ込み）を組み立てる。Worker で焼いた結果の受け取りにも使う。
+ * parts は bakeHeightRows が書く (mtn, base, fine, shore) の half float 配列（res×res×4）。
+ */
+export function heightmapFromData(data: Float32Array, res: number, min?: number, max?: number, parts?: Uint16Array): Heightmap {
   if (min === undefined || max === undefined) {
     min = Infinity;
     max = -Infinity;
@@ -32,14 +51,11 @@ export function heightmapFromData(data: Float32Array, res: number, min?: number,
       if (h > max) max = h;
     }
   }
-  const texture = new DataTexture(data, res, res, RedFormat, FloatType);
-  texture.magFilter = LinearFilter;
-  texture.minFilter = LinearFilter;
-  texture.wrapS = ClampToEdgeWrapping;
-  texture.wrapT = ClampToEdgeWrapping;
-  texture.generateMipmaps = false;
-  texture.needsUpdate = true;
-  return { res, data, texture, min, max };
+  const texture = makeTexture(new DataTexture(data, res, res, RedFormat, FloatType));
+  const partsTex = parts
+    ? makeTexture(new DataTexture(parts, res, res, RGBAFormat, HalfFloatType))
+    : makeTexture(new DataTexture(new Uint16Array(4), 1, 1, RGBAFormat, HalfFloatType));
+  return { res, data, texture, min, max, parts: partsTex };
 }
 
 /**
@@ -50,15 +66,16 @@ export function heightmapFromData(data: Float32Array, res: number, min?: number,
  */
 export function bakeHeightmap(res: number, onProgress?: (p: number) => void): Heightmap {
   const data = new Float32Array(res * res);
+  const parts = new Uint16Array(res * res * 4);
   let min = Infinity, max = -Infinity;
   const step = 64;
   for (let j = 0; j < res; j += step) {
-    const r = bakeHeightRows(data, res, j, Math.min(res, j + step));
+    const r = bakeHeightRows(data, res, j, Math.min(res, j + step), 0, parts);
     if (r.min < min) min = r.min;
     if (r.max > max) max = r.max;
     if (onProgress) onProgress(j / res);
   }
-  return heightmapFromData(data, res, min, max);
+  return heightmapFromData(data, res, min, max, parts);
 }
 
 /** ハイトマップからの高さ（バイリニア）。GPUと同じ値が欲しいときに使う。 */

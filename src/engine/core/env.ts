@@ -134,6 +134,21 @@ export class Env {
     uLakeLevel: { value: WORLD.lakeLevel },
     /** 水中 0..1（水モジュールが更新） */
     uUnderwater: { value: 0 },
+    /**
+     * 地形担当が起動時に GPU で焼く補助テクスチャ（RGBA8、texel の対応は uHeightmap と同じ）:
+     * rg = 法線 xz（0..1 に符号化）, b = 空の見え方（AO, 谷底で小さい）, a = 谷筋の陰（cavity, 0.5 = 平ら）。
+     * flip_height チャンクの flip_terrainNormalBaked / flip_terrainAO / flip_terrainCavity で読む。
+     */
+    uTerrainAux: { value: null as THREE.Texture | null },
+    /**
+     * 地平角マップ（RGBA8 × 2、1024²）: 8方位（+X から +Z 回りに 45° 刻み。A = 0..3, B = 4..7）の
+     * 地平の仰角 / (π/2)。flip_terrainSunVis(xz, dir) で「山の影」（太陽・月がその地点から見えるか）を出す。
+     * 地形・木・草・水など、どのモジュールも使ってよい。
+     */
+    uTerrainHorizonA: { value: null as THREE.Texture | null },
+    uTerrainHorizonB: { value: null as THREE.Texture | null },
+    /** 高さの3成分（heightfield.ts の Heightmap.parts）。裏返しの「数式の足し算」表示に使う */
+    uHeightParts: { value: null as THREE.Texture | null },
   };
 
   setWeather(name: WeatherPresetName) {

@@ -2,7 +2,7 @@
 // 複数の Worker に行を分けて渡し、結果の Float32Array を transfer で受け取る（bake.ts）。
 //   受信: { res, j0, j1 }                                行 j0..j1（j1 は含まない）を焼く
 //   送信: { type: "progress", rows }                     焼けた行数（何度か）
-//         { type: "done", data, j0, j1, min, max }       data は (j1−j0)×res の Float32Array（transfer）
+//         { type: "done", data, parts, j0, j1, min, max } data は (j1−j0)×res の Float32Array、parts は ×4 の Uint16Array（transfer）
 // three は import しない（Turbopack は client 向けに typeof window を定数化するので、Worker で three を読むと落ちる）。
 import { bakeHeightRows } from "../core/height";
 
@@ -15,15 +15,17 @@ const ctx = self as unknown as {
 
 ctx.onmessage = (e) => {
   const { res, j0, j1 } = e.data;
-  const data = new Float32Array(Math.max(0, j1 - j0) * res);
+  const rows = Math.max(0, j1 - j0);
+  const data = new Float32Array(rows * res);
+  const parts = new Uint16Array(rows * res * 4);
   let min = Infinity, max = -Infinity;
   const step = 32;
   for (let j = j0; j < j1; j += step) {
     const je = Math.min(j1, j + step);
-    const r = bakeHeightRows(data, res, j, je, j0);
+    const r = bakeHeightRows(data, res, j, je, j0, parts);
     if (r.min < min) min = r.min;
     if (r.max > max) max = r.max;
     ctx.postMessage({ type: "progress", rows: je - j });
   }
-  ctx.postMessage({ type: "done", data, j0, j1, min, max }, [data.buffer]);
+  ctx.postMessage({ type: "done", data, parts, j0, j1, min, max }, [data.buffer, parts.buffer]);
 };
