@@ -127,7 +127,9 @@ varying float vGust;
 varying vec2 vShoreDir;
 
 const float F0 = 0.02;
-const float PI = 3.14159265;
+#ifndef PI
+#define PI 3.14159265
+#endif
 
 vec2 projectRefl(vec3 p){
   vec4 c = uReflMatrix * vec4(p, 1.0);

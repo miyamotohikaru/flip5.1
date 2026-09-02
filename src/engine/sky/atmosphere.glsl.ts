@@ -19,7 +19,9 @@ export const ATMO_COMMON = /* glsl */ `
 #ifndef FLIP_ATMO_COMMON
 #define FLIP_ATMO_COMMON
 #ifndef PI
+#ifndef PI
 #define PI 3.141592653589793
+#endif
 #endif
 #define FLIP_RG 6360.0
 #define FLIP_RT 6460.0
