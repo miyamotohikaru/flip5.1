@@ -33,7 +33,8 @@ const DOUBLE_MS = 320;
 const DOUBLE_DIST = 48;
 const OVERDRIVE = 1.35;
 const INERTIA_TAU = 0.3;
-const INERTIA_MAX = 2200;
+/** 慣性の上限（px/s）。強く弾いても 1 回で 90° ほど（INERTIA_MAX × INERTIA_TAU ≈ 360px）までしか回らない */
+const INERTIA_MAX = 1200;
 
 export class TouchInput {
   /** 一度でもタッチされた（UI がスティックなどを出す判断に使える） */
@@ -51,9 +52,8 @@ export class TouchInput {
   private lookDy = 0;
   private lookLastX = 0;
   private lookLastY = 0;
-  private velX = 0;
-  private velY = 0;
-  private lastMoveT = 0;
+  /** 直近の見回しの軌跡（t, x, y）。離した瞬間の速さを「最後の 100ms の変位」から出す（イベントの間引きに強い） */
+  private trail: { t: number; x: number; y: number }[] = [];
   private inertiaX = 0;
   private inertiaY = 0;
 
@@ -111,9 +111,9 @@ export class TouchInput {
         this.look.active = true;
         this.look.x = this.lookLastX = t.clientX;
         this.look.y = this.lookLastY = t.clientY;
-        this.velX = this.velY = 0;
+        this.trail.length = 0;
+        this.trail.push({ t: now, x: t.clientX, y: t.clientY });
         this.inertiaX = this.inertiaY = 0; // 触れたら慣性は止まる
-        this.lastMoveT = now;
       }
     }
   };
@@ -140,12 +140,10 @@ export class TouchInput {
         const ddx = t.clientX - this.lookLastX, ddy = t.clientY - this.lookLastY;
         this.lookDx += ddx;
         this.lookDy += ddy;
-        const dtm = Math.max(4, now - this.lastMoveT);
-        this.velX = 0.5 * this.velX + 0.5 * ((ddx / dtm) * 1000);
-        this.velY = 0.5 * this.velY + 0.5 * ((ddy / dtm) * 1000);
-        this.lastMoveT = now;
         this.lookLastX = this.look.x = t.clientX;
         this.lookLastY = this.look.y = t.clientY;
+        this.trail.push({ t: now, x: t.clientX, y: t.clientY });
+        if (this.trail.length > 12) this.trail.shift();
       }
     }
   };
@@ -171,15 +169,28 @@ export class TouchInput {
       } else if (t.identifier === this.lookId) {
         this.lookId = -1;
         this.look.active = false;
-        // 直前（120ms 以内）まで動いていたら、その速さで慣性を付ける（止めてから離せば付かない）
-        if (now - this.lastMoveT < 120) {
-          const m = Math.hypot(this.velX, this.velY);
-          const k = m > 120 ? Math.min(1, INERTIA_MAX / Math.max(m, 1e-6)) : 0;
-          this.inertiaX = this.velX * k;
-          this.inertiaY = this.velY * k;
-        } else {
-          this.inertiaX = this.inertiaY = 0;
+        // 最後の 100ms ほどの変位から速さを出し、その速さで慣性を付ける（止めてから離せば変位 0 で付かない）
+        this.inertiaX = this.inertiaY = 0;
+        const tr = this.trail;
+        const last = tr[tr.length - 1];
+        if (last && now - last.t < 150) {
+          let ref = tr[0];
+          for (let i = tr.length - 1; i >= 0; i--) {
+            if (now - tr[i].t >= 80) {
+              ref = tr[i];
+              break;
+            }
+          }
+          const dtm = Math.max(16, last.t - ref.t);
+          const vx = ((last.x - ref.x) / dtm) * 1000, vy = ((last.y - ref.y) / dtm) * 1000;
+          const m = Math.hypot(vx, vy);
+          if (m > 120) {
+            const k = Math.min(1, INERTIA_MAX / m);
+            this.inertiaX = vx * k;
+            this.inertiaY = vy * k;
+          }
         }
+        this.trail.length = 0;
       }
     }
   };
