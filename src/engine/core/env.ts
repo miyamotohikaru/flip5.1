@@ -97,6 +97,8 @@ export class Env {
   tier: QualityTier = "high";
   isMobile = false;
   heightmap!: Heightmap;
+  /** 水中 0..1（カメラが湖面より下）。水モジュールが毎フレーム更新する。ポスト（水中の霧）・音などが読む */
+  underwater = 0;
 
   /** 全マテリアルで共有する uniforms。参照を渡すこと（コピーしない）。 */
   uniforms = {
@@ -130,6 +132,8 @@ export class Env {
     uHeightmap: { value: null as THREE.Texture | null },
     uHeightmapInfo: { value: new THREE.Vector4(WORLD.size, 1 / WORLD.size, 1024, WORLD.maxHeight) },
     uLakeLevel: { value: WORLD.lakeLevel },
+    /** 水中 0..1（水モジュールが更新） */
+    uUnderwater: { value: 0 },
   };
 
   setWeather(name: WeatherPresetName) {
@@ -228,5 +232,6 @@ export class Env {
     u.uLightning.value = this.lightning.flash;
     u.uLightningPos.value.copy(this.lightning.position);
     u.uExposure.value = this.exposure;
+    u.uUnderwater.value = this.underwater;
   }
 }
