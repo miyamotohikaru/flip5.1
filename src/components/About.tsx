@@ -164,6 +164,36 @@ export default function About({ open, onClose, sourceLines, isMobile }: Props) {
           </a>
         </p>
 
+        <p className="about-label">はじめてではありません</p>
+        <p>
+          数式だけで風景を描く試みには、
+          <MobileBreak />
+          20年以上の歴史があります。
+          <br />
+          <b>Elevated</b>（2009年）は、たった4キロバイトの
+          <MobileBreak />
+          プログラムで山と湖と霧を描き、音楽まで鳴らしました。
+          <br />
+          <b>Shadertoy</b> には、素材を使わない風景が
+          <MobileBreak />
+          何千と投稿されています。
+          <br />
+          この作品も、その系譜の上にあります。
+        </p>
+        <p>
+          違うのは、<b>歩けること</b>。
+          <MobileBreak />
+          そして、<b>裏返して自分で確かめられること</b>。
+          <br />
+          既存の作品は「見るもの」で、素材ゼロかどうかは
+          <MobileBreak />
+          プログラムを読める人しか確かめられませんでした。
+          <br />
+          音まで数式で、風景と連動します。
+          <MobileBreak />
+          雷が遠ければ、雷鳴もその分だけ遅れて届きます。
+        </p>
+
         <p className="about-label">たとえるなら</p>
         <p>
           絵の具も写真も使わず、自然のルール
