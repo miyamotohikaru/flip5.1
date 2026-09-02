@@ -30,6 +30,9 @@ export type HudProps = {
   /** マウス固定（PointerLock）が入っている */
   lock: boolean;
   gyro: "none" | "off" | "on";
+  /** 実験室が開いているか */
+  lab: boolean;
+  onLab: () => void;
   onFlip: () => void;
   onPhoto: () => void;
   onMute: () => void;
@@ -74,6 +77,9 @@ export default function Hud(p: HudProps) {
               マウス固定
             </button>
           )}
+          <button className={`btn ${p.lab ? "on" : ""}`} onClick={p.onLab} aria-pressed={p.lab} aria-label="数式のつまみをいじる（L）">
+            いじる
+          </button>
           <button className="btn icon" onClick={p.onAbout} aria-label="この風景について">
             ？
           </button>

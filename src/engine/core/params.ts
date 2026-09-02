@@ -10,6 +10,9 @@
 //   ?flipr=300     … 裏返しの波の半径（m）
 //   ?q=high        … 品質段階
 //   ?shot=<name>   … 下の SHOTS に定義した定点
+//   ?seed=12345    … 世界のシード（core/seed.ts。ここが読む前に seed.ts が location から読んでいる）
+//   ?p=terrain.amp:1.4,sky.mie:2 … 実験室のつまみ（engine/lab/params.ts）
+//   ?lab=1         … 実験室を開いた状態で始める
 import type { WeatherPresetName, QualityTier } from "./env";
 import { startPosition } from "./heightfield";
 
@@ -56,6 +59,8 @@ export type Params = {
   flipRadius?: number;
   tier?: QualityTier;
   shot?: ShotDef;
+  /** 実験室（いじる）を開いた状態で始める */
+  lab: boolean;
   /** 描画の負荷計測を出す */
   stats: boolean;
   /** デバッグ: 描画段階を飛ばす（noref / nocopy / notrans / nopost / noshadow） */
@@ -68,6 +73,7 @@ export function parseParams(search: string): Params {
     auto: q.get("auto") === "1",
     nohud: q.get("nohud") === "1",
     freeze: q.get("freeze") === "1",
+    lab: q.get("lab") === "1",
     stats: q.get("stats") === "1",
     dbg: (q.get("dbg") ?? "").split(",").filter(Boolean),
   };

@@ -92,7 +92,7 @@ export class Sky {
   private envRT: THREE.WebGLRenderTarget | null = null;
   private envTimer = 1e9;
   private envSunDir = new THREE.Vector3(0, -2, 0);
-  private baked = { shape: 0, detail: 0, weather: false, hazeKm: -1 };
+  private baked = { shape: 0, detail: 0, weather: false, hazeKm: -1, lab: -1 };
   /** シードが変わったとき（engine/lab/rebuild.ts）に呼ぶ。次のフレームで雲の天気マップを焼き直す */
   reseed() {
     (this.weatherMat.uniforms.uWeatherSeed.value as THREE.Vector2).set(subFloat("sky", 1) * 4, subFloat("sky", 2) * 4);
@@ -440,10 +440,14 @@ export class Sky {
       b.detail = DETAIL_RES;
     }
     const hazeKm = this.env.uniforms.uSkyParams.value.z;
-    if (Math.abs(hazeKm - b.hazeKm) > 0.004) {
+    // 実験室で媒質（ミー・レイリー・オゾン）を動かしたら、透過率と多重散乱の LUT も焼き直す
+    const lb = this.env.uniforms.uLabSky.value as THREE.Vector4;
+    const labKey = lb.x + lb.y * 7.13 + lb.z * 31.77;
+    if (Math.abs(hazeKm - b.hazeKm) > 0.004 || labKey !== b.lab) {
       this.blit(this.transMat, this.transRT);
       this.blit(this.msMat, this.msRT);
       b.hazeKm = hazeKm;
+      b.lab = labKey;
     }
 
     // 空の LUT

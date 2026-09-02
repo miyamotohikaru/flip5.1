@@ -12,6 +12,7 @@ import FormulaOverlay from "./FormulaOverlay";
 import WorldLabels from "./WorldLabels";
 import PhotoMode, { type PhotoHandle } from "./PhotoMode";
 import About from "./About";
+import Lab from "./Lab";
 import Joystick from "./Joystick";
 
 type Phase = "loading" | "ready" | "in";
@@ -41,6 +42,7 @@ export default function WorldView({ sourceLines }: { sourceLines: number | null 
   const [keepLabels, setKeepLabels] = useState(false);
   const [showStats, setShowStats] = useState(false);
   const [about, setAbout] = useState(false);
+  const [lab, setLab] = useState(false);
   const [locked, setLocked] = useState(false);
   const [grabbing, setGrabbing] = useState(false);
   const [hint, setHint] = useState<Hint>("off");
@@ -67,6 +69,7 @@ export default function WorldView({ sourceLines }: { sourceLines: number | null 
       setNohud(w.params.nohud);
       setKeepLabels(!!w.params.shot);
       setShowStats(w.params.stats);
+      if (w.params.lab) setLab(true);
       setAuto(w.params.auto);
       setIsMobile(w.env.isMobile);
       setHeightmapRes(w.q.heightmapRes);
@@ -150,6 +153,7 @@ export default function WorldView({ sourceLines }: { sourceLines: number | null 
     setMuted(w.audio.muted);
   }, []);
 
+  const toggleLab = useCallback(() => setLab((v) => !v), []);
   const openAbout = useCallback(() => {
     worldRef.current?.exit();
     setAbout(true);
@@ -181,6 +185,9 @@ export default function WorldView({ sourceLines }: { sourceLines: number | null 
         case "KeyH":
           if (phaseRef.current === "in") setNohud((v) => !v);
           break;
+        case "KeyL":
+          if (phaseRef.current === "in") toggleLab();
+          break;
         case "KeyT":
           w.env.hourSpeed = w.env.hourSpeed ? 0 : 0.25;
           break;
@@ -195,7 +202,13 @@ export default function WorldView({ sourceLines }: { sourceLines: number | null 
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [enter, toggleMute, openAbout]);
+  }, [enter, toggleMute, openAbout, toggleLab]);
+
+  // 携帯では実験室を開いている間、下中央の「裏返す」を隠す（CSS が .lab-open を見る）
+  useEffect(() => {
+    document.body.classList.toggle("lab-open", lab);
+    return () => document.body.classList.remove("lab-open");
+  }, [lab]);
 
   const onHour = (h: number) => {
     setHour(h);
@@ -255,6 +268,8 @@ export default function WorldView({ sourceLines }: { sourceLines: number | null 
           lock={locked}
           onLock={onLock}
           gyro={gyro}
+          lab={lab}
+          onLab={toggleLab}
           onFlip={() => worldRef.current?.toggleFlip()}
           onPhoto={() => void photoRef.current?.take()}
           onMute={toggleMute}
@@ -269,7 +284,8 @@ export default function WorldView({ sourceLines }: { sourceLines: number | null 
       <WorldLabels world={world} active={labelsOn} compact={compact} />
       {isMobile && <Joystick world={world} active={overlays} />}
       <PhotoMode ref={photoRef} world={world} />
-      <About open={about} onClose={closeAbout} sourceLines={sourceLines} isMobile={isMobile} />
+      <Lab world={world} open={overlays && lab} onClose={() => setLab(false)} sourceLines={sourceLines} isMobile={isMobile} />
+      <About open={about} onClose={closeAbout} sourceLines={sourceLines} isMobile={isMobile} world={world} />
     </div>
   );
 }

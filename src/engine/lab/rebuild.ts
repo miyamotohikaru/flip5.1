@@ -13,8 +13,8 @@ import { setTerrainTune } from "../core/height";
 import { WORLD, startPosition, type Heightmap } from "../core/heightfield";
 import { getSeed, setSeed } from "../core/seed";
 import { Vegetation } from "../vegetation";
-import { LAB } from "./store";
-import { encodeLabParams, resetLabParams, type LabParam } from "./params";
+import { LAB, type LabKey, type LabValues } from "./store";
+import { encodeLabParams, resetLabParams, LAB_BY_ID, type LabParam } from "./params";
 
 /** ドラッグ中の粗焼き（4096m を 16m 刻み）。100ms 以内に焼ける */
 const COARSE_RES = 256;
@@ -61,6 +61,19 @@ export class Lab {
       this.rebuildVegetation();
     }
     this.syncUrl();
+  }
+
+  /** つまみに値を入れて反映する（UI からも、調査用の JS `window.__flip.lab.set(...)` からも） */
+  set(id: LabKey, v: number, dragging = false) {
+    const p = LAB_BY_ID.get(id);
+    if (!p) return;
+    LAB[id] = Math.min(p.max, Math.max(p.min, v));
+    this.changed(p, dragging);
+  }
+
+  /** いまのつまみ（読み取り用の写し） */
+  values(): LabValues {
+    return { ...LAB };
   }
 
   /** 「戻す」。既定値に戻して、必要なら焼き直す */
@@ -110,6 +123,16 @@ export class Lab {
   // -------------------------------------------------------------- 焼き直し
   /** 焼き直しを頼む。走っている間は「最新の 1 件」だけ覚えて、終わってから投げ直す */
   requestBake(kind: BakeKind, alsoMove = false): Promise<void> {
+    // 本焼きは 250ms 待ってからまとめて 1 回（矢印キーの連打・離した直後の重なりを畳む）
+    if (kind === "full" && !this.running) {
+      if (alsoMove) this.moveWanted = true;
+      window.clearTimeout(this.fullTimer);
+      return new Promise<void>((resolve) => {
+        this.fullTimer = window.setTimeout(() => {
+          void this.runBake("full").then(resolve);
+        }, 250);
+      });
+    }
     if (this.running) {
       // 本焼きの予約は粗焼きに負けない
       this.pending = this.pending === "full" || kind === "full" ? "full" : "coarse";
@@ -121,6 +144,7 @@ export class Lab {
   }
 
   private moveWanted = false;
+  private fullTimer = 0;
 
   private async runBake(kind: BakeKind): Promise<void> {
     this.running = true;

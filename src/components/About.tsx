@@ -3,6 +3,8 @@
 // 何をひっくり返したか／中に何が入っているか／裏返すとは／どう作ったか、を書く。
 import { useEffect, useRef } from "react";
 import MobileBreak from "./MobileBreak";
+import SeedFinale from "./SeedFinale";
+import type { World } from "@/engine/world";
 
 type Props = {
   open: boolean;
@@ -10,11 +12,13 @@ type Props = {
   /** src/ 以下の行数（ビルド時に数える。取れなければ null） */
   sourceLines: number | null;
   isMobile: boolean;
+  /** 締め（シード）で使う。まだ無ければボタンは押せない */
+  world: World | null;
 };
 
 export const FLIPLIST_URL = "https://fliplist.kosukuma.com/";
 
-export default function About({ open, onClose, sourceLines, isMobile }: Props) {
+export default function About({ open, onClose, sourceLines, isMobile, world }: Props) {
   const closeRef = useRef<HTMLButtonElement>(null);
   const restore = useRef<Element | null>(null);
 
@@ -214,6 +218,8 @@ export default function About({ open, onClose, sourceLines, isMobile }: Props) {
           <br />
           1つも入っていません。
         </p>
+
+        <SeedFinale world={world} sourceLines={sourceLines} isMobile={isMobile} inAbout />
 
         <p className="about-foot">
           <a href={FLIPLIST_URL} target="_blank" rel="noopener noreferrer">
