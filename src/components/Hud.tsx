@@ -110,6 +110,12 @@ export default function Hud(p: HudProps) {
         </div>
       </div>
 
+      {p.isMobile && (
+        <button className={`flip-thumb ${p.flip ? "on" : ""}`} onClick={p.onFlip} aria-pressed={p.flip} aria-label={p.flip ? "もどす" : "裏返す"}>
+          {p.flip ? "もどす" : "裏返す"}
+        </button>
+      )}
+
       <div className="reticle" aria-hidden />
 
       {p.lock && <div className="hud-paused">Esc でマウスを出す</div>}
