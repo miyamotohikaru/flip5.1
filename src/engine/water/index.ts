@@ -102,7 +102,7 @@ export class Water {
       uReflSize: { value: new THREE.Vector2(1, 1) },
       uTiles: { value: new THREE.Vector4(L0, L1, N, 2) },
       uWaveAmp: { value: new THREE.Vector4(1, 1, 1, 0.05) },
-      uWaterA: { value: new THREE.Vector4(1, 5, 0, 1) },
+      uWaterA: { value: new THREE.Vector4(0, 5, 0, 1) },   // x: 映り込み RT が有効か（最初の描画までは解析的な空で代用）
       uWaterB: { value: new THREE.Vector4(0, 0.7, heavy ? 3 : 2, 1) },
       uExtinction: { value: new THREE.Vector3(0.42, 0.13, 0.085) },
       uDebug: { value: typeof location !== "undefined" ? Number((/[?&]wdbg=(\d+)/.exec(location.search) ?? [0, 0])[1]) : 0 },
