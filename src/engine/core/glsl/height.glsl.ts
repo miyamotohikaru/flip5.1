@@ -1,10 +1,18 @@
 // 地形ハイトマップの参照。`#include <flip_height>`。
 // 必要な uniforms: uHeightmap, uHeightmapInfo（env.uniforms が持っている）。
+// 追加（地形担当が起動時に焼く。env.uniforms の uTerrainAux / uTerrainHorizonA / uTerrainHorizonB）:
+//   flip_terrainNormalBaked(xz) … 焼いた法線（texel 精度。近景の細部は各モジュールが足す）
+//   flip_terrainAO(xz)          … 空の見え方 0..1（谷底で小さい）。間接光に掛ける
+//   flip_terrainCavity(xz)      … 谷筋の陰 0..1（0.5 = 平ら、小さいほど窪み）
+//   flip_terrainSunVis(xz, dir) … その地点から光源 dir（光の来る向き）が山に隠れていないか 0..1
 export const FLIP_HEIGHT = /* glsl */ `
 #ifndef FLIP_HEIGHT_INCLUDED
 #define FLIP_HEIGHT_INCLUDED
 uniform sampler2D uHeightmap;
 uniform vec4 uHeightmapInfo; // x = worldSize, y = 1/worldSize, z = res, w = maxHeight
+uniform sampler2D uTerrainAux;
+uniform sampler2D uTerrainHorizonA;
+uniform sampler2D uTerrainHorizonB;
 // world xz → 高さ（バイリニア・手動。float線形フィルタ非対応の端末でも同じ絵にする）
 float flip_height(vec2 xz){
   float res = uHeightmapInfo.z;
@@ -26,6 +34,33 @@ vec3 flip_terrainNormal(vec2 xz, float eps){
   float hd = flip_height(xz - vec2(0.0, eps));
   float hu = flip_height(xz + vec2(0.0, eps));
   return normalize(vec3(hl - hr, 2.0 * eps, hd - hu));
+}
+// 補助テクスチャの uv（uHeightmap と同じ対応）
+vec2 flip_terrainUv(vec2 xz){ return xz * uHeightmapInfo.y + 0.5; }
+// 焼いた法線（RGBA8 の rg）。ハードウェアのバイリニアで滑らか
+vec3 flip_terrainNormalBaked(vec2 xz){
+  vec2 n = texture2D(uTerrainAux, flip_terrainUv(xz)).rg * 2.0 - 1.0;
+  return normalize(vec3(n.x, sqrt(max(1.0 - dot(n, n), 0.0)), n.y));
+}
+float flip_terrainAO(vec2 xz){ return texture2D(uTerrainAux, flip_terrainUv(xz)).b; }
+float flip_terrainCavity(vec2 xz){ return texture2D(uTerrainAux, flip_terrainUv(xz)).a; }
+float flip_horizonPick(vec4 a, vec4 b, float i){
+  return i < 3.5 ? (i < 1.5 ? (i < 0.5 ? a.r : a.g) : (i < 2.5 ? a.b : a.a))
+                 : (i < 5.5 ? (i < 4.5 ? b.r : b.g) : (i < 6.5 ? b.b : b.a));
+}
+// 地形の地平角による光源の見え方（0 = 山の影, 1 = 日なた）。dir は光の来る向き（world、正規化）
+float flip_terrainSunVis(vec2 xz, vec3 dir){
+  vec2 uv = flip_terrainUv(xz);
+  vec4 a = texture2D(uTerrainHorizonA, uv);
+  vec4 b = texture2D(uTerrainHorizonB, uv);
+  float az = mod(atan(dir.z, dir.x) * 1.2732395 + 8.0, 8.0); // 0..8（+X から +Z 回り、45° 刻み）
+  float i0 = floor(az);
+  float f = az - i0;
+  float h0 = flip_horizonPick(a, b, i0);
+  float h1 = flip_horizonPick(a, b, mod(i0 + 1.0, 8.0));
+  float horizon = mix(h0, h1, f) * 1.5707963;
+  float elev = asin(clamp(dir.y, -1.0, 1.0));
+  return smoothstep(horizon - 0.07, horizon + 0.03, elev);
 }
 #endif
 `;

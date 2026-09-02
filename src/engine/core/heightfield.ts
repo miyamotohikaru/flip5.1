@@ -4,8 +4,13 @@
 // 座標系: three.js 準拠（Y up、単位はメートル）。原点は湖の中心。
 // プレイヤーは +Z 側（南岸）から -Z（北）を向いて始まり、湖の向こうに山脈を見る。
 // 太陽は +X（東）から昇り、+Z（南・背中側）を通って -X（西）へ沈む。
+//
+// 地形は3つの成分の足し算（裏返しで別々の線の族として見せる）:
+//   base = 湖底 + 岸の土手 + 盆地のゆるい上り + 侵食風の丘 + 沢筋
+//   mtn  = 山脈（東西に走る尾根 × 山腹を流れ下る谷筋 × 段丘）。方角で高さが変わる（北が主峰）
+//   fine = 数m〜数十mの細かい起伏
 import * as THREE from "three";
-import { fbm2, noise2, ridged2, smoothstep } from "./noise";
+import { noise2, smoothstep } from "./noise";
 
 export const WORLD = {
   /** ハイトマップが覆う一辺（m）。これより外は霧の向こう。 */
@@ -21,53 +26,251 @@ export const WORLD = {
   walkRadius: 1500,
 } as const;
 
+// ---------------------------------------------------------------------------
+// 地形専用の速いグラディエントノイズ（固定 seed の置換表。TypedArray で分岐なし）。
+// noise.ts の noise2 と同じ考え方だが 4M 回×20 層を 1.5 秒で焼くために別に持つ。
+const P2 = new Uint8Array(512);
+{
+  const p = new Uint8Array(256);
+  for (let i = 0; i < 256; i++) p[i] = i;
+  let s = 2027 >>> 0;
+  const rnd = () => {
+    s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
+    return s / 4294967296;
+  };
+  for (let i = 255; i > 0; i--) {
+    const j = Math.floor(rnd() * (i + 1));
+    const t = p[i];
+    p[i] = p[j];
+    p[j] = t;
+  }
+  for (let i = 0; i < 512; i++) P2[i] = p[i & 255];
+}
+const GX = new Float64Array(16), GY = new Float64Array(16);
+for (let k = 0; k < 16; k++) {
+  GX[k] = Math.cos((k * Math.PI) / 8 + 0.31);
+  GY[k] = Math.sin((k * Math.PI) / 8 + 0.31);
+}
+/** グラディエントノイズ（おおよそ [-1, 1]） */
+function nz(x: number, y: number): number {
+  const X = Math.floor(x), Y = Math.floor(y);
+  const xf = x - X, yf = y - Y;
+  const xi = X & 255, yi = Y & 255;
+  const u = xf * xf * xf * (xf * (xf * 6 - 15) + 10), v = yf * yf * yf * (yf * (yf * 6 - 15) + 10);
+  const h00 = P2[P2[xi] + yi] & 15, h10 = P2[P2[xi + 1] + yi] & 15;
+  const h01 = P2[P2[xi] + yi + 1] & 15, h11 = P2[P2[xi + 1] + yi + 1] & 15;
+  const a = GX[h00] * xf + GY[h00] * yf, b = GX[h10] * (xf - 1) + GY[h10] * yf;
+  const c = GX[h01] * xf + GY[h01] * (yf - 1), e = GX[h11] * (xf - 1) + GY[h11] * (yf - 1);
+  return (a + u * (b - a) + v * (c - a) + u * v * (a - b - c + e)) * 1.414;
+}
+/** 微分つき（侵食風の減衰に使う）。微分は dNx / dNy に置く（配列生成を避ける） */
+let dNx = 0, dNy = 0;
+function nzd(x: number, y: number): number {
+  const X = Math.floor(x), Y = Math.floor(y);
+  const xf = x - X, yf = y - Y;
+  const xi = X & 255, yi = Y & 255;
+  const u = xf * xf * xf * (xf * (xf * 6 - 15) + 10), v = yf * yf * yf * (yf * (yf * 6 - 15) + 10);
+  const du = 30 * xf * xf * (xf * (xf - 2) + 1), dv = 30 * yf * yf * (yf * (yf - 2) + 1);
+  const h00 = P2[P2[xi] + yi] & 15, h10 = P2[P2[xi + 1] + yi] & 15;
+  const h01 = P2[P2[xi] + yi + 1] & 15, h11 = P2[P2[xi + 1] + yi + 1] & 15;
+  const ax = GX[h00], ay = GY[h00], bx = GX[h10], by = GY[h10], cx = GX[h01], cy = GY[h01], ex = GX[h11], ey = GY[h11];
+  const a = ax * xf + ay * yf, b = bx * (xf - 1) + by * yf, c = cx * xf + cy * (yf - 1), e = ex * (xf - 1) + ey * (yf - 1);
+  const k0 = b - a, k1 = c - a, k2 = a - b - c + e;
+  dNx = (ax + u * (bx - ax) + v * (cx - ax) + u * v * (ax - bx - cx + ex) + du * (k0 + v * k2)) * 1.414;
+  dNy = (ay + u * (by - ay) + v * (cy - ay) + u * v * (ay - by - cy + ey) + dv * (k1 + u * k2)) * 1.414;
+  return (a + u * k0 + v * k1 + u * v * k2) * 1.414;
+}
+
+/** 侵食風フラクタル: 累積した傾きが大きいところほど高いオクターブを弱める（斜面は滑らか、平地は細かい）。 */
+function erodedFbm(x: number, y: number, octaves: number): number {
+  let sum = 0, amp = 0.5, norm = 0, gx = 0, gy = 0;
+  for (let i = 0; i < octaves; i++) {
+    const n = nzd(x, y);
+    gx += dNx;
+    gy += dNy;
+    sum += (amp * n) / (1 + 0.55 * (gx * gx + gy * gy));
+    norm += amp;
+    x = x * 2.0 + 19.1;
+    y = y * 2.0 + 7.9;
+    amp *= 0.5;
+  }
+  return sum / norm;
+}
+
+/** 尾根ノイズ。sharp（鋭い稜線 1-|n|）と round（丸い稜線 1-n²）を同じサンプルから同時に出す。 */
+let ridgeRound = 0;
+function ridgedBoth(x: number, y: number, octaves: number): number {
+  let sum = 0, sumR = 0, amp = 0.5, norm = 0, weight = 1;
+  for (let i = 0; i < octaves; i++) {
+    const n = nz(x, y);
+    const an = n < 0 ? -n : n;
+    let r = 1 - an;
+    r = r * r * weight;
+    const rr = (1 - an * an) * weight;
+    weight = Math.min(1, Math.max(0, r * 2));
+    sum += r * amp;
+    sumR += rr * amp;
+    norm += amp;
+    x = x * 2.0 + 11.1;
+    y = y * 2.0 + 7.7;
+    amp *= 0.5;
+  }
+  ridgeRound = sumR / norm;
+  return sum / norm;
+}
+
+/** 段丘: 高さを T ごとの段にする（段の間は滑らか）。 */
+function terrace(h: number, T: number): number {
+  const q = h / T;
+  const fl = Math.floor(q);
+  let t = (q - fl - 0.32) / 0.36;
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  return (fl + t * t * (3 - 2 * t)) * T;
+}
+
+// ---------------------------------------------------------------------------
+// 方角だけで決まる量（岸線の半径・土手の幅・山脈の始まる距離・山塊の高さ）は角度の表にして引く。
+// 4M サンプルの焼き込みで 5 本のノイズを 1 回の atan2 に置き換えるため。
+const ANG_N = 2048;
+const angShore = new Float32Array(ANG_N + 1);
+const angBank = new Float32Array(ANG_N + 1);
+const angRange = new Float32Array(ANG_N + 1);
+const angMassif = new Float32Array(ANG_N + 1);
+for (let i = 0; i <= ANG_N; i++) {
+  const a = (i / ANG_N) * Math.PI * 2 - Math.PI;
+  const ca = Math.cos(a), sa = Math.sin(a);
+  angShore[i] = WORLD.lakeRadius + 70 * noise2(ca * 1.7 + 5.2, sa * 1.7 + 5.2) + 26 * noise2(ca * 4.1 + 1.3, sa * 4.1 + 9.1);
+  angBank[i] = nz(ca * 2.6 + 3.3, sa * 2.6 + 8.1);
+  angRange[i] = 120 * nz(ca * 1.9 + 1.2, sa * 1.9 + 4.4);
+  angMassif[i] = 0.74 + 0.26 * nz(ca * 1.4 + 7.7, sa * 1.4 + 2.2);
+}
+let angI = 0, angF = 0;
+function angIndex(x: number, z: number) {
+  const fi = ((Math.atan2(z, x) + Math.PI) / (Math.PI * 2)) * ANG_N;
+  let i = Math.floor(fi);
+  if (i >= ANG_N) i = ANG_N - 1;
+  if (i < 0) i = 0;
+  angI = i;
+  angF = fi - i;
+}
+const angGet = (t: Float32Array) => t[angI] + (t[angI + 1] - t[angI]) * angF;
+
 /** 岸線の半径（角度でうねらせる）。 */
 export function shoreRadius(x: number, z: number): number {
-  const a = Math.atan2(z, x);
-  const ca = Math.cos(a), sa = Math.sin(a);
-  return (
-    WORLD.lakeRadius +
-    70 * noise2(ca * 1.7 + 5.2, sa * 1.7 + 5.2) +
-    26 * noise2(ca * 4.1 + 1.3, sa * 4.1 + 9.1)
-  );
+  angIndex(x, z);
+  return angGet(angShore);
 }
+
+// 主峰の向き（北北西）と氷河谷の向き（北北東・西南西）。単位ベクトル (cos, sin)
+const PEAK_DIR_X = Math.cos(-Math.PI / 2 - 0.3), PEAK_DIR_Z = Math.sin(-Math.PI / 2 - 0.3);
+const VALLEY_DIR_X = Math.cos(-Math.PI / 2 + 0.24), VALLEY_DIR_Z = Math.sin(-Math.PI / 2 + 0.24);
+const VALLEY2_DIR_X = Math.cos(Math.PI - 0.5), VALLEY2_DIR_Z = Math.sin(Math.PI - 0.5);
+
+/** 直近の heightAt() の3成分（bakeHeightmap が読む。毎回の配列生成を避ける） */
+let partBase = 0, partMtn = 0, partFine = 0;
 
 /**
  * 地形の高さ（m）。決定的・連続・どこでも呼べる。
  * 湖 → 岸の草地 → 針葉樹の斜面 → 岩 → 雪の稜線、という一つの谷。
  */
 export function heightAt(x: number, z: number): number {
-  const d = Math.hypot(x, z);
-  const sd = d - shoreRadius(x, z); // 岸線からの符号付き距離（負が湖）
+  const d = Math.sqrt(x * x + z * z);
+  const inv = d > 1e-6 ? 1 / d : 0;
+  const ca = d > 1e-6 ? x * inv : 1, sa = d > 1e-6 ? z * inv : 0; // 湖の中心から見た方角
+  angIndex(x, z);
+  const shoreR = angGet(angShore);
+  const sd = d - shoreR; // 岸線からの符号付き距離（負が湖）
+  const northness = 0.5 - 0.5 * sa; // 1 = 北（山脈が近く高い）, 0 = 南（低い丘）
 
-  // 湖底: 岸からなだらかに深くなる椀
-  const depth = sd < 0 ? 34 * (1 - Math.exp(sd / 70)) : 0;
+  // ---- base: 湖底 ----
+  let base = 0;
+  if (sd < 0) {
+    const bed = 0.85 + 0.15 * nz(x * 0.012 + 3.0, z * 0.012 - 5.0);
+    base -= 34 * (1 - Math.exp(sd / 70)) * bed;
+  }
+  // 岸の土手（角度で幅が変わる: 砂浜になる所と草の土手が水に落ちる所）
+  base += 2.4 * smoothstep(-2, 9 + 6 * angGet(angBank), sd);
 
-  // 中景の丘（岸辺では小さく、離れるほど大きく）
-  const h2 = fbm2(x * 0.0031 + 3.1, z * 0.0031 - 1.7, 4);
-  const h3 = fbm2(x * 0.021 - 8.2, z * 0.021 + 4.4, 3);
-  const shoreMask = smoothstep(0, 900, sd);
-  const hills = 26 * h2 * (0.12 + 0.88 * shoreMask);
+  // 山脈の始まる距離（方角で違う）と、そこまでのゆるい上り
+  const rangeR = 1580 - 450 * northness + angGet(angRange);
+  const riseT = smoothstep(12, rangeR - 350 - shoreR, sd);
+  base += (70 + 65 * northness) * riseT * (0.5 + 0.5 * riseT);
 
-  // 遠景の山脈: ドメインワープした尾根ノイズ
-  const wx = x + 380 * noise2(x * 0.00041 + 7.1, z * 0.00041 + 3.3);
-  const wz = z + 380 * noise2(x * 0.00041 - 2.7, z * 0.00041 + 9.9);
-  let m = ridged2(wx * 0.00072 + 0.5, wz * 0.00072 + 0.9, 5);
-  m = Math.pow(m, 1.55);
-  const mtnMask = Math.pow(smoothstep(420, 1500, sd), 1.4);
-  const mtn = m * 660 * mtnMask;
+  // 侵食風の丘（岸辺では小さく、離れるほど大きい）と、丘のノイズでうねらせた沢筋
+  const landT = smoothstep(-30, 40, sd);
+  if (landT > 0) {
+    const hills = erodedFbm(x * 0.0021 + 3.1, z * 0.0021 - 1.7, 4);
+    base += hills * (5 + 50 * smoothstep(0, 800, sd)) * landT;
+    const creaseT = smoothstep(30, 380, sd);
+    if (creaseT > 0) {
+      const c1 = 1 - Math.abs(nz(x * 0.0029 + hills * 0.6 + 0.7, z * 0.0029 - hills * 0.5 + 2.1));
+      base -= 9 * c1 * c1 * c1 * c1 * creaseT;
+      const fineCrease = 1 - smoothstep(1000, 1300, sd);
+      if (fineCrease > 0) {
+        const c2 = 1 - Math.abs(nz(x * 0.0071 - hills * 0.3 + 4.2, z * 0.0071 + hills * 0.4 + 6.6));
+        base -= 3 * c2 * c2 * c2 * creaseT * fineCrease;
+      }
+    }
+  }
 
-  // 岸からのゆるい上り
-  const rise = 0.032 * Math.max(sd, 0) * (1 - 0.5 * mtnMask);
+  // ---- mtn: 山脈 ----
+  let mtn = 0;
+  const rd = d - rangeR;
+  const mtnMask = smoothstep(-560, 560, rd);
+  if (mtnMask > 0) {
+    // 方角ごとの高さ: 北ほど高い。主峰（北北西）を盛り、氷河谷（北北東・西南西）を切る
+    const dotPeak = ca * PEAK_DIR_X + sa * PEAK_DIR_Z;
+    const dotValley = ca * VALLEY_DIR_X + sa * VALLEY_DIR_Z;
+    const dotValley2 = ca * VALLEY2_DIR_X + sa * VALLEY2_DIR_Z;
+    let amp = (320 + 360 * northness * northness) * angGet(angMassif);
+    amp *= 1 + 0.24 * smoothstep(0.86, 1.0, dotPeak);
+    const valleyCut = smoothstep(0.955, 0.993, dotValley) + 0.8 * smoothstep(0.965, 0.995, dotValley2);
+    amp *= 1 - 0.72 * Math.min(1, valleyCut);
 
-  return (
-    -depth +
-    0.8 * smoothstep(-20, 20, sd) +
-    rise +
-    hills * smoothstep(-40, 60, sd) +
-    2.2 * h3 +
-    mtn
-  );
+    // 尾根: 東西に走る走向（x を引き伸ばす）。ドメインワープで蛇行させる
+    const wx = 300 * nz(x * 0.00052 + 7.1, z * 0.00052 + 3.3);
+    const wz = 300 * nz(x * 0.00052 - 2.7, z * 0.00052 + 9.9);
+    const px = (x + wx) * 0.00048 + 0.5, pz = (z + wz) * 0.00078 + 0.9;
+    const sharp = ridgedBoth(px, pz, 5);
+    const round = ridgeRound;
+    const sharpness = 0.45 + 0.55 * smoothstep(-0.35, 0.45, nz(x * 0.0008 + 2.9, z * 0.0008 + 8.8));
+    let m = round + (sharp - round) * sharpness;
+    m = m * m * (1.9 - 0.9 * m); // 谷底を締め、山頂は残す
+
+    // 山腹を流れ下る谷筋（北側では南北に、東西側では東西に伸びた溝）。稜線と裾は残す
+    const flank = smoothstep(0.1, 0.4, m) * (1 - smoothstep(0.6, 0.92, m));
+    if (flank > 0.02) {
+      const gN = 1 - Math.abs(nz(x * 0.011 + 2.0, z * 0.0036 + 5.0));
+      const gE = 1 - Math.abs(nz(x * 0.0036 + 8.0, z * 0.011 + 1.0));
+      const g1 = sa * sa * gN + ca * ca * gE;
+      m -= 0.1 * g1 * g1 * g1 * flank;
+    }
+
+    mtn = m * amp * mtnMask;
+    // 段丘（崖の帯）: 上部の岩場だけ、場所によって
+    if (mtn > 160) {
+      const terrT = smoothstep(0.25, 0.7, nz(x * 0.0013 + 5.5, z * 0.0013 + 0.4)) * smoothstep(160, 320, mtn);
+      if (terrT > 0) mtn += (terrace(mtn, 46) - mtn) * 0.65 * terrT;
+    }
+  }
+
+  // ---- fine: 細かい起伏（歩ける範囲で強く、遠くはメッシュが粗いので省く）----
+  let fine = 0;
+  {
+    const shoreT = 0.3 + 0.7 * smoothstep(-10, 60, sd);
+    fine = 1.6 * nz(x * 0.021 - 8.2, z * 0.021 + 4.4) * shoreT;
+    const nearT = 1 - smoothstep(1400, 1650, d);
+    if (nearT > 0) {
+      const f2 = nz(x * 0.047 + 1.1, z * 0.047 - 9.3);
+      const f3 = nz(x * 0.115 + 5.5, z * 0.115 + 2.2);
+      fine += (0.7 * f2 + 0.3 * f3) * shoreT * nearT;
+    }
+  }
+
+  partBase = base;
+  partMtn = mtn;
+  partFine = fine;
+  return base + mtn + fine;
 }
 
 /** 地形の法線（有限差分）。 */
@@ -83,6 +286,11 @@ export type Heightmap = {
   texture: THREE.DataTexture;
   min: number;
   max: number;
+  /**
+   * 高さの3成分（RGBA8）。r = 山脈/800, g = (土台+40)/320, b = (細部+6)/12。
+   * 裏返しの「数式の足し算」表示に使う。texel の対応は texture と同じ。
+   */
+  parts: THREE.DataTexture;
 };
 
 /**
@@ -92,20 +300,24 @@ export type Heightmap = {
  */
 export function bakeHeightmap(res: number, onProgress?: (p: number) => void): Heightmap {
   const data = new Float32Array(res * res);
+  const parts = new Uint8Array(res * res * 4);
   let min = Infinity, max = -Infinity;
-  const inv = WORLD.size / res;
   for (let j = 0; j < res; j++) {
     const z = (j / res - 0.5) * WORLD.size;
     for (let i = 0; i < res; i++) {
       const x = (i / res - 0.5) * WORLD.size;
       const h = heightAt(x, z);
-      data[j * res + i] = h;
+      const k = j * res + i;
+      data[k] = h;
       if (h < min) min = h;
       if (h > max) max = h;
+      parts[k * 4] = Math.max(0, Math.min(255, (partMtn / 800) * 255));
+      parts[k * 4 + 1] = Math.max(0, Math.min(255, ((partBase + 40) / 320) * 255));
+      parts[k * 4 + 2] = Math.max(0, Math.min(255, ((partFine + 6) / 12) * 255));
+      parts[k * 4 + 3] = 255;
     }
     if (onProgress && (j & 63) === 0) onProgress(j / res);
   }
-  void inv;
   const texture = new THREE.DataTexture(data, res, res, THREE.RedFormat, THREE.FloatType);
   texture.magFilter = THREE.LinearFilter;
   texture.minFilter = THREE.LinearFilter;
@@ -113,7 +325,14 @@ export function bakeHeightmap(res: number, onProgress?: (p: number) => void): He
   texture.wrapT = THREE.ClampToEdgeWrapping;
   texture.generateMipmaps = false;
   texture.needsUpdate = true;
-  return { res, data, texture, min, max };
+  const partsTex = new THREE.DataTexture(parts, res, res, THREE.RGBAFormat, THREE.UnsignedByteType);
+  partsTex.magFilter = THREE.LinearFilter;
+  partsTex.minFilter = THREE.LinearFilter;
+  partsTex.wrapS = THREE.ClampToEdgeWrapping;
+  partsTex.wrapT = THREE.ClampToEdgeWrapping;
+  partsTex.generateMipmaps = false;
+  partsTex.needsUpdate = true;
+  return { res, data, texture, min, max, parts: partsTex };
 }
 
 /** ハイトマップからの高さ（バイリニア）。GPUと同じ値が欲しいときに使う。 */
