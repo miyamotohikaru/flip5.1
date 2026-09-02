@@ -137,7 +137,8 @@ function makeBakeMaterial(needle: THREE.Texture): THREE.ShaderMaterial {
     uTreeH: { value: 1 },
     uLod: { value: new THREE.Vector4(1e6, 1e6, 1, 2) },
     uForceFlip: { value: 0 },
-    uLineMin: { value: 0.07 },
+    uLineMin: { value: 0.20 },  // 骨組みを焼くときは太めに（縮小で線が消えて「白い粒」になるため）
+    uTintMix: { value: 0 },   // 焼き込みは無彩の（個体の色味を掛けない）アルベド。色味は表示側で掛ける
     uCamPos: { value: new THREE.Vector3() },
     uWind: { value: new THREE.Vector3(1, 0, 0) },
     uLakeLevel: { value: 0 },
@@ -251,6 +252,8 @@ export function makeImpostorMaterial(env: Env, lighting: Lighting, atlas: Impost
         float rowBlend = smoothstep(0.17, 0.42, el);
         float fm = veg_flipMask(root);
         float flipped = step(flip_hash11(seed * 13.0 + 0.5), fm) * step(0.001, fm);
+        // 数式ビュー: 遠くの木を全部「骨組み」で描くと白い粒の雲になる。3 本に 1 本だけ残す
+        if (flipped > 0.5 && flip_hash11(seed * 7.7 + 3.0) > 0.34) fade = 0.0;
         vImp = vec4(c0, cellF - c0, rowBlend, fade);
         vImp2 = vec4(position.x + 0.5, position.y, aVar, flipped);
         vVegWorld = wp;
@@ -305,7 +308,7 @@ export function makeImpostorMaterial(env: Env, lighting: Lighting, atlas: Impost
         shader.fragmentShader,
         "#include <clipping_planes_fragment>",
         `#include <clipping_planes_fragment>
-        if (vImp.w < veg_ign(gl_FragCoord.xy)) discard;
+        if (vImp.w < fract(veg_ign(gl_FragCoord.xy) + vSeed)) discard;
         vec3 impN = vec3(0.0, 1.0, 0.0);`,
         "imp fs clip",
       );
@@ -315,7 +318,7 @@ export function makeImpostorMaterial(env: Env, lighting: Lighting, atlas: Impost
         `{
           if (vImp2.w > 0.5) {
             vec4 sk = veg_impSample(uAtlasS);
-            diffuseColor = vec4(FLIP_LINE, sk.a);
+            diffuseColor = vec4(FLIP_LINE * (0.35 + 0.65 * sk.a), sk.a);
           } else {
             vec4 alb = veg_impSample(uAtlasA);
             vec4 nrm = veg_impSample(uAtlasN);
@@ -338,8 +341,11 @@ export function makeImpostorMaterial(env: Env, lighting: Lighting, atlas: Impost
       shader.fragmentShader = replaceOnce(
         shader.fragmentShader,
         "#include <lights_fragment_begin>",
-        `float vegTrans = 0.25;
+        `float vegTrans = 0.20;
         float vegAO = 1.0;
+        float vegSpec = 0.0;
+        float vegGloss = 18.0;
+        float vegUpMix = 0.25;
         ${VEG_LIGHTS_FRAGMENT}`,
         "imp fs lights",
       );

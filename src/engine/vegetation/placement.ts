@@ -90,10 +90,10 @@ export function scatterTrees(hm: Heightmap, vm: VegMap, cell: number, variants: 
       if (blocked) continue;
       const seed = hash2(i, j, 104);
       const fd = sampleVegMap(vm, x, z, 1);
-      // 大きさ: 小さめに偏らせる。密な林ほど高い。森林限界の近くは低い
-      let s = 0.55 + 0.95 * Math.pow(hash2(i, j, 105), 1.4);
-      s *= 0.78 + 0.42 * fd;
-      s *= 1 - 0.45 * smoothstep(260, 380, h);
+      // 大きさ: 0.6〜1.3 倍。密な林ほど高い。森林限界に向かって低くなる
+      let s = 0.6 + 0.7 * Math.pow(hash2(i, j, 105), 1.15);
+      s *= 0.86 + 0.24 * fd;
+      s *= 1 - 0.42 * smoothstep(240, 380, h);
       b.x.push(x);
       b.z.push(z);
       b.y.push(h - 0.22 * s);
