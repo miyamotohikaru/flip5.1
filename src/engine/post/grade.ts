@@ -40,6 +40,7 @@ uniform float uAoStrength;
 uniform float uDofOn;
 uniform float uExposure;
 uniform float uAutoStrength;
+uniform float uAutoRef;
 uniform vec2 uAutoRange;
 uniform float uWarmth;
 uniform float uSaturation;
@@ -48,6 +49,7 @@ uniform vec3 uShadowTint;
 uniform vec3 uHighlightTint;
 uniform vec2 uSplit;
 uniform float uVignette;
+uniform float uGradeOn;
 uniform float uRain;
 uniform float uUnderwater;
 uniform float uAspect;
@@ -55,29 +57,35 @@ varying vec2 vUv;
 
 vec3 sceneAt(vec2 uv){ return texture2D(tScene, uv).rgb; }
 
-// ---- レンズの水滴。xy = 屈折による uv のずれ, z = 水滴マスク
-vec3 rainDrops(vec2 uv){
-  float rain = smoothstep(0.04, 0.45, uRain);
-  if (rain <= 0.0) return vec3(0.0);
+// ---- レンズの水滴。xy = 屈折による uv のずれ, z = 水滴マスク, w = 縁のハイライト
+vec4 rainDrops(vec2 uv){
+  float rain = smoothstep(0.08, 0.6, uRain);
+  if (rain <= 0.0) return vec4(0.0);
   vec2 p = uv * vec2(uAspect, 1.0);
-  vec2 cellSize = vec2(0.17, 0.21);
+  vec2 cellSize = vec2(0.11, 0.14);
   vec2 cell = floor(p / cellSize);
   vec2 f = fract(p / cellSize);
   float h = post_hash12(cell + 7.1);
-  float density = 0.25 + 0.45 * rain;
-  if (h > density) return vec3(0.0);
+  // 画面の縁ほど付きやすい（中央は視界を邪魔しない）
+  vec2 dc = abs(uv - 0.5) * 2.0;
+  float edgeBias = 0.35 + 0.65 * smoothstep(0.3, 1.0, max(dc.x, dc.y));
+  float density = (0.06 + 0.16 * rain) * edgeBias;
+  if (h > density) return vec4(0.0);
   vec2 rnd = vec2(post_hash12(cell + 1.7), post_hash12(cell + 3.9));
-  float speed = 0.004 + 0.02 * post_hash12(cell + 9.3);
-  vec2 center = vec2(0.2 + 0.6 * rnd.x, fract(rnd.y - uTime * speed));
-  float radius = (0.022 + 0.018 * post_hash12(cell + 5.5)) / cellSize.y;
+  float speed = 0.003 + 0.012 * post_hash12(cell + 9.3);
+  vec2 center = vec2(0.25 + 0.5 * rnd.x, fract(rnd.y - uTime * speed));
+  float radius = (0.007 + 0.009 * post_hash12(cell + 5.5)) / cellSize.y;
   vec2 dv = (f - center) / radius;
-  dv.y *= 0.85;
+  dv.x *= 1.0 + 0.3 * (post_hash12(cell + 2.2) - 0.5);
+  dv.y *= 0.8;
   float r2 = dot(dv, dv);
-  if (r2 > 1.0) return vec3(0.0);
-  float mask = smoothstep(1.0, 0.72, r2);
-  vec2 n = dv;
-  vec2 offset = -n * 0.075 * vec2(1.0 / uAspect, 1.0);
-  return vec3(offset * mask, mask);
+  if (r2 > 1.0) return vec4(0.0);
+  float mask = smoothstep(1.0, 0.6, r2);
+  float nz = sqrt(max(1.0 - r2, 0.0));
+  vec2 offset = -dv * 0.035 * vec2(1.0 / uAspect, 1.0);
+  // 上の縁が空を映して光る
+  float rim = pow(1.0 - nz, 2.0) * smoothstep(-0.2, 0.9, dv.y) * 0.5;
+  return vec4(offset * mask, mask, rim * mask);
 }
 
 // ---- レンズフレア（ゴースト 3 つ＋ハロー）
@@ -154,7 +162,7 @@ void main(){
     uv += vec2(sin(uv.y * 21.0 + uTime * 1.6), cos(uv.x * 17.0 + uTime * 1.2)) * 0.004 * uUnderwater;
   }
   // レンズの水滴
-  vec3 drop = rainDrops(uv);
+  vec4 drop = rainDrops(uv);
   uv += drop.xy;
 
   // 深度と世界座標
@@ -185,9 +193,10 @@ void main(){
     c = sceneAt(uv);
   }
 
-  // 水滴の中は少しぼけて見える
+  // 水滴の中は少しぼけて見え、縁が光る
   if (drop.z > 0.0) {
-    c = mix(c, texture2D(tBloomFine, uv).rgb, drop.z * 0.55);
+    c = mix(c, texture2D(tBloomFine, uv).rgb, drop.z * 0.6);
+    c += drop.w * (texture2D(tBloom, vec2(uv.x, 0.85)).rgb * uBloomNorm + vec3(0.02)) * 0.8;
   }
 
   // 被写界深度
@@ -247,18 +256,17 @@ void main(){
   float scan = exp(-abs(distC - uFlipRadius) / 2.5) * step(0.001, uFlipRadius) * (1.0 - step(5990.0, uFlipRadius));
   c += FLIP_ACCENT * scan * 1.2 / max(uExposure, 0.3);
 
-  // 自動露出（env.exposure を基準に ±）
+  // 自動露出（env.exposure を基準に ±）。露出後の平均輝度が uAutoRef から離れた分だけ、部分的に寄せる
   float logAvg = texture2D(tAdapt, vec2(0.5)).r;
-  float avg = exp2(logAvg);
-  float key = 1.03 - 2.0 / (2.0 + log2(avg + 1.0) * 0.30103);
-  float autoScale = clamp(key / max(avg * uExposure, 1e-4), uAutoRange.x, uAutoRange.y);
-  autoScale = exp2(log2(autoScale) * uAutoStrength * (1.0 - uFlip * 0.8));
+  float L = exp2(logAvg) * uExposure;
+  float autoScale = pow(uAutoRef / max(L, 1e-4), uAutoStrength * (1.0 - uFlip * 0.8));
+  autoScale = clamp(autoScale, uAutoRange.x, uAutoRange.y);
   c *= uExposure * autoScale;
 
   // トーンマップ
   c = post_agx(c);
   // グレーディング
-  c = gradeColor(c);
+  if (uGradeOn > 0.5) c = gradeColor(c);
   // ビネット
   vec2 d = (uv - 0.5) * vec2(1.0, 1.0 / max(uAspect, 0.3) * 0.9);
   float v = 1.0 - uVignette * smoothstep(0.12, 0.95, dot(d, d) * 2.6);
@@ -300,8 +308,9 @@ export function gradeUniforms(): Record<string, THREE.IUniform> {
     uFocus: { value: 5 },
     uCocMax: { value: 14 },
     uExposure: { value: 1 },
-    uAutoStrength: { value: 0.7 },
-    uAutoRange: { value: new THREE.Vector2(0.55, 1.9) },
+    uAutoStrength: { value: 0.45 },
+    uAutoRef: { value: 0.5 },
+    uAutoRange: { value: new THREE.Vector2(0.6, 1.75) },
     uWarmth: { value: 0 },
     uSaturation: { value: 0.96 },
     uContrast: { value: 1.04 },
@@ -309,6 +318,7 @@ export function gradeUniforms(): Record<string, THREE.IUniform> {
     uHighlightTint: { value: new THREE.Vector3(1.06, 1.01, 0.94) },
     uSplit: { value: new THREE.Vector2(0.35, 0.35) },
     uVignette: { value: 0.3 },
+    uGradeOn: { value: 1 },
     uRain: { value: 0 },
     uUnderwater: { value: 0 },
     uAspect: { value: 16 / 9 },

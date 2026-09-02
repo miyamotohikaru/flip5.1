@@ -21,6 +21,7 @@ import * as THREE from "three";
 import type { Env } from "../core/env";
 import type { Pipeline } from "../core/pipeline";
 import type { QualitySettings } from "../core/quality";
+import { parseParams } from "../core/params";
 import { bindEnvUniforms } from "../core/patch";
 import { smoothstep, clamp } from "../core/noise";
 import { fsMaterial, makeRT, GpuTimer } from "./pass";
@@ -89,9 +90,32 @@ export class Post {
   private photoMode = false;
   private dofActive = false;
   private lens = new THREE.Vector4();
+  /**
+   * 調査用フラグ（URL の ?dbg=...）: nobloom / nogod / noao / nodof / noaa / nograde / noauto / nograin / nolens /
+   * noflare / nosharp、表示: aoview / godview / maskview / bloomview / edgesview / weightsview
+   */
+  dbg: Set<string>;
+  private viewMat: THREE.ShaderMaterial;
 
   constructor(public env: Env, public q: QualitySettings) {
     const fx = q.postFx;
+    this.dbg = new Set(parseParams(typeof location !== "undefined" ? location.search : "").dbg);
+    this.viewMat = fsMaterial(
+      "post_view",
+      { tSrc: { value: null }, uMode: { value: 0 }, uNear: { value: 0.1 }, uFar: { value: 9000 } },
+      /* glsl */ `
+      uniform sampler2D tSrc; uniform float uMode; uniform float uNear; uniform float uFar; varying vec2 vUv;
+      void main(){
+        vec4 t = texture2D(tSrc, vUv);
+        vec3 c;
+        if (uMode < 0.5) c = vec3(t.r);
+        else if (uMode < 1.5) c = t.rgb / (1.0 + t.rgb);
+        else if (uMode < 2.5) c = t.rgb;
+        else if (uMode < 3.5) c = vec3(1.0 - t.g / 400.0);
+        else { float ndc = t.r * 2.0 - 1.0; float lin = (2.0 * uNear * uFar) / (uFar + uNear - ndc * (uFar - uNear)); c = vec3(1.0 - lin / 400.0); }
+        gl_FragColor = vec4(pow(clamp(c, 0.0, 1.0), vec3(1.0 / 2.2)), 1.0);
+      }`,
+    );
     this.aaMode = fx.smaa ? (q.tier === "high" || q.tier === "ultra" ? "smaa" : "fxaa") : "none";
     this.bloom = new Bloom(6);
     this.godrays = fx.godrays ? new GodRays() : null;
@@ -144,22 +168,24 @@ export class Post {
     u.uSaturation.value = 0.97 - 0.1 * night - 0.22 * storm - 0.05 * cloud * (1 - storm);
     u.uContrast.value = 1.04 + 0.05 * golden - 0.1 * night - 0.04 * storm;
     (u.uSplit.value as THREE.Vector2).set(0.35 + 0.3 * night + 0.1 * storm, 0.35 + 0.35 * golden - 0.3 * night);
-    u.uVignette.value = 0.28 + 0.12 * storm + 0.06 * night + 0.08 * rain;
+    u.uVignette.value = this.dbg.has("nograde") ? 0 : 0.28 + 0.12 * storm + 0.06 * night + 0.08 * rain;
+    u.uGradeOn.value = this.dbg.has("nograde") ? 0 : 1;
     u.uBloomStrength.value = 0.055 + 0.02 * golden + 0.02 * night + 0.02 * rain;
     u.uRain.value = rain;
     u.uExposure.value = env.exposure;
     u.uAoStrength.value = this.ao ? 1.0 : 0.0;
     const underwater = smoothstep(0, 0.3, env.uniforms.uLakeLevel.value - env.cameraPos.y);
     u.uUnderwater.value = underwater;
-    // 太陽の画面位置
+    // 太陽の画面位置（太陽方向の遠い点をカメラで射影する）
     const cam = env.camera;
     V3.copy(env.sunDir).transformDirection(cam.matrixWorldInverse);
     const front = -V3.z;
     let sunFront = 0;
     let offFade = 0;
     if (front > 1e-3) {
-      V4.set(V3.x, V3.y, V3.z, 0).applyMatrix4(cam.projectionMatrix);
-      const sx = (V4.x / V4.w) * 0.5 + 0.5, sy = (V4.y / V4.w) * 0.5 + 0.5;
+      V4.set(env.sunDir.x, env.sunDir.y, env.sunDir.z, 0);
+      V3.set(V4.x, V4.y, V4.z).multiplyScalar(5000).add(cam.position).project(cam);
+      const sx = V3.x * 0.5 + 0.5, sy = V3.y * 0.5 + 0.5;
       (u.uSunScreen.value as THREE.Vector2).set(sx, sy);
       sunFront = smoothstep(0.05, 0.3, front);
       const ox = Math.max(0, Math.abs(sx - 0.5) - 0.5), oy = Math.max(0, Math.abs(sy - 0.5) - 0.5);
@@ -172,15 +198,21 @@ export class Post {
     const sc = env.sunColor;
     const m = Math.max(sc.r, sc.g, sc.b, 1e-3);
     (u.uSunColorN.value as THREE.Vector3).set(sc.r / m, sc.g / m, sc.b / m);
-    u.uGodStrength.value = this.godrays ? (0.16 + 0.7 * golden) * (1 - 0.45 * cloud) * (1 - 0.5 * storm) * sunUp * offFade : 0;
-    u.uFlareStrength.value = 0.22 * sunUp * (1 - 0.7 * cloud) * (1 - storm);
+    const dbg = this.dbg;
+    u.uGodStrength.value = this.godrays && !dbg.has("nogod") ? (0.12 + 0.38 * golden) * (1 - 0.45 * cloud) * (1 - 0.5 * storm) * sunUp * offFade : 0;
+    u.uFlareStrength.value = dbg.has("noflare") || dbg.has("nolens") ? 0 : 0.6 * sunUp * (1 - 0.7 * cloud) * (1 - storm) * (dbg.has("flarex") ? 4 : 1);
+    u.uAutoRef.value = THREE.MathUtils.lerp(0.5, 0.03, night);
+    u.uAutoStrength.value = dbg.has("noauto") ? 0 : 0.45;
+    if (dbg.has("nobloom")) u.uBloomStrength.value = 0;
+    if (dbg.has("noao")) u.uAoStrength.value = 0;
+    if (dbg.has("nolens")) u.uRain.value = 0;
     // 最終パス
     const f = this.final.mat.uniforms;
-    f.uGrain.value = (0.022 + 0.014 * night + 0.01 * storm) * (photo ? 0.8 : 1);
+    f.uGrain.value = dbg.has("nograin") ? 0 : (0.022 + 0.008 * night + 0.01 * storm) * (photo ? 0.8 : 1);
     f.uGrainSeed.value = Math.floor(env.time * 24) * 7.31;
-    f.uCA.value = 0.8;
-    f.uSharpen.value = 0.3;
-    f.uSharpenFlip.value = 0.4;
+    f.uCA.value = dbg.has("nolens") ? 0 : 0.55;
+    f.uSharpen.value = dbg.has("nosharp") ? 0 : 0.3;
+    f.uSharpenFlip.value = dbg.has("nosharp") ? 0 : 0.4;
     // レンズ（被写界深度）。x = 焦点距離 m, y = 有効口径 m, z = センサ高 m, w = 出力の高さ px
     const focal = 0.024;
     const fnum = photo ? 2.0 : 2.8;
@@ -210,6 +242,15 @@ export class Post {
     const depth = pipeline.sceneRT.depthTexture as THREE.Texture;
     const u = this.grade.uniforms;
     this.updateLook(photo);
+
+    // 調査用: ポストを 1 回のコピーだけにする（負荷の比較用）
+    if (this.dbg.has("postcopy") && !photo) {
+      const v = this.viewMat.uniforms;
+      v.tSrc.value = scene;
+      v.uMode.value = 1;
+      pipeline.blit(this.viewMat, target);
+      return;
+    }
 
     // ブルーム
     timer.begin("bloom");
@@ -250,7 +291,7 @@ export class Post {
     u.tAdapt.value = ex.texture;
 
     // 被写界深度
-    const dofOn = this.dofWanted(photo);
+    const dofOn = this.dofWanted(photo) && !this.dbg.has("nodof");
     this.dofActive = dofOn;
     if (dofOn && this.dof) {
       // 一人称では近づくほど滑らかに開く
@@ -284,9 +325,32 @@ export class Post {
     pipeline.blit(this.grade, this.ldrA);
     timer.end();
 
+    // 調査用の表示
+    if (this.dbg.size > 0 && !photo) {
+      const v = this.viewMat.uniforms;
+      let tex: THREE.Texture | null = null, mode = 0;
+      if (this.dbg.has("aoview") && this.ao) { tex = this.ao.texture; mode = 0; }
+      else if (this.dbg.has("aodepth") && this.ao) { tex = this.ao.texture; mode = 3; }
+      else if (this.dbg.has("depthview")) { tex = depth; mode = 4; v.uNear.value = cam.near; v.uFar.value = cam.far; }
+      else if (this.dbg.has("godview") && this.godrays) { tex = this.godrays.texture; mode = 0; }
+      else if (this.dbg.has("maskview") && this.godrays) { tex = this.godrays.mask.texture; mode = 0; }
+      else if (this.dbg.has("bloomview")) { tex = this.bloom.texture; mode = 1; }
+      else if (this.dbg.has("edgesview") && this.smaa) { this.smaa.render(pipeline, this.ldrA.texture, w, h, this.ldrB); tex = this.smaa.edgesRT.texture; mode = 2; }
+      else if (this.dbg.has("weightsview") && this.smaa) { this.smaa.render(pipeline, this.ldrA.texture, w, h, this.ldrB); tex = this.smaa.weightsRT.texture; mode = 2; }
+      if (tex) {
+        v.tSrc.value = tex;
+        v.uMode.value = mode;
+        pipeline.blit(this.viewMat, target);
+        timer.poll();
+        return;
+      }
+    }
+
     // AA
     let src: THREE.Texture = this.ldrA.texture;
-    if (this.smaa) {
+    if (this.dbg.has("noaa")) {
+      /* AA を飛ばす */
+    } else if (this.smaa) {
       timer.begin("smaa");
       this.smaa.render(pipeline, src, w, h, this.ldrB);
       timer.end();

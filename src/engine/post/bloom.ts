@@ -77,7 +77,7 @@ export class Bloom {
     }
     this.downMat = fsMaterial(
       "bloom_down",
-      { tSrc: { value: null }, uTexel: { value: new THREE.Vector2() }, uKaris: { value: 0 }, uClamp: { value: 64 } },
+      { tSrc: { value: null }, uTexel: { value: new THREE.Vector2() }, uKaris: { value: 0 }, uClamp: { value: 24 } },
       DOWN_FRAG,
     );
     this.upMat = fsMaterial(
@@ -112,7 +112,8 @@ export class Bloom {
     for (let i = 0; i < this.levels; i++) {
       dm.uniforms.tSrc.value = src;
       (dm.uniforms.uTexel.value as THREE.Vector2).set(1 / sw, 1 / sh);
-      dm.uniforms.uKaris.value = i === 0 ? 1 : 0;
+      // Karis 平均は太陽の滲みまで消してしまうので使わない（代わりに uClamp で点のギラつきを抑える）
+      dm.uniforms.uKaris.value = 0;
       pipeline.blit(dm, this.down[i]);
       src = this.down[i].texture;
       sw = this.down[i].width;

@@ -22,7 +22,8 @@ void main(){
   vec4 wp = uInvViewProj * vec4(vUv * 2.0 - 1.0, 1.0, 1.0);
   vec3 dir = normalize(wp.xyz / wp.w - uCamPos);
   float sd = max(dot(dir, uSunDir), 0.0);
-  float ang = pow(sd, uCone);
+  // 太陽のごく近く（筋の源）＋ 薄く広い成分（太陽が画面外でも少し効く）
+  float ang = pow(sd, uCone) + 0.08 * pow(sd, 8.0);
   vec3 c = texture2D(tScene, vUv).rgb;
   float lum = post_luma(c);
   lum = lum / (0.6 + lum);
@@ -73,7 +74,7 @@ export class GodRays {
         uInvViewProj: { value: new THREE.Matrix4() },
         uCamPos: { value: new THREE.Vector3() },
         uSunDir: { value: new THREE.Vector3(0, 1, 0) },
-        uCone: { value: 14 },
+        uCone: { value: 56 },
       },
       MASK_FRAG,
     );
@@ -112,7 +113,7 @@ export class GodRays {
     // 歩幅: 1/512 → 1/64 → 1/8（各 8 タップ）。太陽までの距離の 0.85 まで届く
     const reach = 0.85;
     const steps = [reach / 512, reach / 64, reach / 8];
-    const decays = [1.0, 0.98, 0.9];
+    const decays = [1.0, 0.97, 0.86];
     let src: THREE.Texture = this.mask.texture;
     let dst = this.ping, other = this.pong;
     for (let i = 0; i < 3; i++) {

@@ -60,7 +60,7 @@ void main(){
   float noise = post_ign(gl_FragCoord.xy);
   float jitter = post_ign(gl_FragCoord.yx + vec2(17.0, 31.0));
   float visibility = 0.0;
-  const int DIRS = 2;
+  const int DIRS = 3;
   const int STEPS = 4;
   for (int d = 0; d < DIRS; d++) {
     float ang = (float(d) + noise) * (3.14159265 / float(DIRS));
@@ -77,7 +77,7 @@ void main(){
     // 両側の水平線
     float h0 = -1.0, h1 = -1.0;
     for (int s = 0; s < STEPS; s++) {
-      float f = (float(s) + 0.3 + 0.7 * jitter) / float(STEPS);
+      float f = (float(s) + 0.5 + 0.5 * jitter) / float(STEPS);
       f = f * f;
       vec2 off = dir2 * radiusUv * f;
       // 右側
@@ -152,8 +152,8 @@ export class AO {
         uNear: { value: 0.1 },
         uFar: { value: 9000 },
         uRadius: { value: 1.3 },
-        uFalloffStart: { value: 120 },
-        uFalloffEnd: { value: 260 },
+        uFalloffStart: { value: 40 },
+        uFalloffEnd: { value: 90 },
       },
       AO_FRAG,
     );

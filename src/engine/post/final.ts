@@ -27,10 +27,10 @@ void main(){
   float sharp = uSharpen + uSharpenFlip * c.a;
   vec3 blur = (n + s + e + w) * 0.25;
   vec3 col = clamp(c.rgb + (c.rgb - blur) * sharp, mn, mx);
-  // 周辺の色収差（中心ゼロ、隅で uCA px）
+  // 周辺の色収差（中央 4 割は掛けない、隅で uCA px）
   vec2 d = vUv - 0.5;
   float r2 = dot(d, d) * 2.0;
-  float ca = uCA * r2;
+  float ca = uCA * smoothstep(0.18, 1.0, r2);
   if (ca > 0.02) {
     vec2 off = d * ca * 2.0 * t.y;
     col.r += texture2D(tSrc, vUv + off).r - c.r;
