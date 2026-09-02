@@ -80,10 +80,10 @@ export default function WorldLabels({ world, active, compact }: Props) {
         // 避ける矩形: 裏返しの数式パネルと、HUD の左上（題字）・右上（ボタン）
         avoid.current = [];
         panelKind.current = "";
-        for (const sel of [".formula.show", ".hud-tl", ".hud-tr"]) {
+        for (const sel of [".formula.show", ".hud-tl", ".hud-tr", ".flip-thumb", ".hud-br"]) {
           const e = document.querySelector(sel) as HTMLElement | null;
           if (!e) continue;
-          if (sel !== ".hud-tl" && sel !== ".hud-tr") {
+          if (sel.startsWith(".formula")) {
             for (const k of ["terrain", "lake", "sky"]) if (e.classList.contains(k)) panelKind.current = k;
           }
           const r = e.getBoundingClientRect();
