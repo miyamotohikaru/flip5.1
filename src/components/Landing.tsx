@@ -31,14 +31,16 @@ export default function Landing({ phase, progress, heightmapRes, isMobile, onEnt
       <div className="landing-body">
         <h1 className="landing-title">数式の絶景</h1>
         <p className="landing-lead">
-          この風景の中に、画像は1枚もありません。
-          <br />
-          3Dモデルも、音のファイルも、
+          リアルな3Dには、大量の素材がいる。
           <MobileBreak />
-          1つもありません。
+          その常識を、ひっくり返しました。
+          <br />
+          この風景に、画像は1枚もありません。
+          <br />
+          3Dモデルも、音のファイルも0個です。
           <br />
           全部、<strong>数式</strong>です。
-          <br />
+          <MobileBreak />
           裏返すと、確かめられます。
         </p>
 
@@ -67,7 +69,7 @@ export default function Landing({ phase, progress, heightmapRes, isMobile, onEnt
           {isMobile ? (
             <>左で歩く ／ 右で見回す ／ 画面のボタンで裏返す</>
           ) : (
-            <>WASD 歩く ／ マウス 見回す ／ F 裏返す ／ P 写真</>
+            <>WASD 歩く ／ ドラッグで見回す ／ F 裏返す ／ P 写真</>
           )}
         </span>
         <span className="landing-credit">制作: こす.くま × Claude Fable 5.1</span>

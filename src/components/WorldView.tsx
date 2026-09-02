@@ -9,6 +9,7 @@ import { extras } from "@/engine/ui/controlsApi";
 import Landing from "./Landing";
 import Hud from "./Hud";
 import FormulaOverlay from "./FormulaOverlay";
+import WorldLabels from "./WorldLabels";
 import PhotoMode, { type PhotoHandle } from "./PhotoMode";
 import About from "./About";
 import Joystick from "./Joystick";
@@ -36,9 +37,12 @@ export default function WorldView({ sourceLines }: { sourceLines: number | null 
   const [flip, setFlip] = useState(false);
   const [muted, setMuted] = useState(false);
   const [nohud, setNohud] = useState(false);
+  // 定点撮影（?shot=）は HUD を消すが、世界の中の数式のふだは「画の中身」なので残す
+  const [keepLabels, setKeepLabels] = useState(false);
   const [showStats, setShowStats] = useState(false);
   const [about, setAbout] = useState(false);
   const [locked, setLocked] = useState(false);
+  const [grabbing, setGrabbing] = useState(false);
   const [hint, setHint] = useState<Hint>("off");
   const [isMobile, setIsMobile] = useState(false);
   const [compact, setCompact] = useState(false);
@@ -61,6 +65,7 @@ export default function WorldView({ sourceLines }: { sourceLines: number | null 
       window.__flip = w;
       setWorld(w);
       setNohud(w.params.nohud);
+      setKeepLabels(!!w.params.shot);
       setShowStats(w.params.stats);
       setAuto(w.params.auto);
       setIsMobile(w.env.isMobile);
@@ -74,7 +79,14 @@ export default function WorldView({ sourceLines }: { sourceLines: number | null 
         setGyro(typeof x.enableGyro === "function" ? (x.gyroEnabled ? "on" : "off") : "none");
         setPhase(w!.params.auto ? "in" : "ready");
       });
-      w.on("enter", () => setPhase("in"));
+      w.on("enter", () => {
+        setPhase("in");
+        // ドラッグ中はカーソルを「掴んだ形」にする
+        const km = (w!.controls as unknown as { km?: { onDragChange?: (d: boolean) => void } }).km;
+        if (km) km.onDragChange = (d) => setGrabbing(d);
+        const c = w!.controls as unknown as { onPointerLockChange?: (on: boolean) => void };
+        c.onPointerLockChange = (on) => setLocked(on);
+      });
       w.on("flip", (f) => setFlip((f as number) > 0.5));
       let last = 0;
       const wantStats = w.params.stats;
@@ -208,18 +220,22 @@ export default function WorldView({ sourceLines }: { sourceLines: number | null 
       setGyro("off");
     }
   };
-  // パソコンで Esc の後、画面をクリックしたらマウスを掴み直す
-  const onCanvasPointerDown = () => {
-    if (phase === "in" && !isMobile && !locked && !about) worldRef.current?.controls.enter();
+  // マウス固定（PointerLock）の切り替え。既定はドラッグで見回す方式。
+  const onLock = () => {
+    const c = worldRef.current?.controls;
+    if (!c) return;
+    c.setPointerLock(!c.pointerLockMode);
+    setLocked(c.pointerLockMode);
   };
 
   const inWorld = phase === "in";
   const overlays = inWorld && !nohud;
-  const paused = overlays && !isMobile && !locked && !auto && !about;
+  const labelsOn = inWorld && (!nohud || keepLabels);
+  const paused = false; // ドラッグで見回す方式が既定になったので「クリックで操作にもどる」は出さない
 
   return (
     <div className="world">
-      <canvas ref={canvasRef} onPointerDown={onCanvasPointerDown} />
+      <canvas ref={canvasRef} className={grabbing ? "grabbing" : ""} />
 
       {!landingGone && (
         <Landing phase={phase} progress={progress} heightmapRes={heightmapRes} isMobile={isMobile} onEnter={enter} onAbout={openAbout} />
@@ -236,6 +252,8 @@ export default function WorldView({ sourceLines }: { sourceLines: number | null 
           isMobile={isMobile}
           hint={hint}
           paused={paused}
+          lock={locked}
+          onLock={onLock}
           gyro={gyro}
           onFlip={() => worldRef.current?.toggleFlip()}
           onPhoto={() => void photoRef.current?.take()}
@@ -248,6 +266,7 @@ export default function WorldView({ sourceLines }: { sourceLines: number | null 
       )}
 
       <FormulaOverlay world={world} active={overlays} compact={compact} />
+      <WorldLabels world={world} active={labelsOn} compact={compact} />
       {isMobile && <Joystick world={world} active={overlays} />}
       <PhotoMode ref={photoRef} world={world} />
       <About open={about} onClose={closeAbout} sourceLines={sourceLines} isMobile={isMobile} />
