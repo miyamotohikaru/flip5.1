@@ -27,12 +27,15 @@ export type HudProps = {
   hint: "on" | "fade" | "off";
   /** パソコンでマウスが解放されている（Esc の後） */
   paused: boolean;
+  /** マウス固定（PointerLock）が入っている */
+  lock: boolean;
   gyro: "none" | "off" | "on";
   onFlip: () => void;
   onPhoto: () => void;
   onMute: () => void;
   onAbout: () => void;
   onGyro: () => void;
+  onLock: () => void;
   onHour: (h: number) => void;
   onWeather: (w: WeatherPresetName) => void;
 };
@@ -66,6 +69,11 @@ export default function Hud(p: HudProps) {
           <button className={`btn ${p.muted ? "dim" : ""}`} onClick={p.onMute} aria-pressed={!p.muted} aria-label={p.muted ? "音を出す（M）" : "音を消す（M）"}>
             {p.muted ? "音 OFF" : "音 ON"}
           </button>
+          {!p.isMobile && (
+            <button className={`btn ${p.lock ? "on" : ""}`} onClick={p.onLock} aria-pressed={p.lock} aria-label={p.lock ? "マウスの固定をやめる" : "マウスを固定して見回す"}>
+              マウス固定
+            </button>
+          )}
           <button className="btn icon" onClick={p.onAbout} aria-label="この風景について">
             ？
           </button>
@@ -102,13 +110,21 @@ export default function Hud(p: HudProps) {
         </div>
       </div>
 
+      {p.isMobile && (
+        <button className={`flip-thumb ${p.flip ? "on" : ""}`} onClick={p.onFlip} aria-pressed={p.flip} aria-label={p.flip ? "もどす" : "裏返す"}>
+          {p.flip ? "もどす" : "裏返す"}
+        </button>
+      )}
+
       <div className="reticle" aria-hidden />
 
-      {p.paused && <div className="hud-paused">クリックで操作にもどる</div>}
+      {p.lock && <div className="hud-paused">Esc でマウスを出す</div>}
 
       {p.hint !== "off" && (
         <div className={`hud-hint ${p.hint === "fade" ? "fade" : ""}`} aria-hidden>
-          {p.isMobile ? "左で歩く ／ 右で見回す" : "WASD 歩く ／ Shift 走る ／ F 裏返す ／ P 写真 ／ H 表示を消す"}
+          {p.isMobile
+            ? "左で歩く ／ 右で見回す"
+            : "ドラッグで見回す ／ WASD 歩く ／ Shift 走る ／ F 裏返す ／ P 写真 ／ H 表示を消す"}
         </div>
       )}
 

@@ -69,7 +69,14 @@ export default function FormulaOverlay({ world, active, compact }: Props) {
         <span className="formula-src">{panel.source}</span>
       </div>
       <div className="formula-here">{panel.here}</div>
-      <pre className="formula-body">{panel.lines.join("\n")}</pre>
+      {/* 1 行ずつの div。狭い画面で万一はみ出しても折り返さず「…」で切る（携帯で右に流れていた。批評R1-9） */}
+      <div className="formula-body">
+        {panel.lines.map((t, i) => (
+          <div className="formula-line" key={i}>
+            {t}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
