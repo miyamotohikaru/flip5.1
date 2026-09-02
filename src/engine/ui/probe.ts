@@ -4,29 +4,43 @@
 //   地形: レイが h(x,z) の下に潜った所を二分法で詰める
 //   湖  : 先に y = 湖面 の平面に当たり、そこの地面が湖面より低ければ「湖」
 //   空  : どちらにも当たらなければ「空」
+//
+// 出す値は「いま本当に走っているコード」と同じ式で出す。地形は core/height.ts の heightPartsAt()、
+// 空は sky/atmosphere.glsl.ts の媒質・位相関数、湖は water/wavesim.ts のスペクトルの係数。
 import * as THREE from "three";
 import type { Env } from "../core/env";
-import { heightAt, normalAt, shoreRadius, WORLD } from "../core/heightfield";
-import { fbm2, noise2, ridged2, smoothstep } from "../core/noise";
+import { heightAt, heightPartsAt, normalAt, shoreRadius, WORLD } from "../core/heightfield";
 
-/** heightAt() を項ごとに分けたもの。sum は heightAt(x, z) と一致する（一致しなければ ok=false） */
+/** heightAt() の3成分（core/height.ts が返すもの）。sum は heightAt(x, z) に一致する */
 export type TerrainTerms = {
+  /** 岸線からの符号付き距離（負が湖） */
   sd: number;
   rShore: number;
-  depth: number;
-  /** 0.8·s(−20,20,sd) */
-  shoreStep: number;
-  rise: number;
-  /** hills·s(−40,60,sd) */
-  hillsTerm: number;
-  /** 2.2·fbm₃ */
-  h3Term: number;
+  /** 湖底＋岸の土手＋ゆるい上り＋侵食の丘＋沢筋 */
+  base: number;
+  /** 山脈（ridged fbm × 方角ごとの高さ × マスク） */
   mtn: number;
-  /** ridged の生の値（0..1、1.55 乗の後） */
-  m: number;
-  mtnMask: number;
+  /** 細かい起伏（3 オクターブ） */
+  fine: number;
   sum: number;
-  ok: boolean;
+};
+
+/** 大気の媒質（sky/atmosphere.glsl.ts の flip_atmoMedium と同じ）。単位は 1/km */
+export type AtmoTerms = {
+  /** 散乱角 θ（視線と太陽のなす角、度） */
+  thetaDeg: number;
+  /** レイリー位相 P_R(θ) */
+  phaseR: number;
+  /** ミー位相 P_M(θ, g=0.76) */
+  phaseM: number;
+  /** 視線方向 5 km の透過率（RGB） */
+  T: [number, number, number];
+  /** 地表のレイリー散乱係数（RGB、1/km） */
+  sigmaR: [number, number, number];
+  /** 地表のミー散乱係数（1/km。靄込み） */
+  sigmaM: number;
+  /** 靄の密度（uSkyParams.z） */
+  haze: number;
 };
 
 export type ProbeHit =
@@ -59,50 +73,68 @@ export type ProbeHit =
       elevDeg: number;
       azDeg: number;
       sunElevDeg: number;
-      /** 視線方向 5 km の透過率（atmosphere.glsl.ts の flip_aerial と同じ式） */
-      transmittance: number;
-      sigma0: number;
+      atmo: AtmoTerms;
       fog: number;
       hour: number;
       flipped: boolean;
     };
 
-/** heightAt() と同じ計算を項に分けて返す。式を画面に出すためのもの。 */
+/** heightAt() の 3 成分を取り出す。式を画面に出すためのもの（値は heightAt と必ず一致する） */
 export function terrainTerms(x: number, z: number): TerrainTerms {
-  const d = Math.hypot(x, z);
-  const rShore = shoreRadius(x, z);
-  const sd = d - rShore;
-  const depth = sd < 0 ? 34 * (1 - Math.exp(sd / 70)) : 0;
-  const h2 = fbm2(x * 0.0031 + 3.1, z * 0.0031 - 1.7, 4);
-  const h3 = fbm2(x * 0.021 - 8.2, z * 0.021 + 4.4, 3);
-  const shoreMask = smoothstep(0, 900, sd);
-  const hills = 26 * h2 * (0.12 + 0.88 * shoreMask);
-  const wx = x + 380 * noise2(x * 0.00041 + 7.1, z * 0.00041 + 3.3);
-  const wz = z + 380 * noise2(x * 0.00041 - 2.7, z * 0.00041 + 9.9);
-  const m = Math.pow(ridged2(wx * 0.00072 + 0.5, wz * 0.00072 + 0.9, 5), 1.55);
-  const mtnMask = Math.pow(smoothstep(420, 1500, sd), 1.4);
-  const mtn = m * 660 * mtnMask;
-  const rise = 0.032 * Math.max(sd, 0) * (1 - 0.5 * mtnMask);
-  const shoreStep = 0.8 * smoothstep(-20, 20, sd);
-  const hillsTerm = hills * smoothstep(-40, 60, sd);
-  const h3Term = 2.2 * h3;
-  const sum = -depth + shoreStep + rise + hillsTerm + h3Term + mtn;
-  const ok = Math.abs(sum - heightAt(x, z)) < 1e-4;
-  return { sd, rShore, depth, shoreStep, rise, hillsTerm, h3Term, mtn, m, mtnMask, sum, ok };
+  const p = heightPartsAt(x, z);
+  return { sd: p.shore, rShore: shoreRadius(x, z), base: p.base, mtn: p.mtn, fine: p.fine, sum: p.h };
+}
+
+// ---------------------------------------------------------------------------
+// 大気（sky/atmosphere.glsl.ts の flip_atmoMedium / flip_phaseR / flip_phaseMie の CPU 版）
+// ---------------------------------------------------------------------------
+const RAYLEIGH: [number, number, number] = [5.802e-3, 13.558e-3, 33.1e-3];
+const OZONE: [number, number, number] = [0.65e-3 * 0.75, 1.881e-3 * 0.75, 0.085e-3 * 0.75];
+const MIE_G = 0.76;
+
+/** 海抜 h(km) の消散係数（RGB、1/km）と散乱係数。groundAlt は world y=0 の海抜(km) */
+function medium(h: number, haze: number, groundAlt: number): { ext: [number, number, number]; mieS: number } {
+  const hr = Math.max(h, 0);
+  const dR = Math.exp(-hr / 8);
+  const dM = Math.exp(-hr / 2.5);
+  const dH = haze * Math.exp(-Math.max(h - groundAlt, 0) / 1.0);
+  const dO = Math.max(0, 1 - Math.abs(hr - 25) / 15);
+  const mS = 3.2e-3 * dM + dH * 0.9;
+  const mA = 0.35e-3 * dM + dH * 0.1;
+  const ext: [number, number, number] = [
+    RAYLEIGH[0] * dR + mS + mA + OZONE[0] * dO,
+    RAYLEIGH[1] * dR + mS + mA + OZONE[1] * dO,
+    RAYLEIGH[2] * dR + mS + mA + OZONE[2] * dO,
+  ];
+  return { ext, mieS: mS };
+}
+
+export function phaseRayleigh(c: number): number {
+  return 0.0596831 * (1 + c * c);
+}
+/** Cornette–Shanks */
+export function phaseMie(c: number, g = MIE_G): number {
+  const g2 = g * g;
+  return (0.119366 * (1 - g2) * (1 + c * c)) / ((2 + g2) * Math.pow(Math.max(1 + g2 - 2 * g * c, 1e-4), 1.5));
+}
+
+/** 視線方向 distKm の透過率を、シェーダと同じ媒質で数値積分する */
+function transmittance(camYkm: number, dirY: number, distKm: number, haze: number, groundAlt: number): [number, number, number] {
+  const N = 16;
+  const dt = distKm / N;
+  let a = 0, b = 0, c = 0;
+  for (let i = 0; i < N; i++) {
+    const s = (i + 0.5) * dt;
+    const { ext } = medium(camYkm + dirY * s, haze, groundAlt);
+    a += ext[0] * dt;
+    b += ext[1] * dt;
+    c += ext[2] * dt;
+  }
+  return [Math.exp(-a), Math.exp(-b), Math.exp(-c)];
 }
 
 const _dir = new THREE.Vector3();
 const _pos = new THREE.Vector3();
-
-/** 視線方向 dist 先までの透過率（atmosphere.glsl.ts flip_aerial の解析積分と同じ） */
-export function transmittanceAlong(camY: number, dirY: number, dist: number, fog: number): { T: number; sigma0: number } {
-  const base = 0.00026 * (0.35 + 1.4 * fog);
-  const falloff = 0.0035;
-  const hc = camY, hp = camY + dirY * dist;
-  const dh = hp - hc;
-  const density = Math.abs(dh) < 0.5 ? base * Math.exp(-falloff * hc) : (base * (Math.exp(-falloff * hc) - Math.exp(-falloff * hp))) / (falloff * dh);
-  return { T: Math.exp(-density * dist), sigma0: base };
-}
 
 /**
  * 照準の先を調べる。1 回あたり heightAt を最大 ~400 回呼ぶ（数百 µs）。毎フレームではなく間引いて呼ぶこと。
@@ -187,14 +219,25 @@ export function probe(env: Env): ProbeHit {
   // 方位: 北(−Z)=0°、東(+X)=90°
   const az = ((Math.atan2(dir.x, -dir.z) * 180) / Math.PI + 360) % 360;
   const sunElev = (Math.asin(Math.min(1, Math.max(-1, env.sunDir.y))) * 180) / Math.PI;
-  const { T, sigma0 } = transmittanceAlong(o.y, dir.y, 5000, env.weather.fog);
+  const sp = env.uniforms.uSkyParams.value as THREE.Vector4;
+  const haze = sp.z, groundAlt = sp.w;
+  const c = Math.min(1, Math.max(-1, dir.dot(env.sunDir)));
+  const camYkm = groundAlt + o.y / 1000;
+  const g0 = medium(camYkm, haze, groundAlt);
   return {
     kind: "sky",
     elevDeg: elev,
     azDeg: az,
     sunElevDeg: sunElev,
-    transmittance: T,
-    sigma0,
+    atmo: {
+      thetaDeg: (Math.acos(c) * 180) / Math.PI,
+      phaseR: phaseRayleigh(c),
+      phaseM: phaseMie(c),
+      T: transmittance(camYkm, dir.y, 5, haze, groundAlt),
+      sigmaR: [RAYLEIGH[0] * Math.exp(-camYkm / 8), RAYLEIGH[1] * Math.exp(-camYkm / 8), RAYLEIGH[2] * Math.exp(-camYkm / 8)],
+      sigmaM: g0.mieS,
+      haze,
+    },
     fog: env.weather.fog,
     hour: env.hour,
     flipped: flippedAt(far),

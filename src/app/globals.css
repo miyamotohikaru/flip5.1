@@ -145,8 +145,32 @@ button { font-family: inherit; }
 .formula-latin { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.16em; color: var(--formula-dim); }
 .formula-src { margin-left: auto; font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.02em; color: var(--ink-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 55%; }
 .formula-here { margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--formula-line); font-family: var(--font-jp); font-size: 12px; letter-spacing: 0.02em; color: var(--ink-dim); font-variant-numeric: tabular-nums; }
-.formula-body { margin: 0; font: inherit; white-space: pre; overflow: hidden; color: var(--formula); font-variant-numeric: tabular-nums; }
+.formula-body { margin: 0; font: inherit; overflow: hidden; color: var(--formula); font-variant-numeric: tabular-nums; }
+/* 1 行ずつ。折り返さず、狭ければ「…」で切る（携帯で右にはみ出していた） */
+.formula-line { white-space: pre; overflow: hidden; text-overflow: ellipsis; }
 @media screen and (max-width: 1240px) { .formula { font-size: 11px; } }
+
+/* ── 世界の中の数式のふだ（裏返し中）────────── */
+.wlabels { position: fixed; inset: 0; z-index: 11; pointer-events: none; }
+.wlabel { position: absolute; left: 0; top: 0; width: 0; height: 0; transform-origin: 0 0; opacity: 0; transition: opacity 0.7s ease; will-change: transform, opacity; }
+.wlabel-dot { position: absolute; left: -4px; top: -4px; width: 8px; height: 8px; border-radius: 50%; border: 1px solid rgba(214, 238, 255, 0.95); background: rgba(3, 5, 12, 0.45); box-shadow: 0 0 6px rgba(140, 217, 255, 0.5); }
+.wlabel-stem { position: absolute; left: 0; bottom: 5px; width: 1px; height: 30px; background: linear-gradient(180deg, rgba(160, 222, 255, 0.35), rgba(214, 238, 255, 0.95)); }
+.wlabel-box {
+  position: absolute; left: 10px; bottom: 30px; max-width: min(40vw, 340px); overflow: hidden;
+  padding: 7px 11px 8px; border-left: 2px solid rgba(160, 222, 255, 0.75); border-radius: 0 5px 5px 0;
+  background: rgba(2, 5, 13, 0.82); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  font-family: var(--font-mono); font-size: 11.5px; line-height: 1.6; color: #b7e2ff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+}
+.wlabel-head { font-family: var(--font-jp); font-size: 11.5px; font-weight: 600; letter-spacing: 0.1em; color: var(--ink); margin-bottom: 2px; }
+.wlabel-head span { margin-left: 8px; font-family: var(--font-mono); font-size: 9.5px; font-weight: 400; letter-spacing: 0.18em; color: var(--formula-dim); }
+.wlabel-line { white-space: pre; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.wlabel-note { margin-top: 5px; font-family: var(--font-jp); font-size: 11px; line-height: 1.55; letter-spacing: 0.02em; color: rgba(242, 239, 232, 0.82); }
+/* 画面の上寄り・右寄りの点では、ふだを下／左へ逃がす */
+.wlabel.below .wlabel-stem { bottom: auto; top: 5px; }
+.wlabel.below .wlabel-box { bottom: auto; top: 30px; }
+.wlabel.toleft .wlabel-box { left: auto; right: 10px; border-left: 0; border-right: 2px solid rgba(160, 222, 255, 0.75); border-radius: 5px 0 0 5px; }
 
 /* ── 写真 ─────────────────────────────────── */
 .shutter { position: fixed; inset: 0; z-index: 30; background: #fff; pointer-events: none; opacity: 0; }
@@ -164,10 +188,15 @@ button { font-family: inherit; }
 .about-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 6px; }
 .about h2 { margin: 0; font-size: 19px; font-weight: 600; letter-spacing: 0.08em; }
 .about-close { flex: none; font-size: 16px; }
-.about-label { margin: 18px 0 2px; font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.18em; color: var(--ink-faint); }
-.about p { margin: 0; }
-.about ul { margin: 0; padding-left: 1.25em; }
+.about p.about-label { margin: 22px 0 5px; font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.18em; color: var(--ink-faint); }
+.about p { margin: 0 0 11px; }
+.about p:last-child { margin-bottom: 0; }
+.about ul { margin: 0 0 11px; padding-left: 1.25em; }
 .about li { padding-left: 0.1em; }
+.about-what li { margin: 3px 0; }
+.about b { font-family: var(--font-mono); font-weight: 600; color: var(--accent); }
+.about strong { font-weight: 600; color: var(--accent); }
+.about-more { font-size: 13px; }
 .about-keys { list-style: none; padding-left: 0; }
 .about kbd { display: inline-block; min-width: 1.6em; margin: 0 1px; padding: 0 5px; border: 1px solid var(--line); border-radius: 4px; font-family: var(--font-mono); font-size: 11.5px; line-height: 1.6; text-align: center; color: var(--ink); }
 .about a { color: var(--accent); text-decoration: none; }
@@ -175,7 +204,7 @@ button { font-family: inherit; }
 .about-foot { margin-top: 22px !important; font-size: 14px; letter-spacing: 0.06em; }
 
 /* ── 携帯の仮想スティック ────────────────────── */
-.stick { position: fixed; left: 0; top: 0; z-index: 11; width: 0; height: 0; pointer-events: none; }
+.stick { position: fixed; left: 0; top: 0; z-index: 14; width: 0; height: 0; pointer-events: none; opacity: 0; transition: opacity 0.18s ease; }
 .stick-base { position: absolute; left: 0; top: 0; width: 112px; height: 112px; margin: -56px; border-radius: 50%; border: 1px solid rgba(242, 239, 232, 0.45); background: rgba(6, 10, 24, 0.2); transition: opacity 0.2s; }
 .stick-knob { position: absolute; left: 0; top: 0; width: 44px; height: 44px; margin: -22px; border-radius: 50%; background: rgba(242, 239, 232, 0.6); transition: opacity 0.2s; }
 
@@ -218,6 +247,12 @@ button { font-family: inherit; }
   .formula-src { display: none; }
   .formula-head { margin-bottom: 2px; }
   .formula-here { font-size: 13px; margin-bottom: 6px; padding-bottom: 6px; }
+  .wlabel-box { max-width: min(74vw, 280px); padding: 5px 8px 6px; font-size: 10px; line-height: 1.55; }
+  .wlabel-head { font-size: 11px; }
+  .wlabel-note { font-size: 10px; }
+  .wlabel-stem { height: 22px; }
+  .wlabel-box { bottom: 22px; }
+  .wlabel.below .wlabel-box { top: 22px; }
   .photo { width: 140px; bottom: calc(150px + var(--safe-b)); right: calc(14px + var(--safe-r)); }
   .about { padding: 20px 20px 22px; font-size: 14px; }
   .about h2 { font-size: 18px; }
@@ -235,6 +270,8 @@ button { font-family: inherit; }
   .landing { transition-duration: 0.25s; }
   .hud { animation-duration: 0.01ms; animation-delay: 0s; }
   .formula { transition: opacity 0.2s; transform: none !important; }
+  .wlabel { transition: opacity 0.15s; }
+  .stick { transition: none; }
   .formula.show { transform: none !important; }
   .photo, .hud-hint, .enter-bar { transition: none; }
   .shutter.go { animation-duration: 0.15s; }

@@ -9,6 +9,7 @@ import { extras } from "@/engine/ui/controlsApi";
 import Landing from "./Landing";
 import Hud from "./Hud";
 import FormulaOverlay from "./FormulaOverlay";
+import WorldLabels from "./WorldLabels";
 import PhotoMode, { type PhotoHandle } from "./PhotoMode";
 import About from "./About";
 import Joystick from "./Joystick";
@@ -36,6 +37,8 @@ export default function WorldView({ sourceLines }: { sourceLines: number | null 
   const [flip, setFlip] = useState(false);
   const [muted, setMuted] = useState(false);
   const [nohud, setNohud] = useState(false);
+  // 定点撮影（?shot=）は HUD を消すが、世界の中の数式のふだは「画の中身」なので残す
+  const [keepLabels, setKeepLabels] = useState(false);
   const [showStats, setShowStats] = useState(false);
   const [about, setAbout] = useState(false);
   const [locked, setLocked] = useState(false);
@@ -62,6 +65,7 @@ export default function WorldView({ sourceLines }: { sourceLines: number | null 
       window.__flip = w;
       setWorld(w);
       setNohud(w.params.nohud);
+      setKeepLabels(!!w.params.shot);
       setShowStats(w.params.stats);
       setAuto(w.params.auto);
       setIsMobile(w.env.isMobile);
@@ -226,6 +230,7 @@ export default function WorldView({ sourceLines }: { sourceLines: number | null 
 
   const inWorld = phase === "in";
   const overlays = inWorld && !nohud;
+  const labelsOn = inWorld && (!nohud || keepLabels);
   const paused = false; // ドラッグで見回す方式が既定になったので「クリックで操作にもどる」は出さない
 
   return (
@@ -261,6 +266,7 @@ export default function WorldView({ sourceLines }: { sourceLines: number | null 
       )}
 
       <FormulaOverlay world={world} active={overlays} compact={compact} />
+      <WorldLabels world={world} active={labelsOn} compact={compact} />
       {isMobile && <Joystick world={world} active={overlays} />}
       <PhotoMode ref={photoRef} world={world} />
       <About open={about} onClose={closeAbout} sourceLines={sourceLines} isMobile={isMobile} />

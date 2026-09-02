@@ -2,21 +2,24 @@
 // まだ無ければ UI は黙って描かない（ここに書いた形で生えれば、そのまま動く）。
 import type { Controls } from "../controls";
 
-/**
- * 携帯の仮想スティックの状態。UI はこれを読んで円を描くだけ（入力の解釈は controls 側）。
- * **一度も触られていない間は active が false**（x/y は 0 のまま）なので、UI は active を見て出し入れする。
- */
+/** 携帯の仮想スティックの状態。UI はこれを読んで円を描くだけ（入力の解釈は controls 側） */
 export type StickState = {
-  /** 触れている間 true。触る前は false */
+  /** 触れている間 true。UI はこれが true のときだけ円を描く */
   active: boolean;
-  /** つまみの位置（CSS px、画面座標）。浮動式なので触れた所が中心 */
+  /** スティックの中心（CSS px、画面座標）＝触れた所。無ければ x, y を使う */
+  cx?: number;
+  cy?: number;
+  /** つまみの位置（半径で丸めた後、CSS px、画面座標） */
   x: number;
   y: number;
-  /** 傾き −1..1。dx は右が正、**dy は上（前進）が正**（CSS の Y とは逆） */
+  /** 傾き −1..1（dx: 右が正、dy: 上が正） */
   dx: number;
   dy: number;
   /** 見た目の半径（CSS px） */
   radius: number;
+  /** 倒し切り／ダブルタップ長押しの走り（あれば） */
+  overdrive?: boolean;
+  sprint?: boolean;
 };
 
 export type ControlsExtras = {
