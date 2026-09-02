@@ -8,7 +8,7 @@
 //
 // 地形は3つの成分の足し算（裏返しで別々の線の族として見せる）:
 //   base = 湖底 + 岸の土手 + 盆地のゆるい上り + 侵食風の丘 + 沢筋
-//   mtn  = 山脈（東西に走る尾根 × 山腹を流れ下る谷筋 × 段丘）。方角で高さが変わる（北が主峰）
+//   mtn  = 山脈（東西に走る尾根 × 山腹を流れ下る谷筋 × 支尾根の族 × 段丘）。方角で高さが変わる（北が主峰）
 //   fine = 数m〜数十mの細かい起伏
 import { noise2, smoothstep } from "./noise";
 import { onSeed, subSeed } from "./seed";
@@ -122,7 +122,10 @@ function erodedFbm(x: number, y: number, octaves: number): number {
   return sum / norm;
 }
 
-/** 尾根ノイズ。sharp（鋭い稜線 1-|n|）と round（丸い稜線 1-n²）を同じサンプルから同時に出す。 */
+/**
+ * 尾根ノイズ。sharp（鋭い稜線 1-|n|）と round（丸い稜線 1-n²）を同じサンプルから同時に出す。
+ * 減衰は 0.58（0.5 だと 130〜500m の帯が空いて、山脈が一つのなだらかなドーム＝「団子」になる）。
+ */
 let ridgeRound = 0;
 function ridgedBoth(x: number, y: number, octaves: number): number {
   let sum = 0, sumR = 0, amp = 0.5, norm = 0, weight = 1;
@@ -138,7 +141,7 @@ function ridgedBoth(x: number, y: number, octaves: number): number {
     norm += amp;
     x = x * 2.0 + 11.1;
     y = y * 2.0 + 7.7;
-    amp *= 0.5;
+    amp *= 0.58;
   }
   ridgeRound = sumR / norm;
   return sum / norm;
@@ -244,6 +247,10 @@ export function heightAt(x: number, z: number): number {
         base -= 3 * c2 * c2 * c2 * creaseT * fineCrease;
       }
     }
+    // 中スケールの起伏（λ 130 / 65 m）。この帯が空いていて斜面が「粘土」に見えていた。
+    // 岸から 60m 以内は 0（湖・岸線・開始地点は変えない）
+    const midT = smoothstep(60, 300, sd);
+    if (midT > 0) base += (5.5 * nz(x * 0.0077 + 6.3, z * 0.0077 - 3.1) + 2.2 * nz(x * 0.0154 - 1.9, z * 0.0154 + 7.4)) * midT;
   }
 
   // ---- mtn: 山脈 ----
@@ -266,22 +273,32 @@ export function heightAt(x: number, z: number): number {
     const px = (x + wx) * 0.00048 + 0.5, pz = (z + wz) * 0.00078 + 0.9;
     const sharp = ridgedBoth(px, pz, 5);
     const round = ridgeRound;
-    let sharpness = (0.45 + 0.55 * smoothstep(-0.35, 0.45, nz(x * 0.0008 + 2.9, z * 0.0008 + 8.8))) * TUNE.ridge;
+    // 0.45 → 0.62: 稜線を鋭く（山が「団子」に見えていた）。TUNE.ridge は実験室の「尾根の鋭さ」
+    let sharpness = (0.62 + 0.38 * smoothstep(-0.35, 0.45, nz(x * 0.0008 + 2.9, z * 0.0008 + 8.8))) * TUNE.ridge;
     sharpness = sharpness < 0 ? 0 : sharpness > 1.6 ? 1.6 : sharpness;
     let m = round + (sharp - round) * sharpness;
     m = m < 0 ? 0 : m > 1 ? 1 : m; // sharpness を 1 より上へ振ったときの外挿を止める
     m = m * m * (1.9 - 0.9 * m); // 谷底を締め、山頂は残す
 
     // 山腹を流れ下る谷筋（北側では南北に、東西側では東西に伸びた溝）。稜線と裾は残す
-    const flank = smoothstep(0.1, 0.4, m) * (1 - smoothstep(0.6, 0.92, m));
+    const flank = smoothstep(0.1, 0.4, m) * (1 - smoothstep(0.62, 0.95, m));
     if (flank > 0.02) {
       const gN = 1 - Math.abs(nz(x * 0.011 + 2.0, z * 0.0036 + 5.0));
       const gE = 1 - Math.abs(nz(x * 0.0036 + 8.0, z * 0.011 + 1.0));
       const g1 = sa * sa * gN + ca * ca * gE;
-      m -= 0.1 * g1 * g1 * g1 * flank;
+      const g4 = g1 * g1 * g1 * g1; // ^3 → ^4: 溝を細く深く（幅の広い皿ではなく谷にする）
+      m -= 0.15 * g4 * flank;
     }
 
     mtn = m * amp * mtnMask;
+    // 支尾根の族（λ 90 / 45 m、振幅 17 / 8 m）。稜線から下る小さな尾根と、その間の凹み。
+    // 丸い山腹に「光の面」と「陰の面」の縞ができて、団子が山になる
+    const spurT = smoothstep(0.10, 0.46, m) * mtnMask;
+    if (spurT > 0.01) {
+      const r1 = 1 - Math.abs(nz(x * 0.0111 + 3.7, z * 0.0111 + 8.3));
+      const r2 = 1 - Math.abs(nz(x * 0.0222 - 5.1, z * 0.0222 + 2.4));
+      mtn += ((r1 * r1 - 0.34) * 17 + (r2 * r2 - 0.34) * 8) * spurT;
+    }
     // 段丘（崖の帯）: 上部の岩場だけ、場所によって
     if (mtn > 160) {
       const terrT = smoothstep(0.25, 0.7, nz(x * 0.0013 + 5.5, z * 0.0013 + 0.4)) * smoothstep(160, 320, mtn);

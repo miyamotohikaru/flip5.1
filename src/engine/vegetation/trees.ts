@@ -22,13 +22,13 @@ type Tier = { r0: number; r1: number; band: number; capNear: number; capMid: num
 function tierSettings(q: QualitySettings): Tier {
   switch (q.tier) {
     case "low":
-      return { r0: 28, r1: 95, band: 8, capNear: 120, capMid: 350, cell: 10, impCell: 128, chunk: 1024 };
+      return { r0: 24, r1: 80, band: 2.5, capNear: 90, capMid: 320, cell: 10, impCell: 128, chunk: 1024 };
     case "mid":
-      return { r0: 40, r1: 130, band: 10, capNear: 180, capMid: 600, cell: 9, impCell: 192, chunk: 1024 };
+      return { r0: 34, r1: 100, band: 3, capNear: 140, capMid: 500, cell: 9, impCell: 192, chunk: 1024 };
     case "ultra":
-      return { r0: 80, r1: 240, band: 14, capNear: 400, capMid: 1600, cell: 7.5, impCell: 256, chunk: 1024 };
+      return { r0: 65, r1: 170, band: 4.5, capNear: 320, capMid: 1100, cell: 7.5, impCell: 256, chunk: 1024 };
     default:
-      return { r0: 55, r1: 150, band: 12, capNear: 300, capMid: 1200, cell: 8, impCell: 256, chunk: 1024 };
+      return { r0: 44, r1: 120, band: 4, capNear: 220, capMid: 800, cell: 8, impCell: 256, chunk: 1024 };
   }
 }
 
@@ -65,7 +65,7 @@ export class Trees {
     }
     for (let i = 0; i < lighting.csm.lights.length; i++) this.cascadeIndex.set(lighting.csm.lights[i].shadow.camera, i);
     const msaa = q.msaaSamples > 0;
-    this.needle = makeNeedleAtlas(q.tier === "low" ? 192 : 256);
+    this.needle = makeNeedleAtlas(q.tier === "low" ? 192 : q.tier === "mid" ? 256 : 384);
     // 形
     for (const v of TREE_VARIANTS) this.geos.push({ lod0: buildConifer(v, 0), lod1: buildConifer(v, 1) });
     this.stats.lod0Tris = this.geos[0].lod0.tris;
@@ -82,28 +82,24 @@ export class Trees {
       const o1 = { lod: 1 as const, H: g.lod1.H, r0: t.r0, r1: t.r1, band: t.band };
       const near = new THREE.InstancedMesh(g.lod0.geometry, makeTreeMaterial(env, lighting, this.needle, o0, msaa), t.capNear);
       const mid = new THREE.InstancedMesh(g.lod1.geometry, makeTreeMaterial(env, lighting, this.needle, o1, msaa), t.capMid);
-      for (const [m, o] of [[near, o0], [mid, o1]] as const) {
+      for (const m of [near, mid]) {
         m.count = 0;
         m.frustumCulled = false;
-        m.castShadow = true;
         m.receiveShadow = true;
-        m.customDepthMaterial = makeTreeDepthMaterial(env, this.needle, o);
         m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
         m.matrixAutoUpdate = false;
         parent.add(m);
       }
-      // 影: 近景は第1・第2カスケード、中景は第2・第3カスケードだけ
-      let nearCount = 0, midCount = 0;
-      near.onBeforeShadow = (_r, _o, _c, cam) => {
-        nearCount = near.count;
-        if ((this.cascadeIndex.get(cam) ?? 0) >= 2) near.count = 0;
-      };
-      near.onAfterShadow = () => {
-        near.count = nearCount;
-      };
+      // 影は「中景（LOD1）のリスト」だけが落とす。近景の LOD0 は形が細かいだけで影の輪郭は
+      // ほぼ同じなので、影用に LOD1 を使うと三角形が 1/4 で済む。
+      // そのため中景のリストは 0〜r1 の全部を持ち、影の深度マテリアルだけ LOD のフェードを無視する。
+      near.castShadow = false;
+      mid.castShadow = true;
+      mid.customDepthMaterial = makeTreeDepthMaterial(env, this.needle, o1, true);
+      let midCount = 0;
       mid.onBeforeShadow = (_r, _o, _c, cam) => {
         midCount = mid.count;
-        if ((this.cascadeIndex.get(cam) ?? 1) === 0) mid.count = 0;
+        if ((this.cascadeIndex.get(cam) ?? 0) >= 2) mid.count = 0; // 遠カスケードは地形の影で足りる
       };
       mid.onAfterShadow = () => {
         mid.count = midCount;
@@ -224,7 +220,7 @@ export class Trees {
           float h = flip_height(wxz) + 0.07;
           vec3 wp = vec3(wxz.x, h, wxz.y);
           float dist = distance(root.xz, uCamPos.xz);
-          vLit = vec3(length(position.xz), veg_flipMask(root), 1.0 - smoothstep(60.0, 90.0, dist));
+          vLit = vec3(length(position.xz), veg_flipMask(root), 1.0 - smoothstep(70.0, 100.0, dist));
           vLitUv = wxz * 0.7;
           vec3 transformed = wp;`,
           "litter vs begin",
@@ -251,8 +247,11 @@ export class Trees {
           `{
             float r = vLit.x;
             float nz = flip_vnoise(vLitUv);
-            float a = (1.0 - smoothstep(0.2 + 0.45 * nz, 1.0, r)) * (0.7 + 0.3 * nz) * (1.0 - vLit.y) * vLit.z;
-            vec3 tint = vec3(0.34, 0.27, 0.20);
+            float a = (1.0 - smoothstep(0.18 + 0.5 * nz, 1.0, r)) * (0.65 + 0.35 * nz);
+            // 幹の足元は落ち葉が厚く、接地の影で暗い（根元の継ぎ目を隠す）
+            a = max(a, 1.0 - smoothstep(0.0, 0.34 + 0.1 * nz, r));
+            a *= (1.0 - vLit.y) * vLit.z;
+            vec3 tint = vec3(0.30, 0.235, 0.165);
             diffuseColor.rgb = mix(vec3(1.0), tint, a);
             diffuseColor.a = 1.0;
             #if defined(VEG_LITTER_DEBUG) && VEG_LITTER_DEBUG == 1
@@ -300,7 +299,7 @@ export class Trees {
     forEachInRadius(sc, cx, cz, t.r1 + margin, (i, d) => {
       const v = sc.v[i];
       if (d < t.r0 + margin) nearList[v].push(i);
-      if (d > t.r0 - t.band - margin) midList[v].push(i);
+      midList[v].push(i); // 中景は影も受け持つので 0〜r1 の全部を入れる
     });
     let litterN = 0;
     for (let v = 0; v < V; v++) {
@@ -314,7 +313,7 @@ export class Trees {
           this.composeMatrix(i, _m);
           mesh.setMatrixAt(k, _m);
           if (litter && litterN < this.litter.instanceMatrix.count) {
-            const rad = (0.9 + 1.6 * sc.s[i]) * (0.8 + 0.4 * sc.seed[i]);
+            const rad = (1.5 + 3.1 * sc.s[i]) * (0.8 + 0.4 * sc.seed[i]);
             _m.makeScale(rad, 1, rad);
             _m.setPosition(sc.x[i], sc.y[i], sc.z[i]);
             this.litter.setMatrixAt(litterN++, _m);

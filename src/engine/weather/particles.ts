@@ -37,7 +37,8 @@ varying vec3 vWorld;
 varying float vFm;
 varying vec2 vVel;
 void main(){
-  float box = 26.0;
+  // 埃が見えるのは近くだけ（遠いと昼の空に白い点として散る）
+  float box = 13.0;
   vec3 fwd = wx_camFwd(viewMatrix);
   vec3 boxC = uCamPos + vec3(fwd.x, 0.0, fwd.z) * box * 0.28;
   vec3 wind3 = vec3(uWind.x, 0.0, uWind.y) * uWind.z * (0.18 + 0.25 * uGust);
@@ -50,7 +51,7 @@ void main(){
   float th = flip_height(center.xz);
   float forest = smoothstep(6.0, 18.0, th) * (1.0 - smoothstep(300.0, 420.0, th));
   float dens = 0.3 + 0.7 * forest;
-  float on = step(aSeed.w, dens) * step(th + 0.15, center.y) * step(center.y, th + 14.0);
+  float on = step(aSeed.w, dens) * step(th + 0.15, center.y) * step(center.y, th + 4.5);
   float dist = distance(center, uCamPos);
   float px = dist * uWxPixel;
   float dropS = 0.006 + 0.008 * aSeed.x;
@@ -60,10 +61,12 @@ void main(){
   float sunUp = smoothstep(-0.02, 0.1, uSunDir.y);
   vec3 e = abs(rel) / box;
   float edge = (1.0 - smoothstep(0.3, 0.5, e.x)) * (1.0 - smoothstep(0.3, 0.5, e.y)) * (1.0 - smoothstep(0.3, 0.5, e.z));
-  float alpha = on * edge * sunUp * (1.0 - uRain) * smoothstep(0.25, 1.5, dist) * clamp(dropS / size, 0.35, 1.0);
+  float alpha = on * edge * sunUp * (1.0 - uRain) * smoothstep(0.25, 1.2, dist) * clamp(dropS / size, 0.35, 1.0);
+  // 6m より遠い埃は描かない
+  alpha *= 1.0 - smoothstep(4.0, 6.0, dist);
   vFm = wx_flipMask(center);
-  // 数式ビューでは板を大きくして速度ベクトルを描く
-  float msize = max(size, px * 26.0);
+  // 数式ビューでは板を少し大きくして「点＋速度ベクトルの短い軌跡」を描く（線が長いと空に白い短線が散る）
+  float msize = max(size, px * 10.0);
   size = mix(size, msize, step(0.001, vFm));
   vec3 pos = center + (right * position.x + up * (position.y - 0.5)) * size * 2.0;
   vec3 vel = wind3 + vec3(0.0, -0.03, 0.0) + vec3(cos(t * 0.6 + ph.x) * 0.6, -sin(t * 0.45 + ph.y) * 0.45, cos(t * 0.7 + ph.z) * 0.7) * 0.35;
@@ -95,12 +98,13 @@ void main(){
   float shape = exp(-r * r * 4.0) * (1.0 - smoothstep(0.7, 1.0, r));
   vec3 vdir = normalize(vWorld - uCamPos);
   float sunUp = smoothstep(-0.05, 0.05, uSunDir.y);
-  // 逆光で光る。順光ではほとんど見えない（遠景に青い点として浮かないように）
-  float back = wx_phaseHG(dot(vdir, uSunDir), 0.72);
-  vec3 col = (uSkyAmbient * 0.18 + uGroundAmbient * 0.12) + uSunColor * (back * 0.6 + 0.015) * sunUp;
+  // HG 位相（g=0.7）。太陽の側を向いたときだけ光る。順光では完全に見えない
+  float back = wx_phaseHG(dot(vdir, uSunDir), 0.70);
+  float lit = clamp(back * 0.75, 0.0, 1.0);
+  vec3 col = uSunColor * back * 0.55 * sunUp + uSkyAmbient * 0.05 * lit;
   float soft = wx_soft(gl_FragCoord.xy, gl_FragCoord.z, 0.15);
   vec4 aer = flip_aerial(vWorld);
-  float alpha = vAlpha * shape * soft * aer.a * exp(-wx_fogOD(uCamPos, vWorld)) * (0.35 + 0.65 * clamp(back * 3.0, 0.0, 1.0)) * 0.8;
+  float alpha = vAlpha * shape * soft * aer.a * exp(-wx_fogOD(uCamPos, vWorld)) * lit * sunUp * 0.9;
   float m = wx_mathDot(q, vVel);
   col = mix(col, FLIP_LINE, vFm);
   alpha = mix(alpha, m * soft * 0.9 * step(0.001, vAlpha), vFm);
@@ -137,28 +141,35 @@ void main(){
   vec2 xz = (cell + jit) * cs;
   float th = flip_height(xz);
   float hL = th - uWxLake;
-  // 岸辺（浅瀬の上〜岸の草地）と森の際に多い
-  float shore = smoothstep(-2.5, -0.8, hL) * (1.0 - smoothstep(4.0, 9.0, hL));
+  // 岸の草地と森の際に多い。湖の上には出さない（水面に浮く光の玉になる）
+  float shore = smoothstep(0.05, 0.9, hL) * (1.0 - smoothstep(4.0, 9.0, hL));
   float forestEdge = smoothstep(7.0, 12.0, hL) * (1.0 - smoothstep(20.0, 35.0, hL));
   float dens = max(shore, forestEdge * 0.6);
+  // 群れ感: λ≈22m の低周波ノイズで「いる場所・いない場所」を作る（一様にばら撒かない）
+  float swarm = smoothstep(0.38, 0.68, flip_vnoise(xz * 0.045));
+  dens *= 0.35 + 0.9 * swarm;
   float on = step(aSeed.w, dens);
   float t = uTime;
   vec3 ph = aSeed.xyz * 6.2832;
   vec3 wander = vec3(sin(t * 0.5 + ph.x) + sin(t * 1.3 + ph.y) * 0.3, sin(t * 0.8 + ph.y) * 0.5, cos(t * 0.45 + ph.z) + cos(t * 1.1 + ph.x) * 0.3) * 0.6;
   vec3 vel = vec3(cos(t * 0.5 + ph.x) * 0.5 + cos(t * 1.3 + ph.y) * 0.39, cos(t * 0.8 + ph.y) * 0.4, -sin(t * 0.45 + ph.z) * 0.45 - sin(t * 1.1 + ph.x) * 0.33) * 0.6;
-  vec3 center = vec3(xz.x, max(th, uWxLake) + 0.3 + 1.3 * aSeed.z, xz.y) + wander;
-  float period = 1.8 + 2.6 * aSeed.y;
+  // 地上 1.4m 以内（草の高さ〜腰の高さ）
+  vec3 center = vec3(xz.x, th + 0.12 + 1.05 * aSeed.z, xz.y) + wander;
+  // 明滅: 虫ごとに周期も点灯の長さも違う。素早く点いてゆっくり消える
+  float period = 1.5 + 3.4 * aSeed.y;
   float bp = fract(t / period + aSeed.x);
-  float blink = smoothstep(0.0, 0.18, bp) * (1.0 - smoothstep(0.34, 0.6, bp));
-  blink = pow(blink, 1.2);
+  float dur = 0.14 + 0.20 * aSeed.z;
+  float blink = smoothstep(0.0, dur * 0.25, bp) * (1.0 - smoothstep(dur * 0.5, dur * 1.7, bp));
+  blink = pow(clamp(blink, 0.0, 1.0), 1.4) * (0.5 + 0.5 * flip_hash11(aIndex * 0.371 + 5.0));
   float night = uHour > 12.0 ? smoothstep(19.6, 20.6, uHour) : smoothstep(4.8, 3.8, uHour);
   night *= smoothstep(0.02, -0.05, uSunDir.y);
   float dist = distance(center, uCamPos);
   float px = dist * uWxPixel;
-  float size = max(0.1, px * 8.0);
-  float alpha = on * night * blink * (1.0 - smoothstep(24.0, 32.0, dist)) * (1.0 - uRain) * smoothstep(0.3, 1.0, dist);
+  // 1〜3px の光の点（テニスボールにしない）
+  float size = max(0.012, px * 2.5);
+  float alpha = on * night * blink * (1.0 - smoothstep(20.0, 30.0, dist)) * (1.0 - uRain) * smoothstep(0.3, 1.0, dist);
   vFm = wx_flipMask(center);
-  float msize = max(size, px * 26.0);
+  float msize = max(size, px * 10.0);
   size = mix(size, msize, step(0.001, vFm));
   vec3 right = wx_camRight(viewMatrix);
   vec3 up = wx_camUp(viewMatrix);
@@ -186,10 +197,10 @@ varying vec2 vVel;
 void main(){
   vec2 q = vec2(vQ.x, vQ.y - 0.5) * 2.0;
   float r = length(q);
-  float core = exp(-r * r * 60.0);
-  float halo = exp(-r * 3.2) * 0.22 * (1.0 - smoothstep(0.7, 1.0, r));
-  // 蛍の黄緑（白くしない）: 芯は明るい黄緑、周りは緑の淡い光
-  vec3 col = vec3(0.85, 1.0, 0.32) * core * 1.3 + vec3(0.45, 0.85, 0.2) * halo * 1.3;
+  float core = exp(-r * r * 26.0);
+  float halo = exp(-r * 2.6) * 0.30 * (1.0 - smoothstep(0.75, 1.0, r));
+  // 蛍の黄緑（白くしない）: 芯は明るい黄緑、周りは緑の淡い光。板が小さくなったぶん芯を明るく
+  vec3 col = vec3(0.85, 1.0, 0.32) * core * 5.0 + vec3(0.45, 0.85, 0.2) * halo * 3.0;
   float soft = wx_soft(gl_FragCoord.xy, gl_FragCoord.z, 0.12);
   vec4 aer = flip_aerial(vWorld);
   col *= vAlpha * soft * aer.a * exp(-wx_fogOD(uCamPos, vWorld));
@@ -240,14 +251,14 @@ void main(){
   vec3 axis = normalize(vec3(aSeed.x - 0.5, aSeed.y - 0.5, aSeed.z - 0.5) + vec3(0.01, 0.02, 0.03));
   vec3 lx = rot(vec3(1.0, 0.0, 0.0), axis, ang);
   vec3 ly = rot(vec3(0.0, 1.0, 0.0), axis, ang);
-  float size = 0.03 + 0.03 * aSeed.z;
+  float size = 0.020 + 0.024 * aSeed.z;
   vFm = wx_flipMask(center);
   vec3 pos = center + (lx * position.x + ly * (position.y - 0.5)) * size * 2.0;
   if (vFm > 0.001) {
     float px = dist * uWxPixel;
     vec3 right = wx_camRight(viewMatrix);
     vec3 up = wx_camUp(viewMatrix);
-    vec3 mpos = center + (right * position.x + up * (position.y - 0.5)) * max(size, px * 26.0) * 2.0;
+    vec3 mpos = center + (right * position.x + up * (position.y - 0.5)) * max(size, px * 10.0) * 2.0;
     pos = mix(pos, mpos, vFm);
   }
   vec3 vel = wind3 + vec3(0.0, -fall, 0.0) + vec3(cos(t * 1.7 + ph.x) * 1.7, 0.0, -sin(t * 1.3 + ph.z) * 1.3) * 0.4;

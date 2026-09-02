@@ -51,42 +51,58 @@ uniform vec2 uSplit;
 uniform float uVignette;
 uniform float uGradeOn;
 uniform float uDebug;
-uniform float uRain;
-uniform float uUnderwater;
+uniform float uDropRain;
+uniform float uDropAmt;
+uniform float uHalo;
+uniform float uWaterFade;
 uniform float uAspect;
 varying vec2 vUv;
 
 vec3 sceneAt(vec2 uv){ return texture2D(tScene, uv).rgb; }
 
 // ---- レンズの水滴。xy = 屈折による uv のずれ, z = 水滴マスク, w = 縁のハイライト
-vec4 rainDrops(vec2 uv){
-  float rain = smoothstep(0.08, 0.6, uRain);
-  if (rain <= 0.0) return vec4(0.0);
-  vec2 p = uv * vec2(uAspect, 1.0);
-  vec2 cellSize = vec2(0.11, 0.14);
+//   本物のレンズ前の水玉は「小さな魚眼」で、径は 3〜10px。中は背景が上下反転して広角に見える。
+//   常時出すと安っぽいので、見上げたときと突風のときだけ（uDropAmt）。
+vec4 rainDrops(vec2 uv, out float dark){
+  dark = 0.0;
+  float rain = smoothstep(0.08, 0.6, uDropRain) * uDropAmt;
+  if (rain <= 0.002) return vec4(0.0);
+  vec2 asp = vec2(uAspect, 1.0);
+  vec2 p = uv * asp;
+  vec2 cellSize = vec2(0.052, 0.066);
   vec2 cell = floor(p / cellSize);
   vec2 f = fract(p / cellSize);
   float h = post_hash12(cell + 7.1);
   // 画面の縁ほど付きやすい（中央は視界を邪魔しない）
   vec2 dc = abs(uv - 0.5) * 2.0;
   float edgeBias = 0.35 + 0.65 * smoothstep(0.3, 1.0, max(dc.x, dc.y));
-  float density = (0.06 + 0.16 * rain) * edgeBias;
+  float density = (0.05 + 0.14 * rain) * edgeBias;
   if (h > density) return vec4(0.0);
   vec2 rnd = vec2(post_hash12(cell + 1.7), post_hash12(cell + 3.9));
   float speed = 0.003 + 0.012 * post_hash12(cell + 9.3);
   vec2 center = vec2(0.25 + 0.5 * rnd.x, fract(rnd.y - uTime * speed));
-  float radius = (0.007 + 0.009 * post_hash12(cell + 5.5)) / cellSize.y;
+  // 径は以前の 1/3（uv で 0.0024〜0.0054 ＝ 900px 高で直径 4〜10px）
+  float rUv = 0.0024 + 0.0030 * post_hash12(cell + 5.5);
+  float radius = rUv / cellSize.y;
   vec2 dv = (f - center) / radius;
   dv.x *= 1.0 + 0.3 * (post_hash12(cell + 2.2) - 0.5);
-  dv.y *= 0.8;
+  dv.y *= 0.85;
   float r2 = dot(dv, dv);
   if (r2 > 1.0) return vec4(0.0);
-  float mask = smoothstep(1.0, 0.6, r2);
+  // 縁は全反射で暗い輪になる（これが無いと「ただのぼけ」に見える）
+  dark = smoothstep(0.45, 1.0, r2);
+  float mask = smoothstep(1.0, 0.55, r2);
   float nz = sqrt(max(1.0 - r2, 0.0));
-  vec2 offset = -dv * 0.035 * vec2(1.0 / uAspect, 1.0);
-  // 上の縁が空を映して光る
-  float rim = pow(1.0 - nz, 2.0) * smoothstep(-0.2, 0.9, dv.y) * 0.5;
-  return vec4(offset * mask, mask, rim * mask);
+  // 屈折: 玉レンズなので中心を挟んで反転し、広角に縮む
+  vec2 dropUv = (cell + center) * cellSize / asp;
+  vec2 refr = (dropUv - uv) * 3.2;
+  // 縁ほど強く曲がる
+  refr *= mix(0.55, 1.0, r2);
+  // 下の縁が明るい（重力で溜まった側が空を集める）＋ 上に小さなハイライト
+  float rim = pow(1.0 - nz, 2.5) * smoothstep(-0.3, 0.9, -dv.y) * 0.7;
+  rim += pow(max(0.0, 1.0 - length(dv - vec2(-0.32, 0.34)) * 2.6), 5.0) * 0.9;
+  dark *= mask;
+  return vec4(refr * mask, mask, rim * mask);
 }
 
 // ---- レンズフレア（ゴースト 3 つ＋ハロー）
@@ -96,11 +112,12 @@ vec3 lensFlare(vec2 uv, float vis){
   vec2 s = uSunScreen;
   vec2 d = (uv - s) * asp;
   float r = length(d);
-  // ハロー（太陽を囲むリング）
+  // ハロー（太陽を囲むリング）。氷晶の暈なので、薄雲があるときだけ薄く出す
   float halo = smoothstep(0.24, 0.30, r) * (1.0 - smoothstep(0.30, 0.38, r));
-  vec3 col = vec3(0.9, 0.75, 0.6) * halo * 0.16;
-  // ゴースト: 画面中心を挟んで反対側
+  vec3 col = vec3(0.9, 0.75, 0.6) * halo * 0.05 * uHalo;
+  // ゴースト: 画面中心を挟んで反対側。太陽が画面中心に近いと重なって見えないので消す
   vec2 axis = vec2(0.5) - s;
+  float ghost = smoothstep(0.04, 0.16, length(axis * asp));
   const float ks[3] = float[3](0.55, 1.15, 1.7);
   const float sz[3] = float[3](0.055, 0.09, 0.14);
   const float it[3] = float[3](0.6, 0.35, 0.22);
@@ -110,7 +127,7 @@ vec3 lensFlare(vec2 uv, float vis){
     float g = pow(1.0 - smoothstep(0.0, 1.0, rr), 1.5);
     // 縁が色付く（内側が暖色、外側が寒色）
     vec3 tint = mix(vec3(1.0, 0.85, 0.6), vec3(0.5, 0.75, 1.0), smoothstep(0.55, 1.0, rr));
-    col += tint * g * it[i];
+    col += tint * g * it[i] * ghost;
   }
   // 太陽が画面の縁へ行くほど弱く
   vec2 e = max(abs(s - 0.5) - 0.4, 0.0);
@@ -145,9 +162,9 @@ vec3 gradeColor(vec3 c){
   float hw = smoothstep(0.30, 1.0, l);
   c *= mix(vec3(1.0), uShadowTint, sw * uSplit.x);
   c *= mix(vec3(1.0), uHighlightTint, hw * uSplit.y);
-  // コントラスト（ガンマ空間で 0.5 を軸に）＋ わずかなフィルム S 字
+  // コントラスト（ガンマ空間。軸は 0.42＝屋外の中間調。0.5 だと中間まで一緒に沈んで、締まるのでなく暗くなるだけ）
   vec3 g = pow(max(c, vec3(0.0)), vec3(1.0 / 2.2));
-  g = (g - 0.5) * uContrast + 0.5;
+  g = (g - 0.42) * uContrast + 0.42;
   g = mix(g, g * g * (3.0 - 2.0 * g), 0.12);
   c = pow(clamp(g, 0.0, 1.0), vec3(2.2));
   // 彩度
@@ -159,11 +176,12 @@ vec3 gradeColor(vec3 c){
 void main(){
   vec2 uv = vUv;
   // 水中のゆらぎ
-  if (uUnderwater > 0.0) {
-    uv += vec2(sin(uv.y * 21.0 + uTime * 1.6), cos(uv.x * 17.0 + uTime * 1.2)) * 0.004 * uUnderwater;
+  if (uWaterFade > 0.0) {
+    uv += vec2(sin(uv.y * 21.0 + uTime * 1.6), cos(uv.x * 17.0 + uTime * 1.2)) * 0.004 * uWaterFade;
   }
-  // レンズの水滴
-  vec4 drop = rainDrops(uv);
+  // レンズの水滴（屈折で背景が反転して見える）
+  float dropDark;
+  vec4 drop = rainDrops(uv, dropDark);
   uv += drop.xy;
 
   // 深度と世界座標
@@ -176,28 +194,45 @@ void main(){
   vec3 flipPos = mix(worldPos, uCamPos + viewDir * 5000.0, isSky);
   float fm = flip_mask(flipPos);
 
-  // 裏返しの縁: 画面空間のリップルと色収差の走査線
+  // ---- 裏返しの縁 ----
+  // 「細い1本線」ではなく、幅のある帯（8〜15m）＋先行リップル＋火花に見せる。
+  // 帯の中では画面空間で像を波打たせ、色収差を掛ける（＝ガラスの波が通り過ぎる感じ）。
+  float flipOn = step(0.001, uFlipRadius) * (1.0 - step(5990.0, uFlipRadius));
   float distC = distance(flipPos, uFlipCenter);
-  float edgeK = exp(-abs(distC - uFlipRadius) / 30.0) * step(0.001, uFlipRadius) * (1.0 - step(5990.0, uFlipRadius));
+  float ex = distC - uFlipRadius; // 負: 通過済み, 正: これから
+  // 画面上での 1px あたりの世界距離（遠いほど大きい）。帯の見た目の太さを画面空間で下限 6px にする
   vec2 gdir = vec2(dFdx(distC), dFdy(distC));
   float gl = length(gdir);
   gdir = gl > 1e-5 ? gdir / gl : vec2(0.0);
+  float mPerPx = clamp(gl, 0.002, 40.0);
+  float bandM = clamp(mPerPx * 7.0, 9.0, 26.0);  // 帯の幅（m）: 8〜15m を基本に、遠景でも画面上で消えない
+  float edgeK = exp(-abs(ex) / bandM) * flipOn;  // 帯
+  // 先行リップル 3 本（波の前方 22m 間隔）
+  float ripW = clamp(mPerPx * 2.2, 2.0, 7.0);
+  float ripK = 0.0;
+  for (int i = 1; i <= 3; i++) {
+    float fi = float(i);
+    ripK += exp(-abs(ex - fi * 22.0) / ripW) * (0.55 / fi);
+  }
+  ripK *= flipOn;
   float rippleWave = sin((distC - uFlipRadius) * 0.35 - uTime * 7.0);
-  vec2 ripple = gdir * edgeK * rippleWave * 6.0 * uTexel;
+  vec2 ripple = gdir * (edgeK * rippleWave * 7.0 + ripK * 3.0) * uTexel;
   uv += ripple;
 
   vec3 c;
-  if (edgeK > 0.02) {
-    vec2 ca = gdir * edgeK * 3.0 * uTexel;
+  float edgeAll = edgeK + ripK;
+  if (edgeAll > 0.02) {
+    vec2 ca = gdir * edgeAll * 3.5 * uTexel;
     c = vec3(sceneAt(uv + ca).r, sceneAt(uv).g, sceneAt(uv - ca).b);
   } else {
     c = sceneAt(uv);
   }
 
-  // 水滴の中は少しぼけて見え、縁が光る
+  // 水滴の中は少しぼけ、縁が暗く落ちて、下の縁と上のハイライトが光る
   if (drop.z > 0.0) {
-    c = mix(c, texture2D(tBloomFine, uv).rgb, drop.z * 0.6);
-    c += drop.w * (texture2D(tBloom, vec2(uv.x, 0.85)).rgb * uBloomNorm + vec3(0.02)) * 0.8;
+    c = mix(c, texture2D(tBloomFine, uv).rgb, drop.z * 0.3);
+    c *= 1.0 - 0.45 * dropDark;
+    c += drop.w * (texture2D(tBloom, vec2(uv.x, 0.85)).rgb * uBloomNorm + vec3(0.02)) * 0.9;
   }
 
   // 被写界深度
@@ -218,18 +253,18 @@ void main(){
     vec3 bb = -4.7951 * alb + 0.6417;
     vec3 cc = 2.7552 * alb + 0.6903;
     vec3 aoc = max(vec3(ao), ((ao * a + bb) * ao + cc) * ao);
-    // 直射の当たる明るい面では弱く（直接光まで暗くしない）
+    // 直射の当たる明るい面では少しだけ弱く（真昼に接地の影が消えないよう 0.45 → 0.75）
     float ln = post_luma(c) * uExposure;
-    float k = mix(1.0, 0.45, smoothstep(0.35, 1.3, ln));
+    float k = mix(1.0, 0.75, smoothstep(0.35, 1.3, ln));
     aoc = mix(vec3(1.0), aoc, k * (1.0 - fm));
     c *= aoc;
   }
 
   // 水中の霧
-  if (uUnderwater > 0.0) {
+  if (uWaterFade > 0.0) {
     float f = 1.0 - exp(-lin * 0.09);
     vec3 fogC = vec3(0.015, 0.075, 0.085) * (0.3 + 0.7 * max(uSunDir.y, 0.0)) / max(uExposure, 0.2);
-    c = mix(c, fogC, f * uUnderwater);
+    c = mix(c, fogC, f * uWaterFade);
   }
 
   // ブルーム（混ぜる。足さないので全体は白く霞まない）
@@ -253,20 +288,37 @@ void main(){
   }
   c += lensFlare(uv, sunVis);
 
-  // 裏返しの縁の走査線（材質側の広い光りの上に、細い線）
-  float scan = exp(-abs(distC - uFlipRadius) / 2.5) * step(0.001, uFlipRadius) * (1.0 - step(5990.0, uFlipRadius));
-  c += FLIP_ACCENT * scan * 1.2 / max(uExposure, 0.3);
-
-  // 調査用: 裏返しの縁の値をそのまま出す（uDebug=2 は距離: R = 中心からの距離/100, G = 視線距離/100, B = 高さ/50）
-  if (uDebug > 1.5) { gl_FragColor = vec4(distC / 100.0, lin / 100.0, worldPos.y / 50.0, 1.0); return; }
-  if (uDebug > 0.5) { gl_FragColor = vec4(fm, scan, edgeK, 1.0); return; }
-
   // 自動露出（env.exposure を基準に ±）。露出後の平均輝度が uAutoRef から離れた分だけ、部分的に寄せる
   float logAvg = texture2D(tAdapt, vec2(0.5)).r;
   float L = exp2(logAvg) * uExposure;
-  float autoScale = pow(uAutoRef / max(L, 1e-4), uAutoStrength * (1.0 - uFlip * 0.8));
+  float autoScale = pow(uAutoRef / max(L, 1e-5), uAutoStrength * (1.0 - uFlip * 0.8));
   autoScale = clamp(autoScale, uAutoRange.x, uAutoRange.y);
-  c *= uExposure * autoScale;
+  // 数式ビューの色（FLIP_BG / FLIP_LINE）は「紙とインク」なので、露出を掛けない。
+  // 掛けると夜（露出 30）で青黒い紙が水色に飛ぶ。裏返った画素だけ露出 1 に寄せる
+  float totalExp = mix(uExposure * autoScale, 1.0, fm);
+
+  // 裏返しの縁の光り（材質側の flip_edgeGlow と同じ形＝帯＋先行リップル＋火花）。
+  // 画面空間では、帯の芯を細い線で締めて「波頭」に見せる。明るさは表示側で決めたいので露出で割る
+  float core = exp(-abs(ex) / max(2.2, mPerPx * 1.5)) * flipOn;
+  // 火花は縦に伸びた短い軌跡（上がる火の粉）
+  vec2 sc = gl_FragCoord.xy / vec2(2.6, 6.0);
+  float spark = post_hash12(floor(sc) + floor(uTime * 14.0) * 7.0);
+  float sparkDot = 1.0 - smoothstep(0.18, 0.55, length((fract(sc) - 0.5) * vec2(1.0, 0.42)));
+  spark = step(0.9965, spark) * sparkDot * exp(-abs(ex) / max(12.0, mPerPx * 8.0)) * flipOn;
+  vec3 edgeCol = FLIP_ACCENT * (edgeK * 0.30 + core * 0.85 + ripK * 0.40)
+               + mix(FLIP_ACCENT, vec3(1.0), 0.5) * spark * 3.5;
+  c += edgeCol / max(totalExp, 0.05);
+
+  // 調査用: 裏返しの縁の値をそのまま出す（uDebug=2 は距離: R = 中心からの距離/100, G = 視線距離/100, B = 高さ/50）
+  if (uDebug > 1.5) { gl_FragColor = vec4(distC / 100.0, lin / 100.0, worldPos.y / 50.0, 1.0); return; }
+  if (uDebug > 0.5) { gl_FragColor = vec4(fm, core, edgeK + ripK, 1.0); return; }
+
+  c *= totalExp;
+
+  // 負値・NaN・無限大の火花止め（水面のスペキュラなどが壊れた値を出しても、白やマゼンタの点にしない）。
+  // NaN は「どんな比較も false」なので、和が有限でなければ捨てる
+  c = max(c, vec3(0.0));
+  if (!(dot(c, vec3(1.0)) < 1.0e12)) c = vec3(0.0);
 
   // トーンマップ
   c = post_agx(c);
@@ -325,8 +377,14 @@ export function gradeUniforms(): Record<string, THREE.IUniform> {
     uVignette: { value: 0.3 },
     uGradeOn: { value: 1 },
     uDebug: { value: 0 },
-    uRain: { value: 0 },
-    uUnderwater: { value: 0 },
+    /** 雨量（レンズの水滴の密度用。env.uniforms.uRain は共有なので、ポストは自前で持つ） */
+    uDropRain: { value: 0 },
+    /** レンズに水滴が付く度合い 0..1（見上げたときと突風のときだけ） */
+    uDropAmt: { value: 0 },
+    /** 太陽のハロー（薄雲があるときだけ） 0..1 */
+    uHalo: { value: 0 },
+    /** 水中 0..1（env.uniforms.uUnderwater は水モジュールのもの。ポストは自前で持つ） */
+    uWaterFade: { value: 0 },
     uAspect: { value: 16 / 9 },
   };
 }

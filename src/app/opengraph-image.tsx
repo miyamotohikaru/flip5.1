@@ -102,9 +102,25 @@ const Card = ({ jp }: { jp: boolean }) => (
 );
 
 export default async function Image() {
-  const font = await loadJapaneseFont(TEXT_JP);
-  return new ImageResponse(<Card jp={!!font} />, {
-    ...size,
-    fonts: font ? [{ name: "NotoSansJP", data: font, style: "normal", weight: 500 }] : [],
-  });
+  // 和文の字形はビルド時にだけ取りに行く。取れない環境（ネットの無い CI・一時的な失敗）でも
+  // ビルドを落とさないこと。fonts に空配列を渡すと ImageResponse が落ちるので、
+  // 取れなかったときは fonts の指定ごと外して欧文だけの版面にする。
+  let font: ArrayBuffer | null = null;
+  try {
+    font = await loadJapaneseFont(TEXT_JP);
+  } catch {
+    font = null;
+  }
+  try {
+    if (font) {
+      return new ImageResponse(<Card jp />, {
+        ...size,
+        fonts: [{ name: "NotoSansJP", data: font, style: "normal", weight: 500 }],
+      });
+    }
+    return new ImageResponse(<Card jp={false} />, size);
+  } catch {
+    // 何かの理由で描けなくても、OG 画像のためにビルドを止めない
+    return new ImageResponse(<Card jp={false} />, size);
+  }
 }

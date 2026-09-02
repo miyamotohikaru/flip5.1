@@ -168,6 +168,66 @@ export default function About({ open, onClose, sourceLines, isMobile, world }: P
           </a>
         </p>
 
+        <p className="about-label">先にやった人たち</p>
+        <p>
+          「数式だけで風景を描く」には、
+          <MobileBreak />
+          20 年以上の歴史があります。
+          <br />
+          <b>Elevated</b>（2009年・Rgba &amp; TBC）は、
+          <MobileBreak />
+          4,096 バイトの実行ファイルの中で、
+          <br />
+          山も湖も霧も音楽も
+          <MobileBreak />
+          その場で計算して描きました。
+          <br />
+          <b>Shadertoy</b>（2013年〜）には、
+          <MobileBreak />
+          素材ゼロの風景が何千と並んでいます。
+          <br />
+          <b>.kkrieger</b>（2004年）は、
+          <MobileBreak />
+          96 キロバイトに収めた FPS でした。
+          <br />
+          この作品は、その系譜の上にあります。
+        </p>
+        <p>そのうえで、ここが違います。</p>
+        <ul className="about-what">
+          <li>
+            <b>歩ける。</b>
+            先行作の多くは「見るもの」でした。
+            <br />
+            ここは、自分の足で入っていけます。
+          </li>
+          <li>
+            <b>裏返せる。</b>
+            素材ゼロは普通、
+            <MobileBreak />
+            ソースを読める人しか確かめられません。
+            <br />
+            ここでは、ボタン 1 つで誰でも確かめられます。
+          </li>
+          <li>
+            <b>音も合成。</b>
+            雷は、落ちた場所までの距離のぶん
+            <MobileBreak />
+            遅れて鳴ります。
+            <br />
+            風景と音が、同じ数式でつながっています。
+          </li>
+          <li>
+            <b>作り方そのものが作品。</b>
+            9 分野を別々の AI が並行して作り、
+            <br />
+            別の審査 AI が大作ゲームと見比べて、
+            <MobileBreak />
+            採点し直させています。
+            <br />
+            その記録は <a href="/log" target="_blank" rel="noopener noreferrer">/log</a> にあります。
+          </li>
+        </ul>
+
         <p className="about-label">たとえるなら</p>
         <p>
           絵の具も写真も使わず、自然のルール

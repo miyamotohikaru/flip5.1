@@ -28,6 +28,8 @@ export class Vegetation {
     const off = (k: string) => dbg.includes("noveg") || dbg.includes(k);
     const t0 = performance.now();
     this.vegmap = bakeVegMap(env.heightmap, q.tier === "low" ? 384 : 512);
+    // 他のモジュールにも渡す（地形が林床の色に使う。texel の対応はハイトマップと同じ）
+    env.uniforms.uVegMap.value = this.vegmap.texture;
     const t1 = performance.now();
     if (!off("notrees")) this.trees = new Trees(this.group, env, lighting, q, this.vegmap);
     const t2 = performance.now();

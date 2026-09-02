@@ -28,6 +28,11 @@ varying vec3 vRay;
 
 float wx_noise3(vec3 p){ return 0.7 * flip_vnoise(p) + 0.3 * flip_vnoise(p.xz * 3.1 + 7.3 + p.y * 0.7); }
 
+// 霧・雨に入ってくる「空の光」。晴れならその向きの空の色、曇り・嵐では雲を透けた光。
+// flip_skyColor は雲の無い空を返すので、そのまま使うと嵐でも明るい空色の板になって雲の構造が消える。
+// uSkyAmbient は空の照度の半分（空担当が雲を織り込んで更新する）→ 平均放射輝度 = uSkyAmbient * 2/π
+vec3 wx_skyLit(vec3 skyH){ return mix(skyH, uSkyAmbient * 0.64, smoothstep(0.35, 1.0, uCloud)); }
+
 // 霧の密度（0..1 相当）。湖面すれすれの薄い層（場所ごとに厚さの違う「塊」）＋谷底＋斜面を這う霧＋細かいむら
 float mistDensity(vec3 p){
   float th = flip_height(p.xz);
@@ -60,11 +65,11 @@ vec3 stepLight(vec3 p, vec3 rd, vec3 skyH){
   float cs = dot(rd, uSunDir);
   vec3 sun = uSunColor * (wx_phaseHG(cs, 0.6) * 0.75 + 0.06) * sunUp;
   // 霧の粒は空全体の光を散らすので、地平の空より少し明るく白い
-  vec3 amb = mix(uSkyAmbient * 0.6, skyH, 0.65) * 1.35 + uGroundAmbient * 0.15;
+  vec3 amb = mix(uSkyAmbient * 0.6, wx_skyLit(skyH), 0.65) * 1.35 + uGroundAmbient * 0.15;
   vec3 moon = uMoonColor * (wx_phaseHG(dot(rd, uMoonDir), 0.5) * 0.7 + 0.1) * 2.0;
   vec3 lp = uLightningPos + vec3(0.0, uWxCloudBase * 0.45, 0.0);
   float dl = distance(p, lp);
-  vec3 flash = vec3(0.8, 0.86, 1.0) * uLightning * 0.25 / (1.0 + dl * dl * 1e-5);
+  vec3 flash = vec3(0.8, 0.86, 1.0) * uLightning * 0.22 / (1.0 + dl * dl / (500.0 * 500.0));
   return sun + amb + moon + flash;
 }
 
@@ -129,16 +134,29 @@ void main(){
   }
   // 雨のヴェール: 遠くほど雨粒の層で白む。うっすら縦に流れるむら（雨の幕）
   if (uWxFog.w > 1e-7) {
+    // 雨は雲底より下にしかない。見上げるほど早く雨の層を抜ける（天頂では雲の構造が見える）
     float dV = min(tEnd, 6000.0);
-    vec3 ps = ro + rd * min(tEnd, 140.0);
-    float sheet = 0.75 + 0.5 * flip_vnoise(vec3(ps.x * 0.035, ps.y * 0.01 - uTime * 2.2, ps.z * 0.035));
+    if (rd.y > 0.01) dV = min(dV, max(uWxCloudBase - ro.y, 0.0) / rd.y);
+    vec3 ps = ro + rd * min(tEnd, 200.0);
+    // 雨脚の帯（λ≈125m）が風で流れる＝「雨のカーテンが景色を横切る」。その上に細かい縦のむら
+    float band = 0.55 + 0.9 * flip_vnoise((ps.xz + uWxFogDrift.xz * 2.5) * 0.008);
+    float fine = 0.80 + 0.40 * flip_vnoise(vec3(ps.x * 0.035, ps.y * 0.01 - uTime * 2.2, ps.z * 0.035));
+    float sheet = band * fine;
     float odv = wx_veilOD(dV) * sheet;
     float Tv = exp(-odv);
-    // 稲光は稲妻の方向の雨のカーテンだけを強く照らす（一様に足すと空全体が白飛びする）
-    vec3 toBolt = normalize(uLightningPos + vec3(0.0, uWxCloudBase * 0.5, 0.0) - ro);
-    float flashDir = 0.03 + 0.2 * pow(max(dot(rd, toBolt), 0.0), 6.0);
-    // 遠くの物は「その仰角の空の色」へ溶ける（空より明るくならない）
-    vec3 vcol = skyH * 0.92 + uSkyAmbient * 0.06 + uGroundAmbient * 0.04 + vec3(0.8, 0.86, 1.0) * uLightning * flashDir;
+    // 稲光は稲妻の方向の雨のカーテンだけを強く照らす（一様に足すと空全体が白飛びする）。
+    // さらに落雷までの距離で 1/(1+(d/500m)^2) に減衰させ、遠い落雷では世界が明るくならないようにする
+    vec3 boltP = uLightningPos + vec3(0.0, uWxCloudBase * 0.5, 0.0);
+    vec3 toBolt = normalize(boltP - ro);
+    float dBolt = distance(boltP, ro);
+    float attBolt = 1.0 / (1.0 + dBolt * dBolt / (500.0 * 500.0));
+    float flashDir = (0.02 + 0.28 * pow(max(dot(rd, toBolt), 0.0), 8.0)) * attBolt;
+    // 雨のカーテンが空の 2 倍より明るくならないよう頭を打つ
+    vec3 lit = wx_skyLit(skyH);
+    vec3 fl = min(vec3(0.8, 0.86, 1.0) * uLightning * flashDir, lit * 2.0 + 0.005);
+    // 雨のカーテンは「そこに届いている空の光」で光る（空より明るくならない）
+    // 下を向いた視線ほど地面の照り返しを拾う（カーテンの下側が地面の色に寄る）
+    vec3 vcol = lit * 0.92 + uSkyAmbient * 0.06 + uGroundAmbient * (0.04 + 0.10 * max(-rd.y, 0.0)) + fl;
     L += vcol * (1.0 - Tv) * T;
     T *= Tv;
     odTotal += odv;
@@ -208,18 +226,34 @@ void main(){
   vec3 rd = normalize(vRay);
   vec3 p = uCamPos + vRay * lin;
   vec3 lp = uLightningPos + vec3(0.0, uWxCloudBase * 0.4, 0.0);
+  // 落雷までの距離で減衰（1/(1+(d/500m)^2)）。遠い落雷では画面全体が明るくならない
+  vec3 toCam = lp - uCamPos;
+  float dCam = length(toCam);
+  float attCam = 1.0 / (1.0 + dCam * dCam / (500.0 * 500.0));
   float b;
   if (lin > 8500.0) {
-    vec3 toL = normalize(lp - uCamPos);
-    b = 0.15 + 1.6 * pow(max(dot(rd, toL), 0.0), 8.0);
+    // 空: 稲妻の方向だけ光る。基準輝度の3倍（= 1 + 2）を上限にして雲の構造を残す
+    vec3 toL = toCam / max(dCam, 1e-3);
+    b = min((0.10 + 1.7 * pow(max(dot(rd, toL), 0.0), 6.0)) * attCam, 2.0);
   } else {
     vec3 N = flip_terrainNormal(p.xz, 2.5);
     vec3 toL = lp - p;
     float d = length(toL);
     toL /= d;
     float ndl = max(dot(N, toL), 0.0);
-    float att = 1.0 / (1.0 + d * d / (650.0 * 650.0));
-    b = ndl * att * 2.2 + 0.12;
+    float att = 1.0 / (1.0 + d * d / (500.0 * 500.0));
+    // 稲妻の向きの影（地形のレイマーチ）。80ms だけ差す「影付きの方向光」になる。
+    // 遠景は雨のヴェールで潰れるので近くだけ（負荷を 600m 以内に閉じ込める）
+    float occ = 0.0;
+    if (lin < 600.0) {
+      for (int i = 1; i <= 8; i++) {
+        float s = float(i) * float(i) * 5.0;
+        vec3 qs = p + toL * s;
+        occ = max(occ, smoothstep(0.0, 16.0, flip_height(qs.xz) - qs.y));
+      }
+    }
+    float sh = 1.0 - occ * 0.85;
+    b = min(ndl * sh * att * 5.0 + 0.10 * attCam, 2.0);
   }
   gl_FragColor = vec4(vec3(0.85, 0.9, 1.0) * b * uLightning, 1.0);
 }

@@ -49,8 +49,8 @@ vec3 sky_stars(vec3 d, float band){
   const float S = 320.0;
   vec2 g = (f * 0.5 + 0.5) * S;
   vec2 base = floor(g - 0.5);
-  float density = 0.012 + 0.03 * band;
-  float sig = max(uPixelAngle * 0.8, 0.00022);
+  float density = 0.004 + 0.012 * band;
+  float sig0 = max(uPixelAngle * 0.7, 0.00020);
   vec3 acc = vec3(0.0);
   for (int j = 0; j < 2; j++) for (int i = 0; i < 2; i++){
     vec2 cell = base + vec2(float(i), float(j));
@@ -63,7 +63,11 @@ vec3 sky_stars(vec3 d, float band){
     float sinA = length(cross(d, sd));
     float ang = atan(sinA, dot(d, sd));
     float hb = flip_hash12(cell * 3.1 + face * 71.0 + 0.71);
-    float b = 0.006 + 0.5 * pow(hb, 14.0);
+    // 等級のばらつき: 実際の星の数は明るさの -1.5 乗（b = b0·u^(-1/1.5)）。
+    // ほとんどは肉眼でぎりぎり、上限 0.25 に届くのは 0.3% だけ
+    float b = min(0.0045 * pow(max(hb, 1.0e-3), -0.667), 0.25);
+    // 明るい星だけ少し太る（にじみ）。暗い星は 1 画素以下
+    float sig = sig0 * (1.0 + 0.55 * smoothstep(0.02, 0.22, b));
     float tw = 1.0 + 0.22 * sin(uTime * (2.0 + 5.0 * hs.y) + h * 100.0) * (1.0 - 0.6 * smoothstep(0.02, 0.1, b));
     vec3 tint = mix(vec3(1.0, 0.74, 0.52), vec3(0.72, 0.82, 1.0), fract(h * 57.13));
     acc += tint * b * tw * exp(-(ang * ang) / (2.0 * sig * sig));
@@ -132,7 +136,11 @@ void main(){
   const float sunR = 0.0105;   // 実際の 0.27° より大きめ（AAA の慣例）
   float disc = 1.0 - smoothstep(sunR - uPixelAngle, sunR + uPixelAngle, sunAng);
   float limb = 1.0 - 0.55 * (1.0 - sqrt(max(0.0, 1.0 - (sunAng * sunAng) / (sunR * sunR))));
-  vec3 sunLight = uSunE * Tv * (disc * limb * 60.0 + 0.004 * exp(-sunAng / 0.012));
+  // 光冠（エアロゾルの前方散乱）。太陽が低いほど広く強い＝日没の「にじむ橙の玉」
+  float lowSun = 1.0 - smoothstep(0.02, 0.26, uSunDir.y);
+  float coronaA = mix(0.004, 0.020, lowSun);
+  float coronaW = mix(0.012, 0.050, lowSun);
+  vec3 sunLight = uSunE * Tv * (disc * limb * 60.0 + coronaA * exp(-sunAng / coronaW));
 
   // 月
   float moonMask;
@@ -148,7 +156,7 @@ void main(){
     starLight = sky_stars(d, band);
     float lanes = flip_fbm(e * 6.0 + 2.0, 4) * 0.5 + 0.5;
     float mw = band * (0.25 + 0.75 * smoothstep(0.28, 0.85, lanes)) * (1.0 - 0.55 * smoothstep(0.55, 0.8, flip_fbm(e * 13.0 + 7.0, 3) * 0.5 + 0.5));
-    starLight += vec3(0.95, 0.9, 0.85) * mw * 0.0022;
+    starLight += vec3(0.95, 0.9, 0.85) * mw * 0.006;
     starLight *= uStarVeil * Tv;
   }
 
@@ -175,17 +183,17 @@ void main(){
   float fm = flip_mask(fp);
   if (fm > 0.0){
     vec3 fc = FLIP_BG;
-    // 散乱の等値線（空の輝度を log2 で 0.5 段刻み）
+    // 散乱の等値線（空の輝度の log2）
     float lum = dot(sky, vec3(0.2126, 0.7152, 0.0722));
-    float lv = log2(max(lum, 1e-5)) * 2.0;
+    float lv = log2(max(lum, 1e-5));   // 1 段（1 EV）刻み。0.5 刻みだと線が多すぎて模様になる
     fc += FLIP_LINE * 0.5 * sky_line(lv, 1.0);
-    // 太陽からの角度 10° 刻み（薄く）
-    fc += FLIP_LINE * 0.14 * sky_line(degrees(sunAng) / 10.0, 0.7);
-    // 天球の格子（赤緯・赤経 15°）
+    // 太陽からの角度 20° 刻み（薄く）
+    fc += FLIP_LINE * 0.14 * sky_line(degrees(sunAng) / 20.0, 0.7);
+    // 天球の格子（赤緯・赤経 30°）
     vec3 e = uStarFrame * d;
     float dec = degrees(asin(clamp(e.z, -1.0, 1.0)));
     float ra = degrees(atan(e.y, e.x));
-    float grid = max(sky_line(dec / 15.0, 0.7), sky_line(ra / 15.0, 0.7) * smoothstep(0.0, 0.2, 1.0 - abs(e.z)));
+    float grid = max(sky_line(dec / 30.0, 0.7), sky_line(ra / 30.0, 0.7) * smoothstep(0.0, 0.2, 1.0 - abs(e.z)));
     fc += FLIP_LINE * 0.28 * grid;
     // 雲の密度場のスライス（層の 3 つの高さ）
     if (d.y > 0.01){

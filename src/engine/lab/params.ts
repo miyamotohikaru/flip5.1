@@ -50,7 +50,7 @@ export const LAB_PARAMS: LabParam[] = [
     id: "terrainRidge", key: "terrain.ridge", group: "terrain", label: "尾根の鋭さ", min: 0, max: 1.6, step: 0.01, unit: "×",
     formula: "m = round + (sharp − round) · s(x,z) · 〔R〕",
     src: "core/height.ts ridgedBoth() の混ぜ方",
-    live: (v) => `s·R = ${f(0.45 * v)} 〜 ${f(Math.min(1.6, 1.0 * v))}（0 = 丸い稜線／1 = 鋭い）`,
+    live: (v) => `s·R = ${f(0.62 * v)} 〜 ${f(Math.min(1.6, 1.0 * v))}（0 = 丸い稜線／1 = 鋭い）`,
     rebake: "terrain",
   },
   {
@@ -64,9 +64,9 @@ export const LAB_PARAMS: LabParam[] = [
   // ------------------------------ 空（uniform だけで効く） ------------------------------
   {
     id: "skyMie", key: "sky.mie", group: "sky", label: "ミー散乱（もや）", min: 0.2, max: 4, step: 0.01, unit: "×",
-    formula: "σs,Mie = 〔M〕 · 3.2e−3 · e^(−h/2.5)",
+    formula: "σs,Mie = 〔M〕 · 8.0e−3 · e^(−h/2.5) · K(λ)",
     src: "sky/atmosphere.glsl.ts flip_atmoMedium()",
-    live: (v) => `σs = ${f(3.2 * v, 2)}e−3 /km`,
+    live: (v) => `σs = ${f(8.0 * v, 2)}e−3 /km`,
   },
   {
     id: "skyRayleigh", key: "sky.rayleigh", group: "sky", label: "レイリー散乱（青）", min: 0.3, max: 2.5, step: 0.01, unit: "×",
@@ -76,21 +76,21 @@ export const LAB_PARAMS: LabParam[] = [
   },
   {
     id: "skyOzone", key: "sky.ozone", group: "sky", label: "オゾン層", min: 0, max: 3, step: 0.01, unit: "×",
-    formula: "σa,O₃ = 〔O〕 · (0.65, 1.88, 0.09)·0.75e−3 · Λ(h)",
+    formula: "σa,O₃ = 〔O〕 · (0.65, 1.88, 0.09)·1.0e−3 · Λ(h)",
     src: "sky/atmosphere.glsl.ts flip_atmoMedium()",
-    live: (v) => `σa = ${f(0.65 * 0.75 * v, 3)}e−3 /km（赤）`,
+    live: (v) => `σa = ${f(1.88 * v, 2)}e−3 /km（緑）`,
   },
   {
     id: "skyCloud", key: "sky.cloud", group: "sky", label: "雲量", min: 0, max: 2, step: 0.01, unit: "×",
-    formula: "cov = 〔C〕 · (0.16 + cloud^1.05)",
+    formula: "cov = 〔C〕 · (0.16 + cloud^1.05 − 0.20·storm)",
     src: "sky/index.ts uCloudLayer.z",
-    live: (v, w) => `cov = ${f((0.16 + Math.pow(w?.env.weather.cloud ?? 0.18, 1.05)) * v)}`,
+    live: (v, w) => `cov = ${f((0.16 + Math.pow(w?.env.weather.cloud ?? 0.18, 1.05) - 0.2 * (w?.env.weather.storm ?? 0)) * v)}`,
   },
   {
     id: "skyCloudBase", key: "sky.base", group: "sky", label: "雲の高さ", min: 0.4, max: 2, step: 0.01, unit: "×",
-    formula: "base = 〔B〕 · (1900 − 700·storm − 250·rain)",
+    formula: "base = 〔B〕 · (1900 − 900·storm − 250·rain)",
     src: "sky/index.ts uCloudLayer.x",
-    live: (v, w) => `雲底 ${f((1900 - 700 * (w?.env.weather.storm ?? 0) - 250 * (w?.env.weather.rain ?? 0)) * v, 0)} m`,
+    live: (v, w) => `雲底 ${f((1900 - 900 * (w?.env.weather.storm ?? 0) - 250 * (w?.env.weather.rain ?? 0)) * v, 0)} m`,
   },
 
   // ------------------------------ 水 ------------------------------

@@ -8,7 +8,7 @@ export const ATMO = {
   /** 大気の外での太陽の放射照度（シーン単位。地上の白い面が 1.5 前後の放射輝度になる） */
   sunE0: 6.0,
   /** 月の放射照度（太陽比。現実の 1/40 万は暗すぎるので AAA と同じく嘘をつく） */
-  moonRatio: 1 / 420,
+  moonRatio: 1 / 190,
   moonTint: new THREE.Color(0.74, 0.83, 1.0),
 } as const;
 
@@ -18,10 +18,12 @@ function extinction(h: number, haze: number, groundAlt: number) {
   const dR = Math.exp(-hr / 8), dM = Math.exp(-hr / 2.5);
   const dH = haze * Math.exp(-Math.max(h - groundAlt, 0) / 1.0);
   const dO = Math.max(0, 1 - Math.abs(hr - 25) / 15);
-  const m = 3.2e-3 * dM + dH * 0.9 + 0.35e-3 * dM + dH * 0.1;
-  tmpE[0] = 5.802e-3 * dR + m + 0.65e-3 * 0.75 * dO;
-  tmpE[1] = 13.558e-3 * dR + m + 1.881e-3 * 0.75 * dO;
-  tmpE[2] = 33.1e-3 * dR + m + 0.085e-3 * 0.75 * dO;
+  // ミー（散乱＋吸収）。atmosphere.glsl.ts の flip_atmoMedium と同じ値にすること
+  // 係数 0.727 / 1.0 / 1.40 は波長依存（Angstrom 指数 1.5）
+  const m = 8.0e-3 * dM + dH * 0.9 + 1.0e-3 * dM + dH * 0.1;
+  tmpE[0] = 5.802e-3 * dR + m * 0.727 + 0.65e-3 * dO;
+  tmpE[1] = 13.558e-3 * dR + m * 1.0 + 1.881e-3 * dO;
+  tmpE[2] = 33.1e-3 * dR + m * 1.40 + 0.085e-3 * dO;
   return tmpE;
 }
 

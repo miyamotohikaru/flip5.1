@@ -25,6 +25,7 @@ import { parseParams } from "../core/params";
 import { bindEnvUniforms } from "../core/patch";
 import { smoothstep, clamp } from "../core/noise";
 import { fsMaterial, makeRT, GpuTimer } from "./pass";
+import { AGX_GLSL } from "./agx.glsl";
 import { Bloom } from "./bloom";
 import { GodRays } from "./godrays";
 import { AO } from "./ao";
@@ -92,7 +93,8 @@ export class Post {
   private lens = new THREE.Vector4();
   /**
    * 調査用フラグ（URL の ?dbg=...）: nobloom / nogod / noao / nodof / noaa / nograde / noauto / nograin / nolens /
-   * noflare / nosharp、表示: aoview / godview / maskview / bloomview / edgesview / weightsview
+   * noflare / nosharp、ポストごと飛ばす: nopost（＝postcopy。sceneRT をそのままトーンマップして出す）、
+   * 表示: aoview / aodepth / depthview / godview / maskview / bloomview / edgesview / weightsview / flipview / distview
    */
   dbg: Set<string>;
   private statsOn: boolean;
@@ -105,18 +107,23 @@ export class Post {
     this.statsOn = params.stats;
     this.viewMat = fsMaterial(
       "post_view",
-      { tSrc: { value: null }, uMode: { value: 0 }, uNear: { value: 0.1 }, uFar: { value: 9000 } },
+      { tSrc: { value: null }, uMode: { value: 0 }, uNear: { value: 0.1 }, uFar: { value: 9000 }, uExposure: { value: 1 } },
       /* glsl */ `
-      uniform sampler2D tSrc; uniform float uMode; uniform float uNear; uniform float uFar; varying vec2 vUv;
+      ${AGX_GLSL}
+      uniform sampler2D tSrc; uniform float uMode; uniform float uNear; uniform float uFar; uniform float uExposure; varying vec2 vUv;
       void main(){
         vec4 t = texture2D(tSrc, vUv);
         vec3 c;
+        bool srgb = true;
         if (uMode < 0.5) c = vec3(t.r);
         else if (uMode < 1.5) c = t.rgb / (1.0 + t.rgb);
         else if (uMode < 2.5) c = t.rgb;
         else if (uMode < 3.5) c = vec3(1.0 - t.g / 400.0);
-        else { float ndc = t.r * 2.0 - 1.0; float lin = (2.0 * uNear * uFar) / (uFar + uNear - ndc * (uFar - uNear)); c = vec3(1.0 - lin / 400.0); }
-        gl_FragColor = vec4(pow(clamp(c, 0.0, 1.0), vec3(1.0 / 2.2)), 1.0);
+        else if (uMode < 4.5) { float ndc = t.r * 2.0 - 1.0; float lin = (2.0 * uNear * uFar) / (uFar + uNear - ndc * (uFar - uNear)); c = vec3(1.0 - lin / 400.0); }
+        // 5 = ポストなし: HDR の sceneRT を露出 → AgX → sRGB だけで出す
+        else { c = post_linearToSrgb(post_agx(max(t.rgb, 0.0) * uExposure)); srgb = false; }
+        if (srgb) c = pow(clamp(c, 0.0, 1.0), vec3(1.0 / 2.2));
+        gl_FragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
       }`,
     );
     this.aaMode = fx.smaa ? (q.tier === "high" || q.tier === "ultra" ? "smaa" : "fxaa") : "none";
@@ -167,20 +174,22 @@ export class Post {
     const sunUp = smoothstep(-0.04, 0.06, s);
     const w = env.weather;
     const storm = w.storm, cloud = w.cloud, rain = w.rain;
-    const warmth = 0.55 * golden - 0.6 * night - 0.25 * storm - 0.08 * cloud * (1 - storm);
+    const warmth = 0.55 * golden - 0.42 * night - 0.25 * storm - 0.08 * cloud * (1 - storm);
     u.uWarmth.value = clamp(warmth, -1, 1);
     u.uSaturation.value = 0.97 - 0.1 * night - 0.22 * storm - 0.05 * cloud * (1 - storm);
-    u.uContrast.value = 1.04 + 0.05 * golden - 0.1 * night - 0.04 * storm;
-    (u.uSplit.value as THREE.Vector2).set(0.35 + 0.3 * night + 0.1 * storm, 0.35 + 0.35 * golden - 0.3 * night);
-    u.uVignette.value = this.dbg.has("nograde") ? 0 : 0.28 + 0.12 * storm + 0.06 * night + 0.08 * rain;
+    // 黒を締める（夜明けの紫灰の一色フィルターを避ける）。夜は締めない（暗部が全部つぶれる）
+    u.uContrast.value = 1.1 + 0.05 * golden - 0.16 * night - 0.1 * storm;
+    // 影の青みは控えめに（朝夕が「Instagram のフィルター」にならないように）
+    (u.uSplit.value as THREE.Vector2).set(0.2 + 0.16 * night + 0.08 * storm, 0.35 + 0.35 * golden - 0.3 * night);
+    u.uVignette.value = this.dbg.has("nograde") ? 0 : 0.18 + 0.1 * storm + 0.05 * night + 0.06 * rain;
     u.uGradeOn.value = this.dbg.has("nograde") ? 0 : 1;
     u.uDebug.value = this.dbg.has("flipview") ? 1 : this.dbg.has("distview") ? 2 : 0;
     u.uBloomStrength.value = 0.055 + 0.02 * golden + 0.02 * night + 0.02 * rain;
-    u.uRain.value = rain;
+    u.uDropRain.value = rain;
     u.uExposure.value = env.exposure;
-    u.uAoStrength.value = this.ao ? 1.15 : 0.0;
+    u.uAoStrength.value = this.ao ? 1.7 : 0.0;
     const underwater = smoothstep(0, 0.3, env.uniforms.uLakeLevel.value - env.cameraPos.y);
-    u.uUnderwater.value = underwater;
+    u.uWaterFade.value = underwater;
     // 太陽の画面位置（太陽方向の遠い点をカメラで射影する）
     const cam = env.camera;
     V3.copy(env.sunDir).transformDirection(cam.matrixWorldInverse);
@@ -205,13 +214,26 @@ export class Post {
     (u.uSunColorN.value as THREE.Vector3).set(sc.r / m, sc.g / m, sc.b / m);
     const dbg = this.dbg;
     u.uGodStrength.value = this.godrays && !dbg.has("nogod") ? (0.12 + 0.38 * golden) * (1 - 0.45 * cloud) * (1 - 0.5 * storm) * sunUp * offFade : 0;
-    u.uFlareStrength.value = dbg.has("noflare") || dbg.has("nolens") ? 0 : 0.6 * sunUp * (1 - 0.7 * cloud) * (1 - storm) * (dbg.has("flarex") ? 4 : 1);
-    // 自動露出の基準（露出後の平均輝度）。夜と嵐は暗いままでよい
-    u.uAutoRef.value = THREE.MathUtils.lerp(0.5, 0.12, night) * (1 - 0.45 * storm);
-    u.uAutoStrength.value = dbg.has("noauto") ? 0 : 0.4;
+    u.uFlareStrength.value = dbg.has("noflare") || dbg.has("nolens") ? 0 : 0.25 * sunUp * (1 - 0.7 * cloud) * (1 - storm) * (dbg.has("flarex") ? 4 : 1);
+    // ハロー（太陽を囲む輪）は氷晶の暈。晴天（cloud 0.18）では出さず、薄雲のときだけ薄く出す
+    u.uHalo.value = smoothstep(0.35, 0.75, cloud) * (1 - storm) * (1 - rain);
+    // レンズの水滴: 見上げたときと突風のときだけ付く（常時だと空中に灰色の丸が浮いて見える）
+    const pitch = Math.asin(clamp(-cam.matrixWorld.elements[9], -1, 1)); // カメラ前方 -Z の Y 成分 → 見上げが正
+    const lookUp = smoothstep(0.02, 0.35, pitch);
+    const gust = smoothstep(0.3, 0.8, env.weather.gust);
+    u.uDropAmt.value = dbg.has("nolens") ? 0 : clamp(Math.max(lookUp, gust * 0.9), 0, 1);
+    // 自動露出。
+    //   昼: 物理の露出（空モジュールが決める env.exposure）を尊重して、±の幅を小さく取る。
+    //       基準を 0.5 → 0.34 に下げて、黄昏の日なたの草が AgX の白側で脱色するのを避ける。
+    //   夜・嵐: env.exposure が上限に張り付いて「青い昼」「白飛びした灰色」になる。
+    //       ここは追従の強さを 1 に上げて「狙った明るさ」に合わせ切る（空側の上限が 30 でも 6 でも同じ絵になる）。
+    const dark = Math.max(night, 0.85 * storm);
+    u.uAutoRef.value = THREE.MathUtils.lerp(0.34, 0.036, night);
+    u.uAutoStrength.value = dbg.has("noauto") ? 0 : THREE.MathUtils.lerp(0.5, 1.0, dark);
+    (u.uAutoRange.value as THREE.Vector2).set(THREE.MathUtils.lerp(0.7, 0.15, dark), THREE.MathUtils.lerp(1.45, 30, dark));
     if (dbg.has("nobloom")) u.uBloomStrength.value = 0;
     if (dbg.has("noao")) u.uAoStrength.value = 0;
-    if (dbg.has("nolens")) u.uRain.value = 0;
+    if (dbg.has("nolens")) u.uDropRain.value = 0;
     // 最終パス
     const f = this.final.mat.uniforms;
     f.uGrain.value = dbg.has("nograin") ? 0 : (0.022 + 0.008 * night + 0.01 * storm) * (photo ? 0.8 : 1);
@@ -249,11 +271,13 @@ export class Post {
     const u = this.grade.uniforms;
     this.updateLook(photo);
 
-    // 調査用: ポストを 1 回のコピーだけにする（負荷の比較用）
-    if (this.dbg.has("postcopy") && !photo) {
+    // 調査用: ポストを飛ばして sceneRT をそのままトーンマップして出す（負荷の比較・切り分け用）。
+    // 何も出さないと真っ暗になって切り分けに使えないので、必ずこの経路を通す
+    if ((this.dbg.has("nopost") || this.dbg.has("postcopy")) && !photo) {
       const v = this.viewMat.uniforms;
       v.tSrc.value = scene;
-      v.uMode.value = 1;
+      v.uMode.value = 5;
+      v.uExposure.value = env.exposure;
       pipeline.blit(this.viewMat, target);
       return;
     }

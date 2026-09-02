@@ -38,7 +38,11 @@ float veg_ign(vec2 px){ return fract(52.9829189 * fract(dot(px, vec2(0.06711056,
 /**
  * lights_fragment_begin の差し替え。three.js の物理ライティングのうち「太陽（CSM）」だけを
  * 自前の包み込み拡散＋透けに置き換え、半球光はそのまま使う。
- * 呼ぶ前に float vegTrans（透けの強さ 0..1）と float vegAO（0..1）を定義しておくこと。
+ * 呼ぶ前に float vegTrans（透けの強さ 0..1）、float vegAO（0..1）、
+ * float vegSpec（葉の照りの強さ 0..0.2）、float vegGloss（照りの鋭さ 8..40）、
+ * float vegUpMix（半球光を受けるときに法線を「上向き」へ寄せる割合 0..1）を定義しておくこと。
+ * vegUpMix は草に効く: 葉は縦なので半球光の受け方が地面の半分になり、地形より暗い「毛」に見える。
+ * 上向きへ寄せると地形の草色とトーンが揃う。
  * CSM の uniform（CSM_cascades / cameraNear / shadowFar）は patchMaterial({csm}) が入れる。
  */
 export const VEG_LIGHTS_FRAGMENT = /* glsl */ `
@@ -74,6 +78,12 @@ float vegShadow = 1.0;
   // 逆光の透け: 視線の向こうに太陽があるほど強い。薄い葉ほど透ける
   float back = pow( clamp( dot( - geometryViewDir, L ), 0.0, 1.0 ), 3.0 );
   reflectedLight.directDiffuse += diffuseColor.rgb * RECIPROCAL_PI * sunCol * ( diff * vegAO + back * vegTrans * 1.4 );
+  // 葉の照り（蝋質のつや）。これが無いと草が紙に見える
+  if ( vegSpec > 0.0 ) {
+    vec3 Hv = normalize( L + geometryViewDir );
+    float nh = max( dot( geometryNormal, Hv ), 0.0 );
+    reflectedLight.directSpecular += sunCol * ( pow( nh, vegGloss ) * vegSpec * step( - 0.35, NdotL ) );
+  }
 }
 #endif
 #if NUM_DIR_LIGHTS > NUM_DIR_LIGHT_SHADOWS
@@ -88,9 +98,10 @@ float vegShadow = 1.0;
 vec3 iblIrradiance = vec3( 0.0 );
 vec3 irradiance = getAmbientLightIrradiance( ambientLightColor );
 #if ( NUM_HEMI_LIGHTS > 0 )
+  vec3 hemiNormal = normalize( mix( geometryNormal, vec3( 0.0, 1.0, 0.0 ), vegUpMix ) + vec3( 0.0, 1e-4, 0.0 ) );
   #pragma unroll_loop_start
   for ( int i = 0; i < NUM_HEMI_LIGHTS; i ++ ) {
-    irradiance += getHemisphereLightIrradiance( hemisphereLights[ i ], geometryNormal );
+    irradiance += getHemisphereLightIrradiance( hemisphereLights[ i ], hemiNormal );
   }
   #pragma unroll_loop_end
 #endif

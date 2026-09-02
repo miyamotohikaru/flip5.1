@@ -27,7 +27,8 @@ function strikeOf(k: number, storm: number): Strike | null {
   const p = 0.8 * Math.min(1, (storm - 0.5) / 0.4 + 0.2);
   const forced = k === 0; // 開始直後（定点撮影の t=0 でも稲妻が見える）
   if (!forced && hash2(k, 11) > p) return null;
-  const offset = forced ? -0.05 : hash2(k, 23) * SLOT * 0.85;
+  // 定点撮影（freeze で t=0）でも「伸びきった稲妻＋強い閃光」が写るよう、最初の1回だけ 22ms 前に落とす
+  const offset = forced ? -0.022 : hash2(k, 23) * SLOT * 0.85;
   const n = 1 + Math.floor(hash2(k, 31) * 3);
   const strokes: Strike["strokes"] = [];
   let d = 0;
@@ -115,10 +116,10 @@ void main(){
   vec3 vdir = normalize(p - uCamPos);
   vec3 side = normalize(cross(seg, vdir));
   float dist = distance(p, uCamPos);
-  float halfW = dist * uWxPixel * 16.0 * mix(0.5, 1.0, aWidth);
+  float halfW = dist * uWxPixel * 9.0 * mix(0.5, 1.0, aWidth);
   p += side * aCorner.x * halfW;
-  // 上から順に伸びる（先端 = リーダー）
-  float grow = 1.0 - smoothstep(uBoltAge / 0.05, uBoltAge / 0.05 + 0.04, aOrder);
+  // 上から順に伸びる（先端 = リーダー）。20ms で地面に達する（閃光のピークには伸びきっている）
+  float grow = 1.0 - smoothstep(uBoltAge / 0.02, uBoltAge / 0.02 + 0.04, aOrder);
   vX = aCorner.x;
   vVis = grow;
   vWorld = p;
@@ -139,10 +140,11 @@ varying vec3 vWorld;
 varying float vW;
 void main(){
   float x = abs(vX);
-  // 細い白熱の芯（〜1.5px）＋ 青白い広い光（〜16px）。枝は細く暗く
-  float core = exp(-x * x * 160.0);
-  float glow = exp(-x * 4.5) * 0.022 + exp(-x * 1.6) * 0.006;
-  float i = (core * 5.0 + glow * 6.0) * mix(0.35, 1.0, vW) * uBoltFlash * vVis;
+  // 細い白熱の芯（〜1.5px）＋ 青白い広い光（〜9px）。枝は細く暗く。
+  // 広い光を強くしすぎるとリボンの四角がそのまま白い塊として見える
+  float core = exp(-x * x * 90.0);
+  float glow = exp(-x * 5.0) * 0.010 + exp(-x * 1.8) * 0.0025;
+  float i = (core * 4.0 + glow * 6.0) * mix(0.35, 1.0, vW) * uBoltFlash * vVis;
   vec3 col = mix(vec3(0.7, 0.8, 1.0), vec3(1.0, 0.98, 1.0), core) * i;
   vec4 aer = flip_aerial(vWorld);
   col *= aer.a;
@@ -176,14 +178,22 @@ const GLOW_FRAG = /* glsl */ `
 #include <flip_flip>
 ${WX_COMMON}
 uniform float uBoltFlash;
+uniform vec3 uSkyAmbient;
 varying vec2 vQ;
 varying vec3 vWorld;
 void main(){
   float r = length(vQ) * 2.0;
-  float g = exp(-r * r * 3.5) * (1.0 - smoothstep(0.7, 1.0, r));
+  // 雲の中の発光は狭く（広いと空全体が白く飛んで雲の構造が消える）
+  float g = exp(-r * r * 7.0) * (1.0 - smoothstep(0.6, 1.0, r));
   // 雲の中で光る: むらのある柔らかい面
   float n = 0.75 + 0.5 * flip_vnoise(vec3(vQ * 6.0, uTime * 3.0));
-  vec3 col = vec3(0.78, 0.84, 1.0) * g * n * uBoltFlash * 1.2;
+  vec3 dv = vWorld - uCamPos;
+  float dc = length(dv);
+  // 落雷までの距離で減衰し、その向きの空の 2 倍（= 合計3倍）を上限にする
+  float att = 1.0 / (1.0 + dc * dc / (500.0 * 500.0));
+  vec3 col = vec3(0.78, 0.84, 1.0) * g * n * uBoltFlash * 1.6 * att;
+  // uSkyAmbient*0.64 = 雲を含む空の代表輝度。その2倍（= 合計3倍）で頭を打つ
+  col = min(col, uSkyAmbient * 1.28 + 0.004);
   col *= flip_aerial(vWorld).a;
   float fm = flip_mask(vWorld);
   col = mix(col, FLIP_ACCENT * g * 0.35 * uBoltFlash, fm);

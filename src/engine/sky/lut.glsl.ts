@@ -79,7 +79,8 @@ void main(){
     if (tG > 0.0){
       vec3 n = normalize(o + d * tG);
       float NdotL = max(dot(n, sunDir), 0.0);
-      L += T * 0.3 * flip_atmoTrans(FLIP_RG, dot(n, sunDir)) * NdotL / PI;
+      // 地面アルベド 0.15（森と湖の谷）。ここを上げると空全体が白く濁る
+      L += T * 0.15 * flip_atmoTrans(FLIP_RG, dot(n, sunDir)) * NdotL / PI;
     }
     Lsum += L; fsum += f;
   }
@@ -98,18 +99,22 @@ uniform vec3 uSunDirK;
 uniform vec3 uMoonDirK;
 uniform vec3 uSunE;
 uniform vec3 uMoonE;
+// 多重散乱の強さ。Hillaire の Psi は 2 次以降を「等方位相・無吸収」で積むので、
+// エアロゾルが多い（ω0≈0.9）大気では過大になる。1.0 のままだと地平線が灰色に濁って黄昏の橙が消える。
+#define FLIP_MS 0.5
 vec3 flip_msLookup(float r, float muS){
   float sx = sign(muS) * sqrt(abs(muS));
   vec2 uv = vec2(sx * 0.5 + 0.5, (r - FLIP_RG) / (FLIP_RT - FLIP_RG));
   uv = flip_subUv(clamp(uv, 0.0, 1.0), vec2(64.0, 32.0));
-  return texture2D(uMsLut, uv).rgb;
+  return texture2D(uMsLut, uv).rgb * FLIP_MS;
 }
 // o から d へ [0, tMax] を N 歩（二次で手前が細かい）で積分。L = 散乱光, T = 透過率
 void flip_scatterMarch(vec3 o, vec3 d, float tMax, int N, out vec3 L, out vec3 T){
   T = vec3(1.0); L = vec3(0.0);
   float cS = dot(d, uSunDirK), cM = dot(d, uMoonDirK);
-  float phRs = flip_phaseR(cS), phMs = flip_phaseMie(cS, 0.76);
-  float phRm = flip_phaseR(cM), phMm = flip_phaseMie(cM, 0.76);
+  // 位相 g: 黄昏の前方散乱（橙の帯）を出すため 0.76 → 0.82
+  float phRs = flip_phaseR(cS), phMs = flip_phaseMie(cS, 0.82);
+  float phRm = flip_phaseR(cM), phMm = flip_phaseMie(cM, 0.82);
   float tPrev = 0.0;
   for (int i = 0; i < 48; i++){
     if (i >= N) break;
