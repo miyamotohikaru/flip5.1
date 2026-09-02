@@ -1,1 +1,64 @@
-[]
+[
+  {
+    "round": 1,
+    "date": "2026-09-03",
+    "scores": {
+      "golden": 4,
+      "noon": 3,
+      "dawn": 4,
+      "cloudy": 4,
+      "rain": 3,
+      "storm": 2,
+      "night": 3,
+      "sunset_water": 3,
+      "forest": 2,
+      "ridge": 3,
+      "flip_half": 4,
+      "flip_full": 5
+    },
+    "mobile": { "golden": 4, "forest": 3, "night": 4 },
+    "blind": {
+      "golden": false,
+      "noon": false,
+      "dawn": false,
+      "cloudy": false,
+      "rain": false,
+      "storm": false,
+      "night": false,
+      "sunset_water": false,
+      "forest": false,
+      "ridge": false,
+      "flip_half": false,
+      "flip_full": false
+    },
+    "verdict": "不合格",
+    "top": [
+      "vegetation(草): 葉幅 0.034/0.045/0.06→0.010/0.014/0.020m、GRASS_COLORS を tip (0.11,0.21,0.05)/tip2 (0.14,0.20,0.06)/dry (0.32,0.26,0.11)/root (0.04,0.08,0.02) に寄せ乾いた株 ≤20%、λ12m の fbm で 30–40% を短い斑に、環 B/C は 3 枚の株、地面に枯れ草のリター (0.20,0.16,0.08) 30%",
+      "vegetation(木): perWhorl 6–7→12–16、輪生の高さジッター ±0.02→±0.08H、枝長 ±20%→±45%、梢のカード 2 枚→小円錐、針葉カード充填率 70%・色 (0.03,0.06,0.02)〜(0.09,0.14,0.04)、幹 light (0.34,0.27,0.21)→(0.20,0.16,0.12)、樹高 0.6–1.3×、λ40–80m のクラスタで空地 30%、インポスターは無光ベイク",
+      "sky(黄昏): Mie 散乱 3.2e-3→8e-3/km、吸収 0.35e-3→1.0e-3、晴天 hazeKm 0.008→0.025（sunDir.y<0.15 で ×1.8）、位相 g 0.76→0.82、低高度の光冠 0.02·exp(−ang/0.05)。確認は ?t=17.4&look=106,10",
+      "sky/post(夜): 露出上限 30→6、星密度 0.012→0.004・輝度上限 0.25・天の川 0.0022→0.006、星の veil −0.19..−0.04→−0.25..−0.10、蛍 max(0.1,px·8)→max(0.012,px·2.5)・520→150、月の映り込みの筋",
+      "terrain(山・雪): 遠景法線を 2048 ハイトマップの 3×3 Sobel に、雪 roughness 0.55→0.8＋λ2–5m の法線ノイズ、岩の strata mix(0.78,1.15)→mix(0.55,1.25)＋斜度 0.5 超に横縞、core へ稜線の細部（リッジ 2 オクターブ λ90/45m 振幅 12/6m）を要望",
+      "weather(雨・嵐): 雨筋 alpha 0.8→0.3・長さ ×0.5・12m 以遠フェード、しぶきを 1px リング＋暗点に、レンズ水滴は径 1/3 で屈折、閃光は 1/(1+(d/500m)²) 減衰＋空の上限 3 倍＋80ms の影付き光、湖面の雨は法線リング (4mm, 0.6m/s, 40/m²/s)、埃は HG(g=0.7)×6m 以内",
+      "water: 岸際の楔を直す、泡は水際 0.3–1.2m だけ（foamTex 閾値 0.62→0.78、alpha ≤0.6）、映り込みの fallback を 20px でぼかす、遠方の粗さ σ 0.02→0.06 で縦ぼけ、低い太陽・月の GGX α 0.05→0.12",
+      "post: フレアの輪 0.16→0.05＋雲量ゲート、uFlareStrength 0.6→0.25、ビネット 0.28→0.18、夜明けの uSplit.x →0.2、露出基準 0.33/keyL→0.24/keyL で日なたの白飛びを避ける、AO 半径 ≥0.6m、白・マゼンタの輝点の原因特定",
+      "controls/ui: 携帯 HUD 左上の未タッチのスティック円を隠す、入口の左下ヒント／クレジットと N バッジの重なり（padding-left 56px）、携帯の数式行のはみ出し、params.ts の yaw の向きの注記を実装（左回りが正）に合わせる",
+      "裏返し(全モジュール): 縁を幅 8–15m の帯＋先行リップル 2–3 本＋火花、草の線は 6 本に 1 本、木は骨組み、等高線 10m で主線/副線 4:1、粒子は 1px 点＋軌跡、世界の中に数式ラベルを 3–4 か所（ui）"
+    ],
+    "notes": [
+      "golden: 17:24 なのに光が白い。草が藁色の板で地形の緑と合っていない。山が団子、雪がメレンゲ、木が胡椒の点（vegetation / sky / terrain）",
+      "noon: 影が無く均一に明るい。映り込みが途中で切れる。岸の砂帯がプールの縁（post / water / terrain）",
+      "dawn: 紫灰の一色フィルター。朝日の側に色が無い。草がグレーの毛布（sky / post / weather）",
+      "cloudy: 木がパゴダで芝生に等間隔。雲は良い（vegetation / terrain）",
+      "rain: 湖面が白い砂嵐。しぶきが紙片、レンズ水滴が空中に浮く（water / weather / post）",
+      "storm: 閃光で空が真っ白。影絵の木がパゴダ、雨筋が引っかき傷、モノクロ（weather / sky / vegetation）",
+      "night: 青い昼。星が紙吹雪、蛍がテニスボール、月の映り込みが無い（sky / weather / water）",
+      "sunset_water: 雪山がローポリの折り紙。空が灰紫の板。水面に白・紫の輝点（terrain / sky / water）",
+      "forest: 枝が羊歯、幹がピンクの円筒、地面がぼやけた緑の絵の具（vegetation / terrain / post）",
+      "ridge: 影が階段状で真っ黒。草が爪楊枝。谷に奥行きが無い（core / vegetation / sky）",
+      "flip_half: 縁が 1 本線。草が白い針の塊、粒子が白い短線（core / vegetation / weather）",
+      "flip_full: 青写真には見えるが正体が画の中に無い。等高線がバーコード（terrain / vegetation / ui / sky）",
+      "mobile: golden 4（雪山の面取りが目立つ、空が暗い）/ forest 3 / night 4（青い昼）",
+      "不具合: 黒い四角の筋（既知）、水際の楔、白・マゼンタの輝点、昼の空の白い点（埃）、太陽の巨大な輪、携帯 HUD の迷子のスティック円、入口ヒントと N バッジの重なり、?dbg=nopost が真っ暗、yaw の注記が逆"
+    ]
+  }
+]
