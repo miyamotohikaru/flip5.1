@@ -234,3 +234,27 @@ button { font-family: inherit; }
   .photo, .hud-hint, .enter-bar { transition: none; }
   .shutter.go { animation-duration: 0.15s; }
 }
+
+/* 検証ログ */
+.log { max-width: 880px; margin: 0 auto; padding: 48px 24px 80px; line-height: 1.9; }
+.log-head h1 { font-size: 28px; letter-spacing: 0.06em; margin: 8px 0 12px; }
+.log-head p { color: var(--ink-dim); margin: 0 0 32px; }
+.log-back { color: var(--ink-dim); text-decoration: none; font-size: 13px; letter-spacing: 0.08em; }
+.log-back:hover { color: var(--ink); }
+.log table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 8px 0 24px; }
+.log th, .log td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.log th { color: var(--ink-dim); font-weight: 500; letter-spacing: 0.06em; }
+.log td.num { font-family: var(--font-mono); text-align: right; }
+.log td.mono { font-family: var(--font-mono); }
+.log td.pass { color: #9be89b; }
+.log td.fail { color: var(--accent); }
+.log-round { margin-top: 40px; padding-top: 24px; border-top: 1px solid var(--line); }
+.log-round h2 { font-size: 20px; margin: 0 0 12px; }
+.log-round h2 span { font-size: 13px; color: var(--ink-dim); margin-left: 12px; font-weight: 400; }
+.log-round h3 { font-size: 14px; color: var(--ink-dim); letter-spacing: 0.08em; margin: 20px 0 8px; }
+.log-round ol, .log-round ul { padding-left: 1.4em; margin: 0; font-size: 14px; }
+.log-round li { margin: 4px 0; }
+.log-empty { color: var(--ink-dim); }
+.log-foot { margin-top: 48px; color: var(--ink-dim); font-size: 13px; }
+.log-foot a { color: var(--ink); }
+html:has(.log), body:has(.log) { overflow: auto; }
