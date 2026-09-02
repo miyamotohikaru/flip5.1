@@ -41,11 +41,12 @@ varying float vAlpha;
 varying vec3 vWorld;
 varying float vFm;
 void main(){
-  float layer = aSeed.w < 0.5 ? 0.0 : (aSeed.w < 0.8 ? 1.0 : 2.0);
-  float box = layer == 0.0 ? 6.0 : (layer == 1.0 ? 18.0 : 45.0);
-  // 風で斜めに。突風で揺れ、嵐では横殴り
-  float wsp = uWind.z * (0.45 + 0.9 * uGust) * (1.0 + 0.9 * uStorm);
-  float fall = 7.5 + 2.5 * aSeed.x;
+  float layer = aSeed.w < 0.55 ? 0.0 : (aSeed.w < 0.88 ? 1.0 : 2.0);
+  // 筋が見えるのはカメラのすぐ周りだけ。遠くの雨は fog.ts の「雨のヴェール」が受け持つ
+  float box = layer == 0.0 ? 5.5 : (layer == 1.0 ? 10.0 : 16.0);
+  // 風で斜めに。突風で揺れ、嵐では横殴り。ただし 45°を超えると「ワープの速度線」に見えるので抑える
+  float wsp = uWind.z * (0.34 + 0.40 * uGust) * (1.0 + 0.45 * uStorm);
+  float fall = 8.5 + 3.0 * aSeed.x;
   vec3 vel = vec3(uWind.x * wsp, -fall, uWind.y * wsp);
   vec3 fwd = wx_camFwd(viewMatrix);
   vec3 boxC = uCamPos + vec3(fwd.x, 0.0, fwd.z) * box * 0.3 + vec3(0.0, box * 0.12, 0.0);
@@ -57,8 +58,8 @@ void main(){
   vec3 vdir = toCam / max(dist, 1e-4);
   float speed = length(vel);
   vec3 a = vel / speed;
-  // 動体ぶれの長さ（露光 ~30ms）。遠い層は細長く
-  float len = min(speed * (0.04 + 0.014 * layer), 0.45 + 0.25 * layer) * (0.75 + 0.5 * aSeed.y);
+  // 動体ぶれの長さ（露光 ~15ms）。長いと「引っかき傷」になるので短く
+  float len = min(speed * (0.020 + 0.007 * layer), 0.22 + 0.12 * layer) * (0.75 + 0.5 * aSeed.y);
   vec3 side = normalize(cross(a, vdir));
   float px = dist * uWxPixel;
   float dropW = 0.0025 + 0.0015 * layer;
@@ -66,8 +67,16 @@ void main(){
   float defocus = 1.0 + 3.0 * (1.0 - smoothstep(0.3, 1.6, dist));
   float w = max(dropW * defocus, px * 1.3);
   vec3 pos = center + a * (position.y - 0.5) * len + side * position.x * w;
-  float alpha = (0.8 - 0.26 * layer) * clamp(dropW / w, 0.45, 1.0) * (0.55 + 0.45 * aSeed.z);
-  alpha *= smoothstep(0.1, 0.4, dist);
+  // 粒の大きさのばらつき: ほとんどは薄く、たまに近くの大粒が明るく光る
+  float bright = 0.35 + 0.95 * aSeed.z * aSeed.z;
+  float alpha = (0.36 - 0.11 * layer) * clamp(dropW / w, 0.25, 1.0) * bright;
+  // レンズのすぐ前の雨粒はピントが外れて大きくぼやける＝ほとんど見えない（長い白線にしない）
+  alpha *= smoothstep(0.25, 1.4, dist);
+  // 6m を過ぎたら薄れ、12m で消える（遠くまで同じ濃さだと消失点へ集まる白線＝ワープに見える）
+  alpha *= 1.0 - smoothstep(6.0, 12.0, dist);
+  // 目線より高い筋は近くだけ（空を背景に長い白線が散らないように）
+  float above = max(center.y - uCamPos.y, 0.0);
+  alpha *= 1.0 - smoothstep(3.0, 6.5, dist) * smoothstep(0.4, 2.2, above);
   vec3 e = abs(rel) / box;
   float edge = (1.0 - smoothstep(0.32, 0.5, e.x)) * (1.0 - smoothstep(0.32, 0.5, e.y)) * (1.0 - smoothstep(0.32, 0.5, e.z));
   alpha *= edge;
@@ -102,18 +111,20 @@ void main(){
   float across = exp(-x * x * 3.0);
   float along = smoothstep(0.0, 0.3, vQ.y) * (1.0 - smoothstep(0.7, 1.0, vQ.y));
   // 筋の途中に明るい粒（雨粒本体のきらめき）
-  float glint = exp(-pow((vQ.y - 0.55) * 6.0, 2.0)) * 0.6;
+  float glint = exp(-pow((vQ.y - 0.55) * 6.0, 2.0)) * 0.30;
   float shape = across * (along * 0.75 + glint);
   vec3 vdir = normalize(vWorld - uCamPos);
   float sunUp = smoothstep(-0.05, 0.05, uSunDir.y);
-  // 雨粒は周りの光を屈折して運ぶ: 地平近くの空の色（天頂より明るい）＋半球光＋逆光で明るく
+  // 雨粒は周りの光を屈折して運ぶ: その向きの空の色（曇り・嵐では雲を透けた光）＋地面の照り返し。
+  // 背景の空より明るくしすぎると、暗い嵐の中で白い引っかき傷になる
   vec3 skyH = flip_skyColor(normalize(vec3(vdir.x, max(vdir.y, 0.06), vdir.z)));
-  vec3 col = mix(uSkyAmbient * 0.85, skyH * 1.6, 0.6) + uGroundAmbient * 0.3 + vec3(0.012);
+  vec3 lit = mix(skyH, uSkyAmbient * 0.64, smoothstep(0.35, 1.0, uCloud));
+  vec3 col = lit * 1.15 + uGroundAmbient * 0.12 + vec3(0.004);
   col += uSunColor * wx_phaseHG(dot(vdir, uSunDir), 0.75) * 0.35 * sunUp;
   col += uMoonColor * wx_phaseHG(dot(vdir, uMoonDir), 0.7) * 0.6;
   // 稲光は近い雨粒ほど強く照らす（雨のカーテン全体が白飛びしないよう控えめに）
   float dl = distance(vWorld, uLightningPos + vec3(0.0, uWxCloudBase * 0.4, 0.0));
-  col += vec3(0.8, 0.85, 1.0) * uLightning * 0.12 / (1.0 + dl * dl * 2e-6);
+  col += vec3(0.8, 0.85, 1.0) * uLightning * 0.12 / (1.0 + dl * dl / (500.0 * 500.0));
   vec4 aer = flip_aerial(vWorld);
   float dist = distance(uCamPos, vWorld);
   float alpha = vAlpha * shape * aer.a * exp(-wx_fogOD(uCamPos, vWorld) - wx_veilOD(dist));
@@ -139,40 +150,35 @@ varying float vLife;
 varying float vAlpha;
 varying vec3 vWorld;
 varying float vFm;
-varying float vOnWater;
 void main(){
   float k = uSplashGrid;
   float cs = 13.0 / k;
   float ix = mod(aIndex, k), iz = floor(aIndex / k);
   vec2 camCell = floor(uCamPos.xz / cs);
   vec2 cell = camCell + vec2(ix, iz) - 0.5 * k;
-  float period = 0.32 + 0.4 * aSeed.x;
+  float period = 0.30 + 0.36 * aSeed.x;
   float ph = uTime / period + aSeed.y;
   float cycle = floor(ph);
   float life = fract(ph);
   vec2 jit = flip_hash22(cell * 1.37 + cycle * 7.13 + aSeed.zw);
   vec2 xz = (cell + jit) * cs;
   float th = flip_height(xz);
-  float onWater = step(th, uWxLake + 0.04);
-  float y = max(th, uWxLake) + 0.03;
-  vec3 center = vec3(xz.x, y, xz.y);
-  float dens = uRain * (1.0 - 0.55 * onWater);
-  float on = step(flip_hash12(cell + cycle * 3.7), dens);
+  // 水面の着弾は水担当の法線リングが描く（重ねると白い粒になる）ので、ここは陸だけ
+  float onLand = step(uWxLake + 0.06, th);
+  vec3 center = vec3(xz.x, th + 0.015, xz.y);
+  float on = onLand * step(flip_hash12(cell + cycle * 3.7), uRain);
   float dist = distance(center, uCamPos);
-  float size = (0.06 + 0.05 * aSeed.z) * (0.45 + 0.55 * life);
   float px = dist * uWxPixel;
-  size = max(size, px * 4.0);
-  // 立てた板（Y 軸回りだけカメラを向く）
-  vec2 f2 = normalize(uCamPos.xz - center.xz + vec2(1e-4, 0.0));
-  vec3 side = vec3(-f2.y, 0.0, f2.x);
-  vec3 pos = center + side * position.x * size * 1.6 + vec3(0.0, position.y * size, 0.0);
-  float alpha = on * (1.0 - smoothstep(4.5, 6.5, dist)) * smoothstep(0.25, 0.8, dist) * (1.0 - life * life);
+  // 地面に寝かせた円板。輪は rMax まで広がる（雨粒の着弾の輪は 3〜7cm）
+  float rMax = 0.03 + 0.04 * aSeed.z;
+  float size = max(rMax * 2.4, px * 3.0);
+  vec3 pos = center + vec3(position.x, 0.0, position.y - 0.5) * size * 2.0;
+  float alpha = on * (1.0 - smoothstep(4.0, 6.2, dist)) * smoothstep(0.25, 0.8, dist);
   vQ = position.xy;
   vLife = life;
   vAlpha = alpha;
   vWorld = center;
   vFm = wx_flipMask(center);
-  vOnWater = onWater;
   gl_Position = projectionMatrix * viewMatrix * vec4(pos, 1.0);
 }
 `;
@@ -190,42 +196,30 @@ varying float vLife;
 varying float vAlpha;
 varying vec3 vWorld;
 varying float vFm;
-varying float vOnWater;
-float segDist(vec2 p, vec2 a, vec2 b){
-  vec2 pa = p - a, ba = b - a;
-  float h = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-6), 0.0, 1.0);
-  return length(pa - ba * h);
-}
 void main(){
-  vec2 q = vec2(vQ.x * 1.6, vQ.y);
+  // 地面に寝かせた円板。q は板の -1..1、rq は「輪の最大半径」を 1 とした半径
+  vec2 q = vec2(vQ.x, vQ.y - 0.5) * 2.0;
+  float rq = length(q) * 1.2;
   float t = vLife;
-  float r = 0.18 + 0.5 * t;
-  float h = sin(t * 3.1416) * 0.6;
-  // 王冠: 手前半周の楕円の環（ぼかし）＋ 3本の短い水柱と先端の玉（柔らかく、記号に見えないように）
-  vec2 e = vec2(q.x / r, (q.y - 0.04) / (r * 0.3));
-  float ring = exp(-pow(abs(length(e) - 1.0) * 3.0, 2.0)) * step(q.y, 0.04 + r * 0.3) * 0.7;
-  float spikes = 0.0;
-  for (int i = 0; i < 3; i++) {
-    float fi = float(i);
-    float ang = (fi + 0.5 + 0.7 * (flip_hash11(fi * 7.7 + floor(vWorld.z * 11.0)) - 0.5)) / 3.0 * 3.1416;
-    float hh = h * (0.5 + 0.5 * flip_hash11(fi * 3.1 + floor(vWorld.x * 13.0) + floor(vWorld.z * 7.0)));
-    vec2 base = vec2(cos(ang) * r, 0.04 - sin(ang) * r * 0.15);
-    vec2 tip = vec2(cos(ang) * r * (1.0 + 0.45 * t), base.y + hh);
-    float d = segDist(q, base, tip);
-    spikes += exp(-d * d * 350.0) * 0.45;
-    spikes += exp(-dot(q - tip, q - tip) * 700.0) * 0.8;
-  }
-  // 中心の水しぶきの霧（ごく薄い）
-  float mist = exp(-dot(q - vec2(0.0, 0.1), q - vec2(0.0, 0.1)) * 25.0) * 0.25 * (1.0 - t);
-  float shape = clamp(ring + spikes + mist, 0.0, 1.0);
+  // 広がる細い輪（1px 幅）。広がるほど薄くなって消える
+  float aa = max(fwidth(rq) * 1.1, 0.035);
+  float e = (rq - t) / aa;
+  float ring = exp(-e * e) * (1.0 - t) * (1.0 - t);
+  // 着弾の暗点（濡れて暗くなった一点）。輪より内側で、輪より先に消える
+  float dark = (1.0 - smoothstep(0.0, 0.12 + 0.5 * t, rq)) * (1.0 - smoothstep(0.25, 0.75, t));
   float sunUp = smoothstep(-0.05, 0.05, uSunDir.y);
-  // 水しぶきは空を映して白く光る（濡れた暗い地面の上で目立つ）
-  vec3 col = uSkyAmbient * 1.5 + uGroundAmbient * 0.25 + vec3(0.22) + uSunColor * 0.08 * sunUp + vec3(0.8, 0.85, 1.0) * uLightning;
+  // 輪は空を映して明るい／暗点は濡れた地面そのもの
+  vec3 bright = uSkyAmbient * 0.70 + uGroundAmbient * 0.12 + uSunColor * 0.05 * sunUp + vec3(0.8, 0.85, 1.0) * uLightning * 0.3;
+  vec3 darkCol = uGroundAmbient * 0.08;
   float soft = wx_soft(gl_FragCoord.xy, gl_FragCoord.z, 0.05);
   vec4 aer = flip_aerial(vWorld);
-  float alpha = vAlpha * shape * soft * aer.a * 0.9;
+  float base = vAlpha * soft * aer.a;
+  float aR = base * ring * 0.30;
+  float aD = base * dark * 0.22;
+  float alpha = clamp(aR + aD, 0.0, 1.0);
+  vec3 col = (bright * aR + darkCol * aD) / max(aR + aD, 1e-5);
   // 数式ビュー: 着弾点（座標の点）
-  float dotc = 1.0 - smoothstep(0.0, 0.12, length(vec2(q.x, q.y - 0.1)));
+  float dotc = 1.0 - smoothstep(0.0, 0.12, rq);
   col = mix(col, FLIP_LINE, vFm);
   alpha = mix(alpha, dotc * vAlpha * soft, vFm);
   gl_FragColor = vec4(col * alpha, alpha);
