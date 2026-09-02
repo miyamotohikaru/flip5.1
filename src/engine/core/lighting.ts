@@ -52,8 +52,9 @@ export class Lighting {
     this.hemi.intensity = 1.0;
     this.moon.position.copy(this.tmp.copy(env.moonDir).multiplyScalar(500)).add(env.cameraPos);
     this.moon.target.position.copy(env.cameraPos);
+    // 月光。env.moonColor は基準色（強さは含まない）、env.moonIntensity が強さ。
     this.moon.intensity = env.moonIntensity * 4;
-    this.moon.color.copy(env.moonColor).multiplyScalar(1 / Math.max(env.moonIntensity, 1e-3)).multiplyScalar(env.moonIntensity > 0 ? 1 : 0);
+    this.moon.color.copy(env.moonColor);
   }
 
   resize() {
