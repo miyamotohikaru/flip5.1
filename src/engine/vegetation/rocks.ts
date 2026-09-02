@@ -119,8 +119,10 @@ vec3 veg_rockColor(out float relief, out float moss){
   float side = 0.5 + 0.35 * dot(vRockN, vec3(0.0, 0.0, -1.0)) + 0.25 * dot(vRockN, toValley);
   float up = smoothstep(0.1, 0.7, vRockN.y);
   float mossN = flip_vfbm(w.xz * 1.7 + w.y * 0.7, 3);
-  moss = smoothstep(0.28, 0.7, up * side * (0.7 + 0.8 * mossN) * (1.0 - smoothstep(150.0, 450.0, w.y)) * (0.85 + 0.5 * uWetness));
-  c = mix(c, vec3(0.10, 0.17, 0.05) * (0.8 + 0.5 * grain), moss);
+  float mossFine = flip_vnoise(w * 18.0);
+  moss = smoothstep(0.3, 0.75, up * side * (0.6 + 0.9 * mossN) * (1.0 - smoothstep(150.0, 450.0, w.y)) * (0.85 + 0.5 * uWetness));
+  moss *= 0.5 + 0.5 * smoothstep(0.25, 0.7, mossFine); // 苔は粒でまだらに
+  c = mix(c, mix(vec3(0.10, 0.16, 0.05), vec3(0.20, 0.24, 0.08), mossFine) * (0.8 + 0.4 * grain), moss * 0.85);
   return c;
 }
 `;
