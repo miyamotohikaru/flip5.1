@@ -56,9 +56,10 @@ uniform vec3 uWind;
 uniform float uLakeLevel;
 uniform sampler2D uHeightParts;
 uniform sampler2D uTerrainField; // 焼いたノイズ場: r = マクロ, g = メソ, b = 林の密度, a = 岸線からの距離（(sd+20)/40）
+uniform sampler2D uVegMap;       // 植生マップ（vegetation/vegmap.ts）: r = 草の密度, g = 林の密度, b = 乾き, a = 岩
 uniform float uDetail;
 uniform float uReflect;      // 1 = 映り込みカメラ（細部を省く）
-uniform float uTerrainDebug; // 調査用: 1 太陽の見え方 2 AO 3 法線 4 cavity 5 地平角A 6 影なし 9 細部なし
+uniform float uTerrainDebug; // 調査用: 1 太陽の見え方 2 AO 3 法線 4 cavity 5 地平角A 6 影なし 7 rgb=林/土/ガレのマスク 9 細部なし
 varying vec3 vFlipWorld;
 
 // 微分つきグラディエントノイズ: x = 値, yz = 勾配（ノイズ空間）
@@ -119,7 +120,7 @@ float tH = tP.y;
 float tAbove = tH - uLakeLevel;
 float tMacro = tF.r * 2.0 - 1.0;   // 数百 m の色むら（タイル感消し）
 float tMeso = tF.g * 2.0 - 1.0;    // 36 m
-float forestDens = tF.b;           // 250 m 単位の林と草地
+float forestDens = tF.b;           // 250 m 単位の林と草地（遠景の樹冠のざらつき用。木の位置とは別の乱数）
 float tShore = tF.a * 40.0 - 20.0; // 岸線からの距離（m、負が湖）
 float tPatch = flip_fbm(tXZ * 0.075 + 3.0, 2); // 13 m の斑（枯れ草・土）
 // 細部は大きさごとに別の距離で消す（画素より細かくなった模様は迷彩・水玉に見える）。映り込みでは全部省く
@@ -165,8 +166,14 @@ if (tShore < 9.0 && tAbove < 3.5) { // 砂は tShore ≤ 6.5m・水面 +2.75m �
   float wetTop = 0.22 + 0.75 * smoothstep(-0.7, 0.7, bn2 + 0.65 * bn1 + 0.4 * bn3);
   wetBand = 1.0 - smoothstep(-0.04, wetTop, tAbove);
 }
-float forestBand = smoothstep(8.0, 25.0, tH) * (1.0 - smoothstep(330.0 + 60.0 * tMacro, 420.0 + 60.0 * tMacro, tH)) * (1.0 - smoothstep(0.35, 0.55, tSlope));
-float forest = forestBand * forestDens;
+// 林の密度は植生マップ（G）＝木を実際に置いた密度を正とする。
+// 地形の焼いた場（tF.b）は別の乱数なので、それで判断すると「木の下なのに草原の色」になる。
+// 512²（8m/texel）の線形補間なので縁はなだらか。植生が無い（?dbg=noveg）ときは 0 で草原のまま
+vec4 tVeg = texture2D(uVegMap, tUv);
+float forest = tVeg.g;
+// 林床の効き。まばらな林（0.3 前後）では草が残り、密な林（0.8 超）で完全に腐植の床になる。
+// 縁は 13m/36m の斑で崩すので境界が線に見えない
+float fFloor = smoothstep(0.12, 0.78, forest + 0.14 * tPatch + 0.10 * tMeso);
 
 // ---- 色（線形）----
 // 枯れ草の斑: 13m の斑は数百 m のゾーン（tMacro）の中でだけ強く出す（中景が迷彩に見えないように）
@@ -175,17 +182,32 @@ vec3 grass = mix(vec3(0.050, 0.115, 0.025), vec3(0.19, 0.165, 0.065), smoothstep
 grass *= 1.0 + 0.30 * tMacro + 0.13 * tMeso; // 数百m と 36m のむら。一色の斜面は「ゴルフ場」に見える
 grass = mix(grass, vec3(0.19, 0.165, 0.06), smoothstep(250.0, 420.0, tH)); // 高山草地は黄ばむ
 // 林帯（10〜400m、緩斜面）: 木の下の暗い床。遠景では樹冠のざらつき
-grass = mix(grass, vec3(0.040, 0.070, 0.026) * (1.0 + 0.2 * tMacro), 0.7 * forest);
-// 森の床: 針葉のリターと剥き出しの根元。斑のスケールを変えて「絵の具」に見せない
-grass = mix(grass, vec3(0.070, 0.056, 0.030), forest * smoothstep(0.35, 0.85, flip_vnoise(tXZ * 0.42 + 21.0) + 0.4 * tPatch));
-if (forest > 0.01 && tNear < 0.99) grass *= 1.0 - 0.28 * forest * flip_vnoise(tXZ * 0.2 + 3.0) * (1.0 - tNear);
+// 林床。針葉樹の下は「草原の色」ではない: 落ち葉（針葉のリター）と腐植の色に寄せ、
+// 日が差さないぶん彩度を落とし、林が濃いほど暗くする。
+// 縁は植生マップの補間に 13m/36m の斑を足して崩すので、境界が線に見えない
+if (fFloor > 0.004) {
+  // 針葉のリター（赤茶）→ 腐植（暗い茶）。斑のスケールを変えて「絵の具」に見せない
+  vec3 duff = mix(vec3(0.092, 0.069, 0.034), vec3(0.036, 0.027, 0.017),
+                  smoothstep(0.18, 0.80, flip_vnoise(tXZ * 0.42 + 21.0) + 0.4 * tPatch));
+  // 苔とまばらな下草（濃い緑）が斑で混じる
+  duff = mix(duff, vec3(0.026, 0.045, 0.018), 0.55 * smoothstep(0.38, 0.84, flip_vnoise(tXZ * 0.19 + 5.0) + 0.3 * tMeso));
+  duff *= 1.0 + 0.16 * tMacro;
+  grass = mix(grass, duff, 0.96 * fFloor);
+  // 樹冠の下は空が見えない: 彩度を落として暗くする
+  grass = mix(grass, vec3(dot(grass, vec3(0.2126, 0.7152, 0.0722))), 0.26 * fFloor);
+  grass *= 1.0 - 0.40 * fFloor;
+  // 根元（植生マップ r = 草の密度。木を置いた texel は薄くしてある）ほどわずかに暗い
+  grass *= 1.0 - 0.16 * fFloor * smoothstep(0.30, 0.02, tVeg.r);
+  // 遠景の樹冠のざらつき（近景では草・幹が描くので出さない）
+  if (tNear < 0.99) grass *= 1.0 - 0.24 * fFloor * flip_vnoise(tXZ * 0.2 + 3.0) * (1.0 - tNear);
+}
 // 中景（10〜60m）: 丈の高い草の群れ（2m）のやわらかい明暗
 if (tDist < 160.0 && uReflect < 0.5) grass *= 1.0 + 0.16 * flip_fbm(tXZ * 0.55 + 8.0, 2) * (1.0 - smoothstep(60.0, 160.0, tDist));
 // 枯れ草・落ち葉のリター（株の間から見える地面）。λ 3.5m の斑で 70m まで。
 // これが無いと地面が「一色の緑の絵の具」になる
 if (tDist < 70.0 && uReflect < 0.5) {
   float lit = smoothstep(0.42, 0.86, flip_vnoise(tXZ * 0.29 + 17.0) + 0.45 * tPatch) * (1.0 - smoothstep(28.0, 70.0, tDist));
-  grass = mix(grass, vec3(0.155, 0.125, 0.062), 0.5 * lit * (1.0 - 0.6 * forest));
+  grass = mix(grass, vec3(0.155, 0.125, 0.062), 0.5 * lit * (1.0 - fFloor)); // 林床は下の duff が持つ
 }
 vec3 dirt = vec3(0.105, 0.078, 0.052) * (1.0 + 0.2 * tMacro);
 vec3 scree = vec3(0.19, 0.185, 0.175) * (0.85 + 0.3 * tMeso);
@@ -238,7 +260,8 @@ if (tNear > 0.0) {
   // 草の株: 30cm の房のなだらかなドーム（境界の線は出さない）。株ごとに色が少し違う
   float dome = flip_vnoise(tXZ * 3.3 + 1.0);
   float hue = flip_vnoise(tXZ * 1.7 + 6.0);
-  grass *= 1.0 + (0.45 * dome - 0.2 + 0.25 * (hue - 0.5)) * dNear1;
+  float gDet = 1.0 - 0.88 * fFloor; // 林床には草の株・葉の模様を出さない（明るく戻ってしまう）
+  grass *= 1.0 + (0.45 * dome - 0.2 + 0.25 * (hue - 0.5)) * dNear1 * gDet;
   // 葉の筋（2〜5cm、風向きに少し伸びる）と粒
   vec2 wdir = normalize(uWind.xy + vec2(1e-4, 0.0));
   vec2 xa = vec2(dot(tXZ, wdir), dot(tXZ, vec2(-wdir.y, wdir.x)));
@@ -246,9 +269,12 @@ if (tNear > 0.0) {
   float edge = 1.0 - abs(flip_gnoise(xa * vec2(14.0, 40.0) + 9.0)); // 葉の縁が光る細い筋
   edge = edge * edge * edge;
   float grain = flip_vnoise(tXZ * 30.0 + 1.0);
-  grass *= 1.0 + (0.8 * blades - 0.4 + 0.5 * edge) * dNear0 + (0.4 * grain - 0.2) * dNear1;
+  grass *= 1.0 + ((0.8 * blades - 0.4 + 0.5 * edge) * dNear0 + (0.4 * grain - 0.2) * dNear1) * gDet;
   // 土が透ける斑（房の間・踏み跡）
-  vec3 soil = vec3(0.075, 0.055, 0.035) * (0.8 + 0.4 * grain);
+  // 林床の細部: 針葉・小枝・落ち枝の粒（草の株・葉の模様の代わり。上の dome / grain を使い回す）
+  if (fFloor > 0.01) grass *= 1.0 + ((0.70 * dome - 0.34) * dNear2 + (0.55 * grain - 0.27) * dNear0) * fFloor;
+  // 房の間の土（踏み跡）。林床では腐植の色（草地の土より暗い）
+  vec3 soil = mix(vec3(0.075, 0.055, 0.035), vec3(0.036, 0.028, 0.018), fFloor) * (0.8 + 0.4 * grain);
   float bare = smoothstep(0.58, 0.8, flip_vnoise(tXZ * 0.9 + 2.0)) * (1.0 - 0.7 * dome);
   grass = mix(grass, soil, 0.5 * bare * dNear1);
   // 砂: 粒と小石（水際ほど多い）
@@ -423,12 +449,13 @@ if (uFlipRadius > 0.001) {
   fc = fc * aer.a + aer.rgb * 0.3;
   gl_FragColor.rgb = mix(gl_FragColor.rgb, fc, fm);
 }
-if (uTerrainDebug > 0.5 && uTerrainDebug < 5.5) {
+if ((uTerrainDebug > 0.5 && uTerrainDebug < 5.5) || (uTerrainDebug > 6.5 && uTerrainDebug < 7.5)) {
   vec3 dbg = vec3(tSunVis);
   if (uTerrainDebug > 1.5) dbg = vec3(tAO);
   if (uTerrainDebug > 2.5) dbg = wN * 0.5 + 0.5;
   if (uTerrainDebug > 3.5) dbg = vec3(tCav);
   if (uTerrainDebug > 4.5) dbg = texture2D(uTerrainHorizonA, tUv).rgb;
+  if (uTerrainDebug > 6.5 && uTerrainDebug < 7.5) dbg = vec3(texture2D(uVegMap, tUv).g, dirtM, screeM);
   gl_FragColor.rgb = dbg * 0.5;
 }
 `;
