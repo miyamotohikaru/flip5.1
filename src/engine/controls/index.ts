@@ -77,6 +77,10 @@ export class Controls {
   onStep?: (surface: Surface) => void;
   /** ポインタロックが外れた（Esc）。world が "exit" を emit する */
   onExit?: () => void;
+  /** マウス固定（PointerLock）を使う設定か。既定は false＝ドラッグで見回す */
+  pointerLockMode = false;
+  /** マウス固定の入切が変わった（UI がボタンの状態を合わせる） */
+  onPointerLockChange?: (on: boolean) => void;
   /** ゲームパッド A */
   onFlip?: () => void;
   /** ゲームパッド Y */
@@ -87,7 +91,8 @@ export class Controls {
   readonly stick: StickState;
   /** 見回しのタッチ（UI が印を出したければ） */
   readonly lookTouch: LookTouchState;
-  private km: KeyboardMouse;
+  /** キーボードとマウス（UI がドラッグの通知を受け取るため公開） */
+  km: KeyboardMouse;
   private touch: TouchInput;
   private pad = new GamepadInput();
   private gyro = new Gyro();
@@ -108,16 +113,16 @@ export class Controls {
     this.km = new KeyboardMouse(canvas);
     this.km.onLockChange = (locked, programmatic) => {
       this.locked = locked;
-      if (!locked && !programmatic && this.enabled && !this.env.isMobile) {
-        // Esc などでロックが外れた → 入口へ
-        this.enabled = false;
-        this.releaseAll();
-        this.onExit?.();
+      if (!locked && !programmatic) {
+        // Esc でマウスが解放された。世界からは出ず、ドラッグで見回す方式に戻すだけ。
+        // （ここで enabled を落とすと、カーソルも HUD も触れないまま閉じ込められる）
+        this.pointerLockMode = false;
+        this.onPointerLockChange?.(false);
       }
     };
     this.km.onClick = () => {
-      // ロックが外れたまま画面を触ったら、また入る
-      if (!this.env.isMobile && !this.locked) this.enter();
+      // 「マウス固定」を選んでいる人が Esc の後に画面を押したら、掴み直す
+      if (!this.env.isMobile && this.pointerLockMode && !this.locked) this.km.requestLock();
     };
     this.touch = new TouchInput(canvas, () => this.enabled);
     this.stick = this.touch.stick;
@@ -178,10 +183,22 @@ export class Controls {
     this.apply();
   }
 
-  /** 入場。パソコンは PointerLock を要求（ユーザー操作の中で呼ぶこと） */
+  /**
+   * 入場。既定ではマウスを固定しない（ドラッグで見回す）。
+   * カーソルが消えると HUD のボタンもブラウザのタブも触れなくなるため、固定は任意にした。
+   */
   enter() {
     this.enabled = true;
-    if (!this.env.isMobile) this.km.requestLock();
+    if (!this.env.isMobile && this.pointerLockMode) this.km.requestLock();
+  }
+
+  /** マウス固定（PointerLock）の切り替え。ユーザー操作の中で呼ぶこと。 */
+  setPointerLock(on: boolean) {
+    if (this.env.isMobile) return;
+    this.pointerLockMode = on;
+    if (on) this.km.requestLock();
+    else this.km.releaseLock();
+    this.onPointerLockChange?.(on);
   }
 
   exit() {
