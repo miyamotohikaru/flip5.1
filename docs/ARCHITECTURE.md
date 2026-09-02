@@ -50,8 +50,9 @@ node tools/perf.mjs --seconds 20 --flip --url "/?t=12&w=rain"   # 秒数／途�
 統合後の負荷確認はこれで行い、high の rAF 間隔 95% が 16.7ms、mid が 33ms を超えないことを目安にする。
 
 worktree で作業するときは `npx next dev --turbopack --port 30XX` で自分専用のポートを使い、
-`FLIP_URL` でそのポートを撮る。`node_modules` は本体から symlink する
-（`ln -s /Users/miyamotohikaru/13dev_flip5.1/node_modules node_modules`）。
+`FLIP_URL` でそのポートを撮る。`node_modules` は本体から**複製**する
+（`cp -Rc /Users/miyamotohikaru/13dev_flip5.1/node_modules node_modules`。APFS のクローンなので数秒・容量ほぼゼロ）。
+**symlink は Turbopack が「ルートの外を指す」と拒否する**ので使わない。
 
 URL パラメータ（`src/engine/core/params.ts`）:
 `?auto=1` 入口を飛ばす ／ `?nohud=1` ／ `?freeze=1` 時間停止 ／ `?t=17.5` 時刻 ／
