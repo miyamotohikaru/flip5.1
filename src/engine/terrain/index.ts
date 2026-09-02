@@ -238,6 +238,7 @@ export class Terrain {
       const c = sh.camera as THREE.OrthographicCamera;
       const texel = (c.right - c.left) / sh.mapSize.x;
       sh.normalBias = (0.02 + texel * 1.6) * low;
+      sh.bias = -0.0003 * low;
       sh.radius = 2;
     }
   }

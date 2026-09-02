@@ -80,7 +80,7 @@ float tn_line(float v, float w){
   float d = max(fwidth(v), 1e-5);
   float f = abs(fract(v) - 0.5);
   float l = smoothstep(0.5 - w - d, 0.5 - w + d, f); // 整数値の近く（f ≈ 0.5）だけ 1 = 細い線
-  return l * (1.0 - smoothstep(0.25, 0.6, d));
+  return l * (1.0 - smoothstep(0.08, 0.3, d));
 }
 // 細胞ノイズ: x = 最近傍距離 F1, y = F2, z = セル id（小石・岩の割れ目）
 vec3 tn_cell(vec2 p){
@@ -126,7 +126,7 @@ float tPatch = flip_fbm(tXZ * 0.075 + 3.0, 2); // 13 m の斑（枯れ草・土�
 float detailOn = step(0.01, uDetail) * (1.0 - uReflect);
 float dNear0 = (1.0 - smoothstep(2.0, 6.0 + 6.0 * uDetail, tDist)) * detailOn;   // 2〜8cm: 葉の筋・粒
 float dNear1 = (1.0 - smoothstep(3.0, 7.0 + 8.0 * uDetail, tDist)) * detailOn;   // 10〜30cm: 株・小石
-float dNear2 = (1.0 - smoothstep(6.0, 14.0 + 14.0 * uDetail, tDist)) * detailOn;   // 45cm: こぶ
+float dNear2 = (1.0 - smoothstep(4.0, 9.0 + 7.0 * uDetail, tDist)) * detailOn;     // 45cm: こぶ
 float tNear = dNear2;
 float tMid = (1.0 - smoothstep(120.0, 400.0 + 500.0 * uDetail, tDist)) * (1.0 - uReflect);
 if (uTerrainDebug > 8.5 && uTerrainDebug < 9.5) { dNear0 = 0.0; dNear1 = 0.0; dNear2 = 0.0; tNear = 0.0; tMid = 0.0; } // 計測用
@@ -148,7 +148,9 @@ float forestBand = smoothstep(8.0, 25.0, tH) * (1.0 - smoothstep(330.0 + 60.0 * 
 float forest = forestBand * forestDens;
 
 // ---- 色（線形）----
-vec3 grass = mix(vec3(0.050, 0.115, 0.025), vec3(0.235, 0.20, 0.075), smoothstep(-0.25, 0.45, tPatch + 0.3 * tMeso));
+// 枯れ草の斑: 13m の斑は数百 m のゾーン（tMacro）の中でだけ強く出す（中景が迷彩に見えないように）
+float dryZone = smoothstep(-0.2, 0.5, tMacro);
+vec3 grass = mix(vec3(0.050, 0.115, 0.025), vec3(0.19, 0.165, 0.065), smoothstep(-0.25, 0.45, tPatch + 0.3 * tMeso) * (0.25 + 0.5 * dryZone));
 grass *= 1.0 + 0.22 * tMacro;
 grass = mix(grass, vec3(0.19, 0.165, 0.06), smoothstep(250.0, 420.0, tH)); // 高山草地は黄ばむ
 // 林帯（10〜400m、緩斜面）: 木の下の暗い床。遠景では樹冠のざらつき
@@ -195,8 +197,9 @@ if (tNear > 0.0) {
   if (snowM > 0.001) snow += 0.03 * tn_gnoised(tXZ * 1.2 + 5.0).x * dNear2;
   // 細部の法線（草・土・砂）: 0.45m / 0.13m / 0.08m のこぶ。大きさごとに別の距離で消す
   vec3 d1 = tn_gnoised(tXZ * 2.2), d2 = tn_gnoised(tXZ * 7.5 + 3.0), d3 = tn_gnoised(tXZ * 13.0 + 9.0);
-  vec2 g = d1.yz * (2.2 * 0.035) * dNear2 + d2.yz * (7.5 * 0.02) * dNear1 + d3.yz * (13.0 * 0.01) * dNear0;
-  g *= (1.0 - rockM) * (1.0 - 0.6 * snowM) * (1.0 - 0.5 * sandM);
+  vec2 g = d1.yz * (2.2 * 0.03) * dNear2 + d2.yz * (7.5 * 0.02) * dNear1 + d3.yz * (13.0 * 0.01) * dNear0;
+  // 太陽が低いと小さなこぶの陰影が画素より細かい斑点になるので弱める
+  g *= (1.0 - rockM) * (1.0 - 0.6 * snowM) * (1.0 - 0.5 * sandM) * (0.45 + 0.55 * smoothstep(0.05, 0.45, uSunDir.y));
   wN = normalize(gN - vec3(g.x, 0.0, g.y) * gN.y);
 }
 
@@ -286,17 +289,20 @@ if (uFlipRadius > 0.001) {
   float pm = parts.r, pb = parts.g, pf = parts.b;
   // 紙: 青黒。斜面の向きでごく薄く陰影をつけて形が読めるように
   vec3 fc = FLIP_BG * (0.7 + 0.5 * gN.y + 0.6 * max(dot(gN, uSunDir), 0.0) * tSunVis);
-  float far = 1.0 - 0.6 * smoothstep(400.0, 2500.0, tDist); // 遠くほど線を薄く（密になって面が白くならないように）
-  float c5 = tn_line(tH / 5.0, 0.035);
+  // 細かい族ほど手前だけ（遠くで密になって面が白くならないように）。25m の等高線だけ遠くまで残す
+  float far = 1.0 - 0.6 * smoothstep(300.0, 2200.0, tDist);
+  float midR = 1.0 - smoothstep(600.0, 1500.0, tDist);
+  float nearR = 1.0 - smoothstep(200.0, 700.0, tDist);
+  float c5 = tn_line(tH / 5.0, 0.035) * nearR;
   float c25 = tn_line(tH / 25.0, 0.06);
-  float lm = tn_line(pm / 20.0, 0.07) * smoothstep(0.5, 3.0, pm);
-  float lb = tn_line(pb / 8.0, 0.045);
-  float lf = tn_line(pf / 0.5, 0.03);
-  fc += FLIP_LINE * (0.5 * c25 + 0.2 * c5) * far;
-  fc += vec3(0.75, 0.95, 1.0) * 0.5 * lm * far;
-  fc += FLIP_LINE * 0.25 * lb * far;
+  float lm = tn_line(pm / 20.0, 0.07) * smoothstep(0.5, 3.0, pm) * midR;
+  float lb = tn_line(pb / 8.0, 0.045) * nearR;
+  float lf = tn_line(pf / 0.5, 0.03) * (1.0 - smoothstep(40.0, 120.0, tDist));
+  fc += FLIP_LINE * (0.45 * c25 + 0.2 * c5) * far;
+  fc += vec3(0.75, 0.95, 1.0) * 0.45 * lm;
+  fc += FLIP_LINE * 0.25 * lb;
   fc += FLIP_LINE * 0.13 * lf;
-  fc += FLIP_LINE * 0.08 * flip_grid(tXZ, 10.0) * (1.0 - smoothstep(200.0, 600.0, tDist));
+  fc += FLIP_LINE * 0.08 * flip_grid(tXZ, 10.0) * (1.0 - smoothstep(200.0, 500.0, tDist));
   fc += FLIP_ACCENT * flip_edgeGlow(tP) * 1.5;
   // 紙には空気遠近の透過率だけを効かせ、散乱光は 3 割（白く霞ませない）
   vec4 aer = flip_aerial(tP);
