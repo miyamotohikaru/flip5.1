@@ -1,5 +1,5 @@
 // 地形の補助テクスチャを GPU で1回焼く（起動時、最初の描画の直前）。
-//   aux（RGBA8, ハイトマップと同じ解像度）: rg = 法線 xz, b = 空の見え方（AO）, a = 谷筋の陰（cavity）
+//   aux（RGBA16F, ハイトマップと同じ解像度）: rg = 法線 xz（3×3 Sobel。生の値）, b = 空の見え方（AO）, a = 谷筋の陰（cavity）
 //   horizonA / horizonB（RGBA8, 1024²）: 8方位の地平の仰角 / (π/2)。太陽・月がその地点から見えるか
 // 読む側は core/glsl/height.glsl.ts の flip_terrainNormalBaked / flip_terrainAO / flip_terrainSunVis。
 import * as THREE from "three";
@@ -41,7 +41,13 @@ void main(){
   float h0 = flip_height(xz);
   float hl = flip_height(xz - vec2(e, 0.0)), hr = flip_height(xz + vec2(e, 0.0));
   float hd = flip_height(xz - vec2(0.0, e)), hu = flip_height(xz + vec2(0.0, e));
-  vec3 n = normalize(vec3(hl - hr, 2.0 * e, hd - hu));
+  // 法線は 3×3 Sobel（斜めの 4 点も足す）。2点差分より支持が広く、ハイトマップの
+  // 双一次セルの折れ目を拾わない。角の 4 点だけ足せばよい（上下左右は上で取ってある）
+  float hll = flip_height(xz + vec2(-e, -e)), hrl = flip_height(xz + vec2(e, -e));
+  float hlu = flip_height(xz + vec2(-e, e)), hru = flip_height(xz + vec2(e, e));
+  float gx = (hrl + 2.0 * hr + hru) - (hll + 2.0 * hl + hlu);
+  float gz = (hlu + 2.0 * hu + hru) - (hll + 2.0 * hd + hrl);
+  vec3 n = normalize(vec3(-gx, 8.0 * e, -gz));
   // 谷筋の陰: 3つのスケールのラプラシアン。0.5 = 平ら、小さいほど窪み
   float e2 = e * 3.0, e3 = e * 9.0;
   float lap1 = h0 - 0.25 * (hl + hr + hd + hu);
@@ -66,7 +72,7 @@ void main(){
     occ += ms / sqrt(1.0 + ms * ms);
   }
   float ao = clamp(1.0 - occ * 0.16, 0.0, 1.0);
-  gl_FragColor = vec4(n.xz * 0.5 + 0.5, ao, cav);
+  gl_FragColor = vec4(n.xz, ao, cav); // rg は生の法線 xz（RGBA16F。8bit だと平滑な雪面が階段状の面に割れる）
 }
 `;
 
@@ -97,9 +103,9 @@ void main(){
 }
 `;
 
-function makeTarget(res: number): THREE.WebGLRenderTarget {
+function makeTarget(res: number, type: THREE.TextureDataType = THREE.UnsignedByteType): THREE.WebGLRenderTarget {
   const rt = new THREE.WebGLRenderTarget(res, res, {
-    type: THREE.UnsignedByteType,
+    type,
     format: THREE.RGBAFormat,
     depthBuffer: false,
     stencilBuffer: false,
@@ -148,7 +154,8 @@ export function bakeTerrainAux(renderer: THREE.WebGLRenderer, env: Env, auxRes: 
   mesh.frustumCulled = false;
   scene.add(mesh);
 
-  const aux = makeTarget(auxRes);
+  // aux は RGBA16F。法線 xz を 8bit で持つと、なだらかな雪面で同じ値の平原ができて「折り紙」に見える
+  const aux = makeTarget(auxRes, THREE.HalfFloatType);
   const horizonA = makeTarget(horizonRes);
   const horizonB = makeTarget(horizonRes);
   const field = makeTarget(1024);

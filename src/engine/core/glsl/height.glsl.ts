@@ -1,7 +1,7 @@
 // 地形ハイトマップの参照。`#include <flip_height>`。
 // 必要な uniforms: uHeightmap, uHeightmapInfo（env.uniforms が持っている）。
 // 追加（地形担当が起動時に焼く。env.uniforms の uTerrainAux / uTerrainHorizonA / uTerrainHorizonB）:
-//   flip_terrainNormalBaked(xz) … 焼いた法線（texel 精度。近景の細部は各モジュールが足す）
+//   flip_terrainNormalBaked(xz) … 焼いた法線（3×3 Sobel、texel 精度。近景の細部は各モジュールが足す）
 //   flip_terrainAO(xz)          … 空の見え方 0..1（谷底で小さい）。間接光に掛ける
 //   flip_terrainCavity(xz)      … 谷筋の陰 0..1（0.5 = 平ら、小さいほど窪み）
 //   flip_terrainSunVis(xz, dir) … その地点から光源 dir（光の来る向き）が山に隠れていないか 0..1
@@ -37,9 +37,9 @@ vec3 flip_terrainNormal(vec2 xz, float eps){
 }
 // 補助テクスチャの uv（uHeightmap と同じ対応）
 vec2 flip_terrainUv(vec2 xz){ return xz * uHeightmapInfo.y + 0.5; }
-// 焼いた法線（RGBA8 の rg）。ハードウェアのバイリニアで滑らか
+// 焼いた法線（RGBA16F の rg に生の xz）。ハードウェアのバイリニアで滑らか
 vec3 flip_terrainNormalBaked(vec2 xz){
-  vec2 n = texture2D(uTerrainAux, flip_terrainUv(xz)).rg * 2.0 - 1.0;
+  vec2 n = texture2D(uTerrainAux, flip_terrainUv(xz)).rg;
   return normalize(vec3(n.x, sqrt(max(1.0 - dot(n, n), 0.0)), n.y));
 }
 float flip_terrainAO(vec2 xz){ return texture2D(uTerrainAux, flip_terrainUv(xz)).b; }
