@@ -19,9 +19,9 @@ function extinction(h: number, haze: number, groundAlt: number) {
   const dH = haze * Math.exp(-Math.max(h - groundAlt, 0) / 1.0);
   const dO = Math.max(0, 1 - Math.abs(hr - 25) / 15);
   const m = 3.2e-3 * dM + dH * 0.9 + 0.35e-3 * dM + dH * 0.1;
-  tmpE[0] = 5.802e-3 * dR + m + 0.65e-3 * dO;
-  tmpE[1] = 13.558e-3 * dR + m + 1.881e-3 * dO;
-  tmpE[2] = 33.1e-3 * dR + m + 0.085e-3 * dO;
+  tmpE[0] = 5.802e-3 * dR + m + 0.65e-3 * 0.75 * dO;
+  tmpE[1] = 13.558e-3 * dR + m + 1.881e-3 * 0.75 * dO;
+  tmpE[2] = 33.1e-3 * dR + m + 0.085e-3 * 0.75 * dO;
   return tmpE;
 }
 

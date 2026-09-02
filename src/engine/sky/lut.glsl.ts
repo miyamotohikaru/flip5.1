@@ -93,6 +93,7 @@ void main(){
 const SCATTER_COMMON = /* glsl */ `
 uniform sampler2D uMsLut;
 uniform float uCamR;
+uniform float uMarchSteps;
 uniform vec3 uSunDirK;
 uniform vec3 uMoonDirK;
 uniform vec3 uSunE;
@@ -156,7 +157,7 @@ void main(){
   float tG = flip_raySphere(o, d, FLIP_RGROUND);
   float tMax = (tG > 0.0) ? tG : tTop;
   vec3 L, T;
-  flip_scatterMarch(o, d, tMax, 40, L, T);
+  flip_scatterMarch(o, d, tMax, int(uMarchSteps), L, T);
   if (tG > 0.0){
     // 惑星の地面（地形の外側の遠景）: 薄い緑灰
     vec3 n = normalize(o + d * tG);
@@ -192,7 +193,7 @@ void main(){
   float tMax = min(dist, tTop > 0.0 ? tTop : dist);
   vec3 L, T;
   if (tMax <= 0.0) { L = vec3(0.0); T = vec3(1.0); }
-  else flip_scatterMarch(o, d, tMax, 12, L, T);
+  else flip_scatterMarch(o, d, tMax, int(uMarchSteps), L, T);
   gl_FragColor = vec4(L, dot(T, vec3(0.3333)));
 }
 `;

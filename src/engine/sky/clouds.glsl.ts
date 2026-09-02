@@ -149,14 +149,14 @@ uniform vec3 uAmbBottom;
 varying vec2 vUv;
 
 float cl_lightMarch(vec3 p, vec3 L, float base, float top){
-  float od = 0.0, t = 0.0, dt = 36.0;
-  for (int i = 0; i < 5; i++){
+  float od = 0.0, t = 0.0, dt = 40.0;
+  for (int i = 0; i < 4; i++){
     t += dt;
     vec3 q = p + L * t;
     float hf = (q.y - base) / (top - base);
     if (hf < 0.0 || hf > 1.0) break;
     od += cl_density(q, hf, cl_weather(q.xz), false) * dt;
-    dt *= 1.7;
+    dt *= 1.9;
   }
   return od;
 }
@@ -190,6 +190,7 @@ void main(){
     float T = 1.0; vec3 L = vec3(0.0);
     float cosT = dot(d, uLightDir);
     float firstHit = -1.0;
+    int empty = 0;
     for (int i = 0; i < 128; i++){
       if (float(i) >= uSteps) break;
       vec3 p = uCamPos + d * t;
@@ -197,9 +198,16 @@ void main(){
       float alt = (length(pk) - FLIP_RGROUND) * 1000.0;
       float hf = (alt - base) / (top - base);
       if (hf > 1.0) break;
+      float stepMul = 1.0;
       if (hf >= 0.0){
         vec4 w = cl_weather(p.xz);
-        float dens = cl_density(p, hf, w, t < 14000.0);
+        float dens = cl_density(p, hf, w, t < 10000.0);
+        // 何もないところが続いたら大股で（雲に当たったら元の歩幅に戻る）
+        if (dens <= 0.0) { empty++; if (empty > 3) stepMul = 2.0; }
+        else {
+          if (empty > 3) { t -= dt; p = uCamPos + d * t; dens = cl_density(p, hf, w, t < 10000.0); }
+          empty = 0;
+        }
         if (dens > 0.0){
           if (firstHit < 0.0) firstHit = t;
           float odL = cl_lightMarch(p, uLightDir, base, top) * sigma;
@@ -224,7 +232,7 @@ void main(){
           if (T < 0.004) break;
         }
       }
-      t += dt;
+      t += dt * stepMul;
     }
     // 地平線ぎわは歩幅が粗く細い筋になるので消す（そこは空気遠近で霞む）
     float alpha = (1.0 - T) * smoothstep(-0.02, 0.03, d.y);

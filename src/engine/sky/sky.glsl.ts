@@ -110,10 +110,10 @@ vec4 sky_cheapClouds(vec3 d){
 
 // 地表の霧: 無限遠まで
 float sky_fogOdInfinity(vec3 cam, vec3 d){
-  float H = uSkyFog.y;
   float y0 = max(cam.y, -50.0);
-  float path = min(H / max(d.y, 1e-4), 30000.0);
-  return uSkyFog.x * exp(-y0 / H) * path;
+  float p1 = min(uSkyFog.y / max(d.y, 1e-4), 30000.0);
+  float p2 = min(uSkyFog2.y / max(d.y, 1e-4), 30000.0);
+  return uSkyFog.x * exp(-y0 / uSkyFog.y) * p1 + uSkyFog2.x * exp(-y0 / uSkyFog2.y) * p2;
 }
 
 void main(){

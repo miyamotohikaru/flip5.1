@@ -116,7 +116,6 @@ export class Sky {
   private ambTop = new THREE.Color();
   private ambBottom = new THREE.Color();
   private skyEff = new THREE.Color();
-  private meanEff = new THREE.Color();
   private e1 = new THREE.Vector3();
   private e2 = new THREE.Vector3();
   private e3 = new THREE.Vector3();
@@ -180,8 +179,9 @@ export class Sky {
     });
     this.transMat = lutMat(TRANS_FRAG);
     this.msMat = lutMat(MS_FRAG);
-    this.skyViewMat = lutMat(SKYVIEW_FRAG, { ...scatterU(), uNightGlow: { value: new THREE.Vector3(2.2e-4, 2.6e-4, 3.6e-4) } });
-    this.aerialMat = lutMat(AERIAL_FRAG, { ...scatterU(), uSlice: { value: 0 }, uMaxDist: { value: AERIAL_MAX } });
+    const hiTier = q.tier === "high" || q.tier === "ultra";
+    this.skyViewMat = lutMat(SKYVIEW_FRAG, { ...scatterU(), uMarchSteps: { value: hiTier ? 40 : 24 }, uNightGlow: { value: new THREE.Vector3(2.2e-4, 2.6e-4, 3.6e-4) } });
+    this.aerialMat = lutMat(AERIAL_FRAG, { ...scatterU(), uMarchSteps: { value: hiTier ? 12 : 8 }, uSlice: { value: 0 }, uMaxDist: { value: AERIAL_MAX } });
     this.probeMat = lutMat(PROBE_FRAG, { uSunDirK: { value: new THREE.Vector3(0, 1, 0) } });
     this.shapeMat = lutMat(NOISE_SHAPE_FRAG, { uZ: { value: 0 } });
     this.detailMat = lutMat(NOISE_DETAIL_FRAG, { uZ: { value: 0 } });
@@ -280,9 +280,11 @@ export class Sky {
     const fogK = clamp((w.fog - 0.15) / 0.85, 0, 1);
     const hazeKm = 0.008 + 0.10 * Math.pow(fogK, 1.3);
     eu.uSkyParams.value.set(SHADOW_EXTENT, AERIAL_MAX, hazeKm, GROUND_ALT_KM);
-    const mist = 4.5e-3 * smoothstep(0.55, 1.0, w.fog) + 2.5e-4 * w.rain;
+    const mistK = smoothstep(0.5, 1.0, w.fog);
     const t = env.time;
-    eu.uSkyFog.value.set(mist, 14 + 10 * w.storm, w.windDir.x * w.wind * 0.6 * t, w.windDir.y * w.wind * 0.6 * t);
+    // 第1層: 広いミスト（H=22m）。第2層: 湖面に張り付く濃い層（H=6m）。雨は薄い第1層だけ
+    eu.uSkyFog.value.set(3.0e-3 * mistK + 3e-4 * w.rain, 22 + 12 * w.storm, w.windDir.x * w.wind * 0.6 * t, w.windDir.y * w.wind * 0.6 * t);
+    eu.uSkyFog2.value.set(1.3e-2 * mistK, 6, 0, 0);
 
     // ---- 太陽（地上での放射照度 = E0 × 透過率） ----
     const camY = env.cameraPos.y;
@@ -348,11 +350,11 @@ export class Sky {
     const sunClear = this.tmpC2.copy(this.sunT).multiplyScalar(ATMO.sunE0 * Math.max(env.sunDir.y, 0));
     const overcast = this.tmpC.copy(sunClear).add(p.skyIrr).multiplyScalar(cloudT).multiply(this.tmpC2.setRGB(0.92, 0.94, 1.0));
     const skyEff = this.skyEff.copy(p.skyIrr).lerp(overcast, coverG);
-    const meanEff = this.meanEff.copy(p.mean).lerp(this.tmpC.copy(overcast).multiplyScalar(0.5 / Math.PI), coverG);
-    p.groundIrr.setRGB(0.28, 0.27, 0.22).multiply(this.tmpC.copy(sunGround).add(skyEff).add(moonGround));
+        p.groundIrr.setRGB(0.28, 0.27, 0.22).multiply(this.tmpC.copy(sunGround).add(skyEff).add(moonGround));
     env.skyAmbient.copy(skyEff).multiplyScalar(0.5);
     env.groundAmbient.copy(p.groundIrr).multiplyScalar(0.5);
-    eu.uSkyFogLight.value.copy(meanEff);
+    // 霧に当たる光: 上半球の平均放射輝度（照度/π）が主。地面からの照り返しを少し
+    eu.uSkyFogLight.value.copy(skyEff).multiplyScalar(0.85 / Math.PI).add(this.tmpC.copy(p.groundIrr).multiplyScalar(0.15 / Math.PI));
     const stormDark = 1 - 0.65 * w.storm;
     const ambTop = this.ambTop.copy(p.skyIrr).multiplyScalar((1.05 / Math.PI) * stormDark);
     (this.cloudU.uAmbTop.value as THREE.Vector3).set(ambTop.r, ambTop.g, ambTop.b);

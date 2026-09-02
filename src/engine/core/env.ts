@@ -118,6 +118,8 @@ export class Env {
     uSkyParams: { value: new THREE.Vector4(8192, 32000, 0.03, 0.5) },
     /** 地表の霧（ミスト）: x = 湖面での密度(/m), y = 高さスケール(m), zw = むらの流れ(m) */
     uSkyFog: { value: new THREE.Vector4(0, 14, 0, 0) },
+    /** 地表の霧の第2層（湖面に張り付く薄く濃い層）: x = 密度(/m), y = 高さスケール(m), zw = むらの流れ(m) */
+    uSkyFog2: { value: new THREE.Vector4(0, 6, 0, 0) },
     /** 霧に当たる光（空からの平均放射輝度） */
     uSkyFogLight: { value: new THREE.Color(0.3, 0.4, 0.55) },
   };

@@ -44,7 +44,7 @@ void flip_atmoMedium(float h, out vec3 sR, out vec3 sM, out vec3 sE){
   float mS = 3.2e-3 * dM + dH * 0.9;
   float mA = 0.35e-3 * dM + dH * 0.1;
   sM = vec3(mS);
-  sE = sR + vec3(mS + mA) + vec3(0.65, 1.881, 0.085) * 1e-3 * dO;
+  sE = sR + vec3(mS + mA) + vec3(0.65, 1.881, 0.085) * 0.75e-3 * dO;
 }
 float flip_phaseR(float c){ return 0.0596831 * (1.0 + c * c); }
 // Cornette-Shanks
@@ -124,6 +124,7 @@ uniform sampler2D uSkyViewLut;
 uniform highp sampler3D uAerialLut;
 uniform sampler2D uCloudShadowMap;
 uniform vec4 uSkyFog;
+uniform vec4 uSkyFog2;
 uniform vec3 uSkyFogLight;
 
 // このチャンク専用の小さな値ノイズ（flip_noise に依存しない）
@@ -149,9 +150,8 @@ vec3 flip_skyColor(vec3 dir){
   return texture2D(uSkyViewLut, uv).rgb;
 }
 
-// 地表の霧（湖面からの高さで指数的に薄くなる層）の光学的厚さ。a → b
-float flip_fogOpticalDepth(vec3 a, vec3 b){
-  float H = uSkyFog.y;
+// 指数層（密度 rho·exp(-y/H)）の a → b の光学的厚さ
+float flip_fogLayerOd(vec3 a, vec3 b, float rho, float H){
   float dist = distance(a, b);
   float dy = b.y - a.y;
   float ya = max(a.y, -50.0), yb = max(b.y, -50.0);
@@ -159,13 +159,17 @@ float flip_fogOpticalDepth(vec3 a, vec3 b){
   float t;
   if (abs(dy) < 0.01) t = ea * dist;
   else t = (ea - exp(-yb / H)) * H / dy * dist;
-  return uSkyFog.x * max(t, 0.0);
+  return rho * max(t, 0.0);
+}
+// 地表の霧（2 層: 広いミスト ＋ 湖面に張り付く薄く濃い層）の光学的厚さ。a → b
+float flip_fogOpticalDepth(vec3 a, vec3 b){
+  return flip_fogLayerOd(a, b, uSkyFog.x, uSkyFog.y) + flip_fogLayerOd(a, b, uSkyFog2.x, uSkyFog2.y);
 }
 // 霧のむら（中点の xz で決める。空の側は同じ式で 2000m 先を使う）
 float flip_fogPatch(vec2 xz){
   vec2 p = (xz + uSkyFog.zw) * 0.0032;
   float n = flip_atmoNoise(p) * 0.6 + flip_atmoNoise(p * 2.7 + 11.0) * 0.4;
-  return 0.45 + 1.1 * n;
+  return 0.4 + 1.2 * n;
 }
 // 霧に入ってくる光（等方の空の光＋太陽・月の前方散乱）
 vec3 flip_fogLight(vec3 dir){
