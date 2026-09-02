@@ -18,6 +18,7 @@ const evalOut = String(flag("eval", ""));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const browser = await puppeteer.launch({ executablePath: CHROME, args: ["--headless=new", "--hide-scrollbars", "--use-angle=metal", "--ignore-gpu-blocklist"], defaultViewport: { width: W, height: H, deviceScaleFactor: DPR, isMobile: mobile, hasTouch: mobile } });
 const page = await browser.newPage();
+if (mobile) await page.setUserAgent("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1");
 const problems = [];
 page.on("console", (m) => { if (/error/i.test(m.type())) problems.push(m.text().slice(0, 300)); });
 page.on("pageerror", (e) => problems.push(String(e).slice(0, 300)));

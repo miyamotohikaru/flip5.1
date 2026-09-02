@@ -148,7 +148,7 @@ button { font-family: inherit; }
 .formula-body { margin: 0; font: inherit; overflow: hidden; color: var(--formula); font-variant-numeric: tabular-nums; }
 /* 1 行ずつ。折り返さず、狭ければ「…」で切る（携帯で右にはみ出していた） */
 .formula-line { white-space: pre; overflow: hidden; text-overflow: ellipsis; }
-@media screen and (max-width: 1240px) { .formula { font-size: 11px; } }
+@media screen and (max-width: 1240px) { .formula { font-size: 11px; background: rgba(3, 5, 12, 0.62); } }
 
 /* ── 世界の中の数式のふだ（裏返し中）────────── */
 .wlabels { position: fixed; inset: 0; z-index: 11; pointer-events: none; }
@@ -215,7 +215,7 @@ button { font-family: inherit; }
   .btn { height: 44px; padding: 0 16px; font-size: 14px; }
   .btn.icon { width: 44px; }
   .btn.flip { min-width: 0; }
-  .hud-tr .row { gap: 8px; }
+  .hud-tr .row { gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
   .seg { padding: 3px; }
   .landing { padding: calc(16px + var(--safe-t)) calc(20px + var(--safe-r)) calc(16px + var(--safe-b)) calc(20px + var(--safe-l)); }
   .landing-head { font-size: 12px; }
@@ -241,8 +241,24 @@ button { font-family: inherit; }
   .time.dragging input[type="range"]::-webkit-slider-thumb { width: 22px; height: 22px; margin-top: -9px; }
   .hud-hint { bottom: calc(72px + var(--safe-b)); font-size: 13px; }
   .hud-paused { display: none; }
-  .formula { left: 12px; right: 12px; top: calc(50% + 22px); bottom: auto; width: auto; max-height: calc(50% - 22px - 118px - var(--safe-b)); transform: translateY(8px); font-size: 13px; line-height: 1.5; padding: 10px 12px 11px; }
+  /* 携帯: 風景を隠さないよう左上に寄せ、幅を絞り、地をうんと薄くする（背景がすける）。
+     ぼかし（backdrop-filter）は動く canvas の上では毎フレーム GPU を食うので携帯では使わない。
+     読みやすさは影で担保する。タップでたためる（.foldable） */
+  .formula {
+    left: 12px; right: auto; top: calc(172px + var(--safe-t)); bottom: auto;
+    width: min(76vw, 300px); max-height: 36vh;
+    transform: translateY(8px); font-size: 12px; line-height: 1.45; padding: 8px 10px 9px;
+    background: rgba(3, 5, 12, 0.32);
+    backdrop-filter: none; -webkit-backdrop-filter: none;
+    box-shadow: 0 6px 22px rgba(0, 0, 0, 0.28);
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.92), 0 0 10px rgba(0, 0, 0, 0.7);
+    pointer-events: auto;
+  }
   .formula.show { transform: none; }
+  .formula-fold { margin-left: 6px; font-family: var(--font-mono); font-size: 12px; color: var(--formula-dim); }
+  .formula.collapsed { max-height: none; padding-bottom: 8px; }
+  .formula.collapsed .formula-here,
+  .formula.collapsed .formula-body { display: none; }
   .formula::before { display: none; }
   .formula-src { display: none; }
   .formula-head { margin-bottom: 2px; }
@@ -261,8 +277,8 @@ button { font-family: inherit; }
   .landing-title { font-size: 36px; margin-bottom: 12px; }
   .landing-lead { line-height: 1.85; margin-bottom: 18px; }
   .loading-log { height: calc(2 * 1.75em); }
-  /* 背の低い端末では照準に少しかぶせてでも式を見せる */
-  .formula { top: calc(50% - 44px); max-height: calc(50% + 44px - 112px - var(--safe-b)); }
+  /* 背の低い端末では、たたんだ見出しが照準にかからないよう少し上げる */
+  .formula { top: calc(150px + var(--safe-t)); max-height: 32vh; }
 }
 
 /* ── 動きを減らす設定 ─────────────────────────── */

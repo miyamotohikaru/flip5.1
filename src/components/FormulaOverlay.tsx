@@ -18,6 +18,8 @@ type Props = {
 export default function FormulaOverlay({ world, active, compact }: Props) {
   const [panel, setPanel] = useState<FormulaPanel | null>(null);
   const [show, setShow] = useState(false);
+  // 携帯では背景（風景）を隠しすぎないよう、たたんで見出しだけにできる
+  const [collapsed, setCollapsed] = useState(false);
   const lastKey = useRef("");
   const showRef = useRef(false);
 
@@ -61,12 +63,32 @@ export default function FormulaOverlay({ world, active, compact }: Props) {
   }, [world, active, compact]);
 
   if (!panel) return null;
+  const foldable = compact; // 携帯だけ、たためる
   return (
-    <div className={`formula ${show ? "show" : ""} ${panel.kind}`} aria-hidden={!show} aria-live="polite">
+    <div
+      className={`formula ${show ? "show" : ""} ${panel.kind} ${foldable ? "foldable" : ""} ${foldable && collapsed ? "collapsed" : ""}`}
+      aria-hidden={!show}
+      aria-live="polite"
+      onClick={foldable ? () => setCollapsed((v) => !v) : undefined}
+      role={foldable ? "button" : undefined}
+      tabIndex={foldable ? 0 : undefined}
+      aria-label={foldable ? (collapsed ? "数式をひらく" : "数式をたたむ") : undefined}
+      onKeyDown={
+        foldable
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                setCollapsed((v) => !v);
+              }
+            }
+          : undefined
+      }
+    >
       <div className="formula-head">
         <span className="formula-title">{panel.title}</span>
         <span className="formula-latin">{panel.latin}</span>
         <span className="formula-src">{panel.source}</span>
+        {foldable && <span className="formula-fold" aria-hidden>{collapsed ? "＋" : "－"}</span>}
       </div>
       <div className="formula-here">{panel.here}</div>
       {/* 1 行ずつの div。狭い画面で万一はみ出しても折り返さず「…」で切る（携帯で右に流れていた。批評R1-9） */}
