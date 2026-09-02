@@ -128,7 +128,7 @@ export class Weather {
     const amount = mist * (0.72 + 0.28 * (1 - dayness)) * (1 - 0.7 * w.rain);
     // 薄い層（スケール高さ 2〜3m）。塊のところは fog.ts 側で最大 2.75 倍まで厚くなる
     const scaleH = 1.8 + 1.2 * mist;
-    wx.uWxFog.value.set(amount, scaleH, WORLD.lakeLevel + scaleH * 12, w.rain * 0.00045 * (1 + 1.0 * w.storm));
+    wx.uWxFog.value.set(amount, scaleH, WORLD.lakeLevel + scaleH * 16, w.rain * 0.00045 * (1 + 1.0 * w.storm));
     // むらの流れ（風で進む。決定的: 時刻だけの関数）
     const drift = env.time * w.wind * 0.35;
     wx.uWxFogDrift.value.set(-w.windDir.x * drift, env.time * 0.15, -w.windDir.y * drift);

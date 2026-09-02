@@ -36,7 +36,7 @@ float mistDensity(vec3 p){
   // 低周波の「霧の塊」で層の厚さ（スケール高さ）が場所ごとに変わる → たなびく帯と切れ目
   vec2 q2 = (p.xz + uWxFogDrift.xz * 0.6) * 0.012;
   float bank = flip_vnoise(q2) * 0.7 + flip_vnoise(q2 * 2.3 + 5.0) * 0.3;
-  float Hs = uWxFog.y * (0.35 + 2.4 * bank * bank);
+  float Hs = uWxFog.y * (0.3 + 3.6 * bank * bank);
   float layer = exp(-max(hL, 0.0) / Hs) * smoothstep(60.0, 0.0, th - uWxLake);
   float creep = exp(-max(hag, 0.0) / (uWxFog.y * 0.8)) * smoothstep(200.0, 15.0, th - uWxLake) * 0.22;
   float base = max(layer, creep) * step(-1.0, hag);
@@ -143,31 +143,21 @@ void main(){
     T *= Tv;
     odTotal += odv;
   }
-  // 裏返し: 密度の等値線（板の上に）
+  // 裏返し: 光学的厚さ（解析・むら無し）の等値線を紙の上に細い線で。霧そのものは薄い青の洗い
   vec3 pm = ro + rd * min(tEnd, 200.0);
   float fmask = flip_mask(pm);
   if (fmask > 0.0) {
-    float iso = flip_line(odTotal * 5.0, 0.06);
-    vec3 mc = (FLIP_LINE * iso * 0.9 + FLIP_BG * 0.6) * (1.0 - T);
+    float odA = wx_fogOD(ro, ro + rd * min(tEnd, 2000.0)) * 2.0 + wx_veilOD(min(tEnd, 6000.0));
+    float iso = flip_line(odA * 6.0, 0.05) * 0.7 + flip_line(odA * 1.5, 0.08);
+    float wash = (1.0 - T) * 0.3;
+    vec3 mc = FLIP_LINE * min(iso, 1.0) * 0.55 * (1.0 - T) + FLIP_BG * 0.8 * wash;
     L = mix(L, mc, fmask);
+    T = mix(T, 1.0 - max(wash, min(iso, 1.0) * 0.55 * (1.0 - T)), fmask);
   }
   if (uWxDebug > 0.5) L = vec3(1.0, 0.0, 0.0) * (1.0 - T);
   if (uWxDebug > 1.5) {
-    // ノイズの可視化: 視線が湖面／地面に当たる点の 2D・3D ノイズ
-    vec3 pe = ro + rd * min(tEnd, 400.0);
-    vec2 wd2 = normalize(uWxFogDrift.xz + vec2(1e-3, 0.0));
-    vec2 pw2 = vec2(dot(pe.xz, wd2), dot(pe.xz, vec2(-wd2.y, wd2.x)));
-    float a = flip_vnoise(vec2(pw2.x * 0.03, pw2.y * 0.11));
-    float b = wx_noise3(pe * vec3(0.045, 0.3, 0.045));
-    L = vec3(a, b, mistDensity(vec3(pe.x, uWxLake + 0.3, pe.z)) * 0.25);
-    T = 0.0;
-  }
-  if (uWxDebug > 2.5) {
-    // 水面到達点での密度（R）・レイの長さ（G: 20m 周期）・行程数（B）
-    float tw = (ro.y > uWxLake && rd.y < 0.0) ? (uWxLake - ro.y) / rd.y : 1e9;
-    float t1d = min(tw, tEnd);
-    vec3 pw3 = ro + rd * (t1d - 0.5);
-    L = vec3(mistDensity(pw3) * 0.3, fract(t1d / 20.0), odTotal * 0.5);
+    // 生の線形深度: R = 20m 周期, G = 200m 周期, B = 1m 未満なら 1
+    L = vec3(fract(lin / 20.0), fract(lin / 200.0), step(lin, 1.0));
     T = 0.0;
   }
   gl_FragColor = vec4(L, T);
