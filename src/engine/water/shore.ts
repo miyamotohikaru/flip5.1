@@ -52,11 +52,13 @@ void main(){
   float wind = uWind.z;
   float ph = sd * (6.2831853 / 9.0) - 1.9 * uTime + flip_gnoise(world.xz * 0.04 + 2.0) * 1.6;
   float swash = 0.5 + 0.5 * cos(ph);
-  float energy = 0.05 + 0.3 * smoothstep(1.0, 10.0, wind);
+  float energy = 0.04 + 0.22 * smoothstep(1.0, 10.0, wind);
   float n = flip_gnoise(world.xz * 0.35) * 0.5 + flip_gnoise(world.xz * 1.7 + 9.0) * 0.25;
-  float line = 0.06 + energy * (0.45 + 0.55 * swash) + n * 0.06;
-  float wet = 1.0 - smoothstep(line, line + 0.18 + energy * 0.5, h);
+  float line = 0.03 + energy * (0.3 + 0.7 * swash) + n * 0.04;
+  float wet = 1.0 - smoothstep(line, line + 0.12 + energy * 0.6, h);
   wet *= smoothstep(-0.05, 0.02, h);
+  float farFade = 1.0 - smoothstep(120.0, 400.0, lin);
+  wet *= 0.4 + 0.6 * farFade;
   // 濡れの暗さ。雨で全体が濡れているときは差が小さい
   float dark = mix(0.55, 0.82, uWetness);
   float mult = mix(1.0, dark, wet);
@@ -72,7 +74,7 @@ void main(){
   // 引き波の縁の泡の名残
   float rim = smoothstep(line - 0.015, line, h) * (1.0 - smoothstep(line, line + 0.03, h));
   float rimN = flip_vnoise(world.xz * 9.0 + vec2(uTime * 0.3, 0.0));
-  vec3 foam = (uSkyAmbient * 0.9 + uSunColor * max(uSunDir.y, 0.0) * 0.6) / 3.14159 * rim * smoothstep(0.35, 0.7, rimN) * 0.8 * (0.4 + 0.6 * swash);
+  vec3 foam = (uSkyAmbient * 0.9 + uSunColor * max(uSunDir.y, 0.0) * 0.6) / 3.14159 * rim * smoothstep(0.45, 0.75, rimN) * 0.4 * (0.3 + 0.7 * swash) * smoothstep(1.0, 6.0, wind) * (1.0 - smoothstep(40.0, 120.0, lin));
   // 裏返しでは消す（地形が線になるので）
   float fm = flip_mask(world);
   mult = mix(mult, 1.0, fm);

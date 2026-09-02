@@ -55,6 +55,8 @@ export class Water {
   timer: GpuTimer | null = null;
   /** 濡れた砂のデカールを使うか（地形側が岸の濡れを持ったら false に） */
   shoreDecalEnabled = true;
+  /** 調査用: ?dbg=nowater で水を全部止める（負荷の差分を測る） */
+  private disabled = typeof location !== "undefined" && /[?&]dbg=[^&]*nowater/.test(location.search);
   private reflCamera = new THREE.PerspectiveCamera();
   private textureMatrix = new THREE.Matrix4();
   private lastTime = -1;
@@ -103,7 +105,8 @@ export class Water {
       uWaterA: { value: new THREE.Vector4(1, 5, 0, 1) },
       uWaterB: { value: new THREE.Vector4(0, 0.7, heavy ? 3 : 2, 1) },
       uExtinction: { value: new THREE.Vector3(0.42, 0.13, 0.085) },
-      uScatterColor: { value: new THREE.Vector3(0.02, 0.1, 0.11) },
+      uDebug: { value: typeof location !== "undefined" ? Number((/[?&]wdbg=(\d+)/.exec(location.search) ?? [0, 0])[1]) : 0 },
+      uScatterColor: { value: new THREE.Vector3(0.022, 0.115, 0.14) },
     };
     bindEnvUniforms(uniforms, env);
     this.material = new THREE.ShaderMaterial({
@@ -174,6 +177,7 @@ export class Water {
    * 水中: 同じカメラ位置から広角で「水面より上」だけを描き、スネルの窓の屈折先に使う。
    */
   renderReflection(pipeline: Pipeline, camera: THREE.PerspectiveCamera) {
+    if (this.disabled) return;
     const t = this.tmp;
     const renderer = pipeline.renderer;
     const rc = this.reflCamera;
@@ -237,6 +241,11 @@ export class Water {
       this.timer = new GpuTimer(pipeline.renderer, wantTimer);
     }
     this.timer.poll();
+    if (this.disabled) {
+      this.mesh.visible = false;
+      this.shore.mesh.visible = false;
+      return;
+    }
 
     // 水中かどうか（他モジュールが読む）
     const cam = env.cameraPos;
@@ -270,7 +279,7 @@ export class Water {
     // 嵐は濁って暗い
     const storm = w.storm;
     (u.uExtinction.value as THREE.Vector3).set(0.42, 0.13, 0.085).multiplyScalar(1 + 0.8 * storm + 0.3 * w.rain);
-    (u.uScatterColor.value as THREE.Vector3).set(0.02, 0.1, 0.11).lerp(new THREE.Vector3(0.028, 0.05, 0.05), storm * 0.7);
+    (u.uScatterColor.value as THREE.Vector3).set(0.022, 0.115, 0.14).lerp(new THREE.Vector3(0.03, 0.055, 0.055), storm * 0.7);
 
     camera.getWorldDirection(this.camFwd);
     (u.uCamFwd.value as THREE.Vector3).copy(this.camFwd);
