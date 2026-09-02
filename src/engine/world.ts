@@ -143,8 +143,15 @@ export class World {
 
     const start = startPosition();
     const p = this.params;
-    if (p.pos) this.controls.setPose(p.pos[0], p.pos[1], p.pos[2], p.look?.[0] ?? 0, p.look?.[1] ?? 0);
-    else this.controls.setPose(start.x, start.z, undefined, start.yaw, 3);
+    // ?pos だけ・?look だけでも効くようにする（撮影で片方だけ指定することが多い）
+    if (p.pos || p.look) {
+      const x = p.pos ? p.pos[0] : start.x;
+      const z = p.pos ? p.pos[1] : start.z;
+      const y = p.pos ? p.pos[2] : undefined;
+      this.controls.setPose(x, z, y, p.look?.[0] ?? start.yaw, p.look?.[1] ?? 3);
+    } else {
+      this.controls.setPose(start.x, start.z, undefined, start.yaw, 3);
+    }
     if (p.flipRadius !== undefined) env.flipRadius = p.flipRadius;
     env.flipCenter.copy(this.controls.position);
 
