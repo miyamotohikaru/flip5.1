@@ -39,6 +39,7 @@ node tools/shoot.mjs <名前> --all                 # 全定点
 node tools/shoot.mjs <名前> --url "/?t=6&w=mist&pos=0,400&look=20,5"
 node tools/shoot.mjs <名前> --shot golden --mobile  # iPhone 相当
 FLIP_URL=http://localhost:3052 node tools/shoot.mjs ...   # 別ポートのサーバーを撮る
+node tools/shotjs.mjs <名前> --url "/?shot=golden" --js "window.__flip.water.mesh.visible=false"   # 任意の JS を流してから撮る（切り分け用）
 node tools/perf.mjs                               # 負荷計測: high で 10 秒歩き回り、frameMs／実効 fps／calls／tris／メモリの表
 node tools/perf.mjs --q mid                       # 段階を指定（mid = iPhone の負荷値の代用）
 node tools/perf.mjs --mobile                      # iPhone 相当（390×844 @3、UA も iPhone）
