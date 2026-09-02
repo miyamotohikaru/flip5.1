@@ -164,35 +164,65 @@ export default function About({ open, onClose, sourceLines, isMobile }: Props) {
           </a>
         </p>
 
-        <p className="about-label">はじめてではありません</p>
+        <p className="about-label">先にやった人たち</p>
         <p>
-          数式だけで風景を描く試みには、
+          「数式だけで風景を描く」には、
           <MobileBreak />
-          20年以上の歴史があります。
+          20 年以上の歴史があります。
           <br />
-          <b>Elevated</b>（2009年）は、たった4キロバイトの
+          <b>Elevated</b>（2009年・Rgba &amp; TBC）は、
           <MobileBreak />
-          プログラムで山と湖と霧を描き、音楽まで鳴らしました。
+          4,096 バイトの実行ファイルの中で、
           <br />
-          <b>Shadertoy</b> には、素材を使わない風景が
+          山も湖も霧も音楽も
           <MobileBreak />
-          何千と投稿されています。
+          その場で計算して描きました。
           <br />
-          この作品も、その系譜の上にあります。
+          <b>Shadertoy</b>（2013年〜）には、
+          <MobileBreak />
+          素材ゼロの風景が何千と並んでいます。
+          <br />
+          <b>.kkrieger</b>（2004年）は、
+          <MobileBreak />
+          96 キロバイトに収めた FPS でした。
+          <br />
+          この作品は、その系譜の上にあります。
         </p>
-        <p>
-          違うのは、<b>歩けること</b>。
-          <MobileBreak />
-          そして、<b>裏返して自分で確かめられること</b>。
-          <br />
-          既存の作品は「見るもの」で、素材ゼロかどうかは
-          <MobileBreak />
-          プログラムを読める人しか確かめられませんでした。
-          <br />
-          音まで数式で、風景と連動します。
-          <MobileBreak />
-          雷が遠ければ、雷鳴もその分だけ遅れて届きます。
-        </p>
+        <p>そのうえで、ここが違います。</p>
+        <ul className="about-what">
+          <li>
+            <b>歩ける。</b>
+            先行作の多くは「見るもの」でした。
+            <br />
+            ここは、自分の足で入っていけます。
+          </li>
+          <li>
+            <b>裏返せる。</b>
+            素材ゼロは普通、
+            <MobileBreak />
+            ソースを読める人しか確かめられません。
+            <br />
+            ここでは、ボタン 1 つで誰でも確かめられます。
+          </li>
+          <li>
+            <b>音も合成。</b>
+            雷は、落ちた場所までの距離のぶん
+            <MobileBreak />
+            遅れて鳴ります。
+            <br />
+            風景と音が、同じ数式でつながっています。
+          </li>
+          <li>
+            <b>作り方そのものが作品。</b>
+            9 分野を別々の AI が並行して作り、
+            <br />
+            別の審査 AI が大作ゲームと見比べて、
+            <MobileBreak />
+            採点し直させています。
+            <br />
+            その記録は <a href="/log" target="_blank" rel="noopener noreferrer">/log</a> にあります。
+          </li>
+        </ul>
 
         <p className="about-label">たとえるなら</p>
         <p>
