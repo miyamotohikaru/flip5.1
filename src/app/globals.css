@@ -34,6 +34,7 @@ button { font-family: inherit; }
 @media screen and (max-width: 620px) { .mobile-break { display: inline; } }
 
 .world { position: fixed; inset: 0; }
+.world canvas.grabbing { cursor: grabbing; }
 .world canvas { width: 100%; height: 100%; touch-action: none; }
 
 /* ── 共通の部品 ───────────────────────────── */
@@ -258,3 +259,7 @@ button { font-family: inherit; }
 .log-foot { margin-top: 48px; color: var(--ink-dim); font-size: 13px; }
 .log-foot a { color: var(--ink); }
 html:has(.log), body:has(.log) { overflow: auto; }
+
+/* 見回し: ドラッグ中は掴んだ形に（マウス固定中はカーソルが消える） */
+.world canvas { cursor: grab; }
+.world canvas.grabbing { cursor: grabbing; }

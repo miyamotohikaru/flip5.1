@@ -67,7 +67,7 @@ export default function Landing({ phase, progress, heightmapRes, isMobile, onEnt
           {isMobile ? (
             <>左で歩く ／ 右で見回す ／ 画面のボタンで裏返す</>
           ) : (
-            <>WASD 歩く ／ マウス 見回す ／ F 裏返す ／ P 写真</>
+            <>WASD 歩く ／ ドラッグで見回す ／ F 裏返す ／ P 写真</>
           )}
         </span>
         <span className="landing-credit">制作: こす.くま × Claude Fable 5.1</span>
