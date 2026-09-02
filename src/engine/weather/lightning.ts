@@ -92,7 +92,7 @@ function buildBolt(seed: number, top: THREE.Vector3, bottom: THREE.Vector3): Seg
       }
     }
   };
-  channel(top, bottom, 6, 1, 0, 1, 0.17, 0);
+  channel(top, bottom, 7, 1, 0, 1, 0.24, 0);
   return segs.slice(0, MAX_SEG);
 }
 
@@ -115,7 +115,7 @@ void main(){
   vec3 vdir = normalize(p - uCamPos);
   vec3 side = normalize(cross(seg, vdir));
   float dist = distance(p, uCamPos);
-  float halfW = dist * uWxPixel * 7.0 * mix(0.55, 1.0, aWidth);
+  float halfW = dist * uWxPixel * 16.0 * mix(0.5, 1.0, aWidth);
   p += side * aCorner.x * halfW;
   // 上から順に伸びる（先端 = リーダー）
   float grow = 1.0 - smoothstep(uBoltAge / 0.05, uBoltAge / 0.05 + 0.04, aOrder);
@@ -139,10 +139,11 @@ varying vec3 vWorld;
 varying float vW;
 void main(){
   float x = abs(vX);
-  float core = exp(-x * x * 45.0);
-  float glow = exp(-x * 3.2) * 0.16;
-  float i = (core * 22.0 + glow * 5.0) * mix(0.5, 1.0, vW) * uBoltFlash * vVis;
-  vec3 col = vec3(0.82, 0.88, 1.0) * i;
+  // 細い白熱の芯（〜1.5px）＋ 青白い広い光（〜16px）。枝は細く暗く
+  float core = exp(-x * x * 120.0);
+  float glow = exp(-x * 4.5) * 0.022 + exp(-x * 1.6) * 0.006;
+  float i = (core * 20.0 + glow * 6.0) * mix(0.35, 1.0, vW) * uBoltFlash * vVis;
+  vec3 col = mix(vec3(0.7, 0.8, 1.0), vec3(1.0, 0.98, 1.0), core) * i;
   vec4 aer = flip_aerial(vWorld);
   col *= aer.a;
   col *= exp(-wx_veilOD(distance(uCamPos, vWorld)) * 0.6);

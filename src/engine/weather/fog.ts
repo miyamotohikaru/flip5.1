@@ -25,7 +25,7 @@ uniform float uWxSteps;
 varying vec2 vUv;
 varying vec3 vRay;
 
-float wx_noise3(vec3 p){ return 0.62 * flip_vnoise(p) + 0.38 * flip_vnoise(p * 2.9 + 7.3); }
+float wx_noise3(vec3 p){ return 0.7 * flip_vnoise(p) + 0.3 * flip_vnoise(p.xz * 3.1 + 7.3 + p.y * 0.7); }
 
 // 霧の密度（0..1 相当）。湖面すれすれの薄い層（場所ごとに厚さの違う「塊」）＋谷底＋斜面を這う霧＋細かいむら
 float mistDensity(vec3 p){
@@ -43,7 +43,13 @@ float mistDensity(vec3 p){
   vec3 q = (p + uWxFogDrift) * vec3(0.045, 0.3, 0.045);
   float n = wx_noise3(q);
   n = smoothstep(0.42, 0.78, n);
-  return base * (0.08 + 0.92 * n);
+  // 湖面すれすれ（〜70cm）の濃い「たなびき」: 風向きに引き伸ばした 2D ノイズで筋状に
+  vec2 wd = normalize(uWxFogDrift.xz + vec2(1e-3, 0.0));
+  vec2 pw = vec2(dot(p.xz, wd), dot(p.xz, vec2(-wd.y, wd.x)));
+  vec2 pn = vec2(pw.x * 0.03, pw.y * 0.11) + uWxFogDrift.xz * 0.05;
+  float n2 = 0.7 * flip_vnoise(pn) + 0.3 * flip_vnoise(pn * 3.7 + 11.0);
+  float wisp = exp(-max(hL, 0.0) / 1.0) * smoothstep(0.42, 0.62, n2) * smoothstep(3.0, -0.5, th - uWxLake) * step(-1.0, hag);
+  return base * (0.08 + 0.92 * n) + wisp * 4.0;
 }
 
 // 1歩ぶんの散乱光。skyH = その視線の地平近くの空の色（霧は空の色で光る: 曇りなら灰、夜明けなら薄紅）
@@ -70,7 +76,7 @@ void main(){
   float T = 1.0;
   vec3 L = vec3(0.0);
   float odTotal = 0.0;
-  vec3 skyH = flip_skyColor(normalize(vec3(rd.x, max(rd.y, 0.04), rd.z)));
+  vec3 skyH = flip_skyColor(normalize(vec3(rd.x, max(rd.y, 0.015), rd.z)));
   if (mist > 1e-4) {
     float top = uWxFog.z, bottom = uWxLake - 4.0;
     float t0 = 0.0, t1 = tEnd;
@@ -79,12 +85,16 @@ void main(){
       float tb = (bottom - ro.y) / rd.y;
       t0 = max(t0, min(ta, tb));
       t1 = min(t1, max(ta, tb));
+      // 水面より下には霧が無い（深度は水底なので、水面で打ち切る）
+      if (ro.y > uWxLake && rd.y < 0.0) t1 = min(t1, (uWxLake - ro.y) / rd.y);
     } else if (ro.y > top || ro.y < bottom) {
       t1 = t0;
     }
+    if (ro.y < uWxLake) t1 = t0;
     if (t1 > t0) {
       float marchEnd = min(t1, t0 + 380.0);
-      float N = uWxSteps;
+      // 霧が薄いときは段数を減らす（雨・嵐の中の薄い地表霧に全段は要らない）
+      float N = ceil(uWxSteps * clamp(mist * 2.5 + 0.2, 0.35, 1.0));
       float dither = flip_hash12(gl_FragCoord.xy + 0.37);
       float k = mist * WX_FOG_K;
       float span = marchEnd - t0;
@@ -121,7 +131,11 @@ void main(){
     float sheet = 0.75 + 0.5 * flip_vnoise(vec3(ps.x * 0.035, ps.y * 0.01 - uTime * 2.2, ps.z * 0.035));
     float odv = wx_veilOD(dV) * sheet;
     float Tv = exp(-odv);
-    vec3 vcol = mix(uSkyAmbient * 0.7, skyH, 0.5) + uGroundAmbient * 0.15 + vec3(0.8, 0.86, 1.0) * uLightning * 0.35;
+    // 稲光は稲妻の方向の雨のカーテンだけを強く照らす（一様に足すと空全体が白飛びする）
+    vec3 toBolt = normalize(uLightningPos + vec3(0.0, uWxCloudBase * 0.5, 0.0) - ro);
+    float flashDir = 0.03 + 0.2 * pow(max(dot(rd, toBolt), 0.0), 6.0);
+    // 遠くの物は「その仰角の空の色」へ溶ける（空より明るくならない）
+    vec3 vcol = skyH * 0.92 + uSkyAmbient * 0.06 + uGroundAmbient * 0.04 + vec3(0.8, 0.86, 1.0) * uLightning * flashDir;
     L += vcol * (1.0 - Tv) * T;
     T *= Tv;
     odTotal += odv;
@@ -185,7 +199,7 @@ void main(){
   float b;
   if (lin > 8500.0) {
     vec3 toL = normalize(lp - uCamPos);
-    b = 0.2 + 2.5 * pow(max(dot(rd, toL), 0.0), 8.0);
+    b = 0.15 + 1.6 * pow(max(dot(rd, toL), 0.0), 8.0);
   } else {
     vec3 N = flip_terrainNormal(p.xz, 2.5);
     vec3 toL = lp - p;

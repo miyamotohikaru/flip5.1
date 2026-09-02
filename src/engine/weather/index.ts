@@ -51,7 +51,7 @@ export type WeatherCounts = {
 export const WEATHER_COUNTS: Record<QualityTier, WeatherCounts> = {
   low: { rain: 1600, splash: 120, fogSteps: 6, dust: 350, fireflies: 140, leaves: 16 },
   mid: { rain: 3200, splash: 240, fogSteps: 9, dust: 800, fireflies: 280, leaves: 32 },
-  high: { rain: 7000, splash: 520, fogSteps: 14, dust: 1600, fireflies: 520, leaves: 64 },
+  high: { rain: 5500, splash: 520, fogSteps: 16, dust: 1600, fireflies: 520, leaves: 64 },
   ultra: { rain: 10000, splash: 800, fogSteps: 20, dust: 2600, fireflies: 800, leaves: 100 },
 };
 

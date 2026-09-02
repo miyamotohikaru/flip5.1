@@ -58,7 +58,7 @@ void main(){
   float speed = length(vel);
   vec3 a = vel / speed;
   // 動体ぶれの長さ（露光 ~30ms）。遠い層は細長く
-  float len = speed * (0.04 + 0.014 * layer) * (0.75 + 0.5 * aSeed.y);
+  float len = min(speed * (0.04 + 0.014 * layer), 0.45 + 0.25 * layer) * (0.75 + 0.5 * aSeed.y);
   vec3 side = normalize(cross(a, vdir));
   float px = dist * uWxPixel;
   float dropW = 0.0025 + 0.0015 * layer;
@@ -66,7 +66,7 @@ void main(){
   float defocus = 1.0 + 3.0 * (1.0 - smoothstep(0.3, 1.6, dist));
   float w = max(dropW * defocus, px * 1.3);
   vec3 pos = center + a * (position.y - 0.5) * len + side * position.x * w;
-  float alpha = (0.8 - 0.2 * layer) * clamp(dropW / w, 0.45, 1.0) * (0.55 + 0.45 * aSeed.z);
+  float alpha = (0.8 - 0.26 * layer) * clamp(dropW / w, 0.45, 1.0) * (0.55 + 0.45 * aSeed.z);
   alpha *= smoothstep(0.1, 0.4, dist);
   vec3 e = abs(rel) / box;
   float edge = (1.0 - smoothstep(0.32, 0.5, e.x)) * (1.0 - smoothstep(0.32, 0.5, e.y)) * (1.0 - smoothstep(0.32, 0.5, e.z));
@@ -92,6 +92,7 @@ ${WX_COMMON}
 uniform vec3 uSkyAmbient;
 uniform vec3 uGroundAmbient;
 uniform float uLightning;
+uniform vec3 uLightningPos;
 varying vec2 vQ;
 varying float vAlpha;
 varying vec3 vWorld;
@@ -105,11 +106,14 @@ void main(){
   float shape = across * (along * 0.75 + glint);
   vec3 vdir = normalize(vWorld - uCamPos);
   float sunUp = smoothstep(-0.05, 0.05, uSunDir.y);
-  // 雨粒は周りの光を屈折して運ぶ: 半球光＋逆光で明るく
-  vec3 col = uSkyAmbient * 0.85 + uGroundAmbient * 0.3;
+  // 雨粒は周りの光を屈折して運ぶ: 地平近くの空の色（天頂より明るい）＋半球光＋逆光で明るく
+  vec3 skyH = flip_skyColor(normalize(vec3(vdir.x, max(vdir.y, 0.06), vdir.z)));
+  vec3 col = mix(uSkyAmbient * 0.85, skyH * 1.6, 0.6) + uGroundAmbient * 0.3 + vec3(0.012);
   col += uSunColor * wx_phaseHG(dot(vdir, uSunDir), 0.75) * 0.35 * sunUp;
   col += uMoonColor * wx_phaseHG(dot(vdir, uMoonDir), 0.7) * 0.6;
-  col += vec3(0.8, 0.85, 1.0) * uLightning * 0.9;
+  // 稲光は近い雨粒ほど強く照らす（雨のカーテン全体が白飛びしないよう控えめに）
+  float dl = distance(vWorld, uLightningPos + vec3(0.0, uWxCloudBase * 0.4, 0.0));
+  col += vec3(0.8, 0.85, 1.0) * uLightning * 0.12 / (1.0 + dl * dl * 2e-6);
   vec4 aer = flip_aerial(vWorld);
   float dist = distance(uCamPos, vWorld);
   float alpha = vAlpha * shape * aer.a * exp(-wx_fogOD(uCamPos, vWorld) - wx_veilOD(dist));
@@ -201,9 +205,9 @@ void main(){
   vec2 e = vec2(q.x / r, (q.y - 0.04) / (r * 0.28));
   float ring = exp(-pow(abs(length(e) - 1.0) * 5.0, 2.0)) * step(q.y, 0.04 + r * 0.28);
   float spikes = 0.0;
-  for (int i = 0; i < 5; i++) {
+  for (int i = 0; i < 4; i++) {
     float fi = float(i);
-    float ang = (fi + 0.5) / 5.0 * 3.1416;
+    float ang = (fi + 0.5 + 0.6 * (flip_hash11(fi * 7.7 + floor(vWorld.z * 11.0)) - 0.5)) / 4.0 * 3.1416;
     float hh = h * (0.55 + 0.45 * flip_hash11(fi * 3.1 + floor(vWorld.x * 13.0) + floor(vWorld.z * 7.0)));
     vec2 base = vec2(cos(ang) * r, 0.04 - sin(ang) * r * 0.28 * 0.5);
     vec2 tip = vec2(cos(ang) * r * (1.0 + 0.35 * t), base.y + hh);

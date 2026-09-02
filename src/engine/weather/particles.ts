@@ -138,7 +138,7 @@ void main(){
   float th = flip_height(xz);
   float hL = th - uWxLake;
   // 岸辺（浅瀬の上〜岸の草地）と森の際に多い
-  float shore = smoothstep(-2.5, -0.8, hL) * (1.0 - smoothstep(3.5, 8.0, hL));
+  float shore = smoothstep(-2.5, -0.8, hL) * (1.0 - smoothstep(4.0, 9.0, hL));
   float forestEdge = smoothstep(7.0, 12.0, hL) * (1.0 - smoothstep(20.0, 35.0, hL));
   float dens = max(shore, forestEdge * 0.6);
   float on = step(aSeed.w, dens);
@@ -155,7 +155,7 @@ void main(){
   night *= smoothstep(0.02, -0.05, uSunDir.y);
   float dist = distance(center, uCamPos);
   float px = dist * uWxPixel;
-  float size = max(0.09, px * 7.0);
+  float size = max(0.1, px * 8.0);
   float alpha = on * night * blink * (1.0 - smoothstep(24.0, 32.0, dist)) * (1.0 - uRain) * smoothstep(0.3, 1.0, dist);
   vFm = wx_flipMask(center);
   float msize = max(size, px * 26.0);
@@ -189,7 +189,7 @@ void main(){
   float core = exp(-r * r * 60.0);
   float halo = exp(-r * 3.2) * 0.22 * (1.0 - smoothstep(0.7, 1.0, r));
   // 蛍の黄緑（白くしない）: 芯は明るい黄緑、周りは緑の淡い光
-  vec3 col = vec3(0.85, 1.0, 0.32) * core * 0.9 + vec3(0.45, 0.85, 0.2) * halo;
+  vec3 col = vec3(0.85, 1.0, 0.32) * core * 1.3 + vec3(0.45, 0.85, 0.2) * halo * 1.3;
   float soft = wx_soft(gl_FragCoord.xy, gl_FragCoord.z, 0.12);
   vec4 aer = flip_aerial(vWorld);
   col *= vAlpha * soft * aer.a * exp(-wx_fogOD(uCamPos, vWorld));
@@ -329,9 +329,9 @@ export class Particles {
       50,
       "weather.dust",
     );
-    const grid = Math.ceil(Math.sqrt(c.fireflies / 3));
+    const grid = Math.ceil(Math.sqrt(c.fireflies / 4));
     this.fireflies = mk(
-      makeQuadInstances(grid * grid * 3, 401),
+      makeQuadInstances(grid * grid * 4, 401),
       new THREE.ShaderMaterial({
         uniforms: w.bind({ uFfGrid: { value: grid } }),
         vertexShader: FIREFLY_VERT,
