@@ -136,7 +136,9 @@ float rockM = smoothstep(0.28 + 0.06 * tMacro, 0.44 + 0.06 * tMacro, tSlope + 0.
 float alpine = smoothstep(300.0 + 100.0 * tMacro, 480.0 + 100.0 * tMacro, tH);
 rockM = max(rockM, alpine * smoothstep(0.10, 0.24, tSlope + 0.06 * tMacro));
 float screeM = smoothstep(0.17, 0.27, tSlope + 0.04 * tPatch) * (1.0 - rockM) * smoothstep(120.0, 260.0, tH + 60.0 * tMacro);
-float dirtM = max(smoothstep(0.12, 0.24, tSlope + 0.05 * tMeso), 1.0 - smoothstep(0.22, 0.42, tCav)) * (1.0 - rockM) * (1.0 - screeM);
+float dirtM = max(smoothstep(0.15, 0.28, tSlope + 0.05 * tMeso), 1.0 - smoothstep(0.22, 0.42, tCav)) * (1.0 - rockM) * (1.0 - screeM);
+// 土は斜面いちめんではなく斑で出す（一様に出ると尾根の草地が茶色い毛布になる）
+dirtM *= 0.35 + 0.65 * smoothstep(-0.45, 0.45, tPatch + 0.7 * tMeso);
 vec2 tWind = normalize(uWind.xy + vec2(1e-4, 0.0));
 float lee = dot(gN.xz, tWind); // 風下斜面で正
 // 雪: 45°（tSlope 0.29）を超える面には積もらない＝急な岩壁は黒く出る。
