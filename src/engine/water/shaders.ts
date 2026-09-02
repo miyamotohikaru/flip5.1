@@ -383,7 +383,8 @@ void main(){
       float ew = max(0.05, 3.0 * fwidth(vertEdge));
       float edgeA = smoothstep(0.0, 0.12, vDepthA);
       float edgeD = smoothstep(0.0, ew, vertEdge) * smoothstep(0.0, 0.15, along);
-      float edge = edgeA * mix(1.0, edgeD, smoothstep(1.5, 3.0, vDepthA));   // 浅い所は地形メッシュの LOD 誤差で点が出るので解析のみ
+      // 深度バッファの交線は近く（地形 LOD が細かい範囲）だけ。遠くは地形メッシュの粗さで岸に点が並ぶ
+      float edge = edgeA * mix(1.0, edgeD, smoothstep(1.5, 3.0, vDepthA) * (1.0 - smoothstep(40.0, 90.0, dist)));
       col = mix(texture2D(tSceneColor, suv).rgb, col, edge);
     }
   } else {
