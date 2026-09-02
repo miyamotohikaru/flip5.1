@@ -1,7 +1,7 @@
 // 世界の状態。時刻・太陽・天気・「裏返し」の進み具合。
 // 全モジュールはここを読む。全マテリアルは env.uniforms を共有する（同じオブジェクト参照）。
 import * as THREE from "three";
-import { clamp, smoothstep } from "./noise";
+import { clamp, fbm2, smoothstep } from "./noise";
 import { WORLD, type Heightmap } from "./heightfield";
 
 export type WeatherPresetName = "clear" | "cloudy" | "mist" | "rain" | "storm";
@@ -21,9 +21,25 @@ export type Weather = {
   wetness: number;
   /** 嵐 0..1（雷・強風・暗い空） */
   storm: number;
+  /** 突風 0..1（時間ノイズ。風速が強いほど激しい。天気モジュールが定義、Env.update が毎フレーム計算） */
+  gust: number;
 };
 
-export const WEATHER_PRESETS: Record<WeatherPresetName, Omit<Weather, "windDir" | "wetness">> = {
+/** 稲光の状態（天気モジュールが毎フレーム更新。音・空・地形が読む） */
+export type Lightning = {
+  /** 閃光 0..1（0→1→減衰。複数ストロークでちらつく） */
+  flash: number;
+  /** 直近の落雷の時刻（env.time 秒）。まだ無ければ -1e9 */
+  lastStrikeTime: number;
+  /** 落雷地点（world、y は地面）。稲妻の上端は position.y + cloudHeight */
+  position: THREE.Vector3;
+  /** 落雷の通し番号（新しい落雷で +1。音担当はこれの変化で雷鳴を鳴らす） */
+  strikeIndex: number;
+  /** 稲妻の上端（雲底）の高さ（world y） */
+  cloudHeight: number;
+};
+
+export const WEATHER_PRESETS: Record<WeatherPresetName, Omit<Weather, "windDir" | "wetness" | "gust">> = {
   clear: { cloud: 0.18, rain: 0, fog: 0.22, wind: 2.0, storm: 0 },
   cloudy: { cloud: 0.62, rain: 0, fog: 0.35, wind: 3.5, storm: 0 },
   mist: { cloud: 0.4, rain: 0, fog: 1.0, wind: 0.8, storm: 0 },
@@ -48,9 +64,12 @@ export class Env {
     ...WEATHER_PRESETS.clear,
     windDir: new THREE.Vector2(1, 0.25).normalize(),
     wetness: 0,
+    gust: 0,
   };
   /** 天気の目標（プリセット切替はここに入れて、update で滑らかに寄せる） */
-  weatherTarget: Omit<Weather, "windDir" | "wetness"> = { ...WEATHER_PRESETS.clear };
+  weatherTarget: Omit<Weather, "windDir" | "wetness" | "gust"> = { ...WEATHER_PRESETS.clear };
+  /** 稲光（天気モジュールが更新） */
+  lightning: Lightning = { flash: 0, lastStrikeTime: -1e9, position: new THREE.Vector3(), strikeIndex: -1, cloudHeight: 700 };
 
   /** 裏返し 0..1。flipRadius は「数式の波」が広がった半径（m） */
   flip = 0;
@@ -100,6 +119,12 @@ export class Env {
     uFog: { value: 0.22 },
     uCloud: { value: 0.18 },
     uStorm: { value: 0 },
+    /** 突風 0..1（uWind.w 相当。植生・水・雨が揺れの強弱に使う） */
+    uGust: { value: 0 },
+    /** 稲光の閃光 0..1（空・地形・霧が一瞬白くなる） */
+    uLightning: { value: 0 },
+    /** 落雷地点（world、y は地面） */
+    uLightningPos: { value: new THREE.Vector3(0, 0, 0) },
     uExposure: { value: 1 },
     /** 地形ハイトマップ。xyzw = (worldSize, 1/worldSize, res, maxHeight) */
     uHeightmap: { value: null as THREE.Texture | null },
@@ -140,6 +165,14 @@ export class Env {
     const wetTarget = clamp(w.rain * 1.4, 0, 1);
     const wk = wetTarget > w.wetness ? 1 - Math.exp(-dt * 0.5) : 1 - Math.exp(-dt * 0.03);
     w.wetness += (wetTarget - w.wetness) * wk;
+    // 突風: 時間のノイズ 0..1。風速が強いほど激しく、速く（嵐では更に速い）。決定的（time だけの関数）
+    {
+      const t = this.time * (0.22 + 0.25 * w.storm);
+      const n = fbm2(t, 13.7, 3) * 2.4; // おおよそ [-1, 1] を広げる
+      const raw = clamp(0.5 + 0.5 * n, 0, 1);
+      const strength = smoothstep(1.0, 12.0, w.wind);
+      w.gust = raw * strength;
+    }
 
     // 裏返し: 目標へ寄せつつ、半径を広げる／縮める
     const fk = 1 - Math.exp(-dt * 3.5);
@@ -191,6 +224,9 @@ export class Env {
     u.uFog.value = w.fog;
     u.uCloud.value = w.cloud;
     u.uStorm.value = w.storm;
+    u.uGust.value = w.gust;
+    u.uLightning.value = this.lightning.flash;
+    u.uLightningPos.value.copy(this.lightning.position);
     u.uExposure.value = this.exposure;
   }
 }
