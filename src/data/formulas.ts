@@ -177,7 +177,7 @@ const terrain: Formula[] = [
     id: "terrain.h",
     title: "地形の高さ",
     area: "terrain",
-    src: "src/engine/core/height.ts:176 heightAt(x, z)",
+    src: "src/engine/core/height.ts:211 heightAt(x, z)",
     body: E(`h(x,z) = \\t{base}{base}(x,z) + \\t{mtn}{mtn}(x,z) + \\t{fine}{fine}(x,z)`),
     now: E(`h(\\v{x}{0}, \\v{z}{0}) = \\v{base}{1} + \\v{mtn}{1} + \\v{fine}{2} = \\v{h}{2} m`),
     steps: [
@@ -188,11 +188,11 @@ const terrain: Formula[] = [
       },
       {
         note: "尾根ノイズ: 折り返して二乗し、前の層を重みにする",
-        body: E(`R(p) = \\S{i}{}{a_i·r_i^{2}·w_i},   r_i = 1 - |n(2^{i}p)|,   w_i = \\F{clamp}{2r_{i-1}^{2}, 0, 1}`),
+        body: E(`R(p) = \\S{i}{}{a_i·r_i^{2}w_i},   r_i = 1 - |n(2^{i}p)|,   w_i = \\F{clamp}{2r_{i-1}^{2}w_{i-1}, 0, 1}`),
       },
       {
         note: "走向: 座標をゆがめ、東西に引き伸ばす",
-        body: E(`p = ((x + 300·n(0.00052·xz))·0.00048,  (z + 300·n(0.00052·xz))·0.00078)`),
+        body: E(`p = ((x + 300·n(0.00052·xz))·0.00048 + 0.5,   (z + 300·n(0.00052·xz))·0.00078 + 0.9)`),
       },
       {
         note: "侵食: 傾きが立つほど細かい層を弱める",
@@ -212,7 +212,7 @@ const terrain: Formula[] = [
     id: "terrain.shore",
     title: "岸線",
     area: "terrain",
-    src: "src/engine/core/height.ts:142 angShore",
+    src: "src/engine/core/height.ts:171 angShore",
     body: E(`r_s(θ) = 330 + 70·n(1.7·\\c{u}(θ)) + 26·n(4.1·\\c{u}(θ))`),
     now: E(`sd = |xz| - r_s(θ) = \\v{sd}{1} m`),
     steps: [{ note: "岸線からの距離 sd が負の所だけ掘る", body: E(`depth(sd) = 34·(1 - e^{sd/70})·bed(xz)`) }],
@@ -229,7 +229,7 @@ const sky: Formula[] = [
     id: "sky.scatter",
     title: "空の色（大気散乱）",
     area: "sky",
-    src: "src/engine/sky/lut.glsl.ts:108 flip_scatterMarch",
+    src: "src/engine/sky/lut.glsl.ts:112 flip_scatterMarch / atmosphere.glsl.ts:42 媒質",
     body: E(`L(ω) = \\I{0}{D}{T(0,s)·(σ^{R}(s)·p^{R}(θ) + σ^{M}(s)·p^{M}(θ))·E_☉ + T(0,s)·σ_s(s)·Ψ(s)}{s}`),
     now: E(`θ = \\v{theta}{1}°,   p^{M}(θ) = \\v{pM}{4},   T(5km) = \\v{T}{2}`),
     steps: [
@@ -258,7 +258,7 @@ const sky: Formula[] = [
     id: "sky.aerial",
     title: "空気遠近",
     area: "sky",
-    src: "src/engine/sky/atmosphere.glsl.ts:186 flip_aerial",
+    src: "src/engine/sky/atmosphere.glsl.ts:194 flip_aerial",
     body: E(`C' = C·T(0,d) + L_s(0,d)`),
     steps: [
       { note: "地表の霧は指数層。閉じた式で解く", body: E(`τ = ρ·\\f{H}{Δy}(e^{-y_a/H} - e^{-y_b/H})·d`) },
@@ -272,7 +272,7 @@ const water: Formula[] = [
     id: "water.wave",
     title: "湖の波",
     area: "water",
-    src: "src/engine/water/wavesim.ts:41 spectrum / :72 分散関係 / :76 h(k,t)",
+    src: "src/engine/water/wavesim.ts:43 spectrum / :74 分散関係 / :78 h(k,t)",
     body: E(`h(x,t) = \\S{k}{}{\\c{h}(k,t)·e^{i k·x}}`),
     now: E(`U = \\v{U}{1} m/s   h_s = \\v{hs}{3} m   λ_p = \\v{lp}{2} m`),
     steps: [
@@ -293,7 +293,7 @@ const water: Formula[] = [
     id: "water.surface",
     title: "水面の反射",
     area: "water",
-    src: "src/engine/water/shaders.ts:307 フレネル / :185 GGX",
+    src: "src/engine/water/shaders.ts:335 フレネル / :187 GGX / :180 コースティクス",
     body: E(`F(θ) = F_{0} + (1 - F_{0})(1 - N·V)^{5},   F_{0} = 0.02`),
     steps: [
       { note: "ギラつきは GGX。粗さは消えた波の分散", body: E(`D(H) = \\f{α^{2}}{π((N·H)^{2}(α^{2}-1) + 1)^{2}}`) },
@@ -314,7 +314,7 @@ const vegetation: Formula[] = [
     id: "veg.tree",
     title: "針葉樹",
     area: "vegetation",
-    src: "src/engine/vegetation/conifer.ts:50 幹 / :113 垂れ角 / :116 螺旋",
+    src: "src/engine/vegetation/conifer.ts:55 幹 / :117 垂れ角 / :144 螺旋",
     body: E(`r(t) = r_{0}((1-t)^{0.85} + 0.015)(1 + 0.6e^{-30t}),   r_{0} = 0.011H + 0.04`),
     steps: [
       { note: "枝は黄金角 137.5° の螺旋に並ぶ", body: E(`φ_{j,b} = 2.39996·j + \\f{2πb}{n_B} + ε`) },
@@ -331,8 +331,8 @@ const vegetation: Formula[] = [
     id: "veg.grass",
     title: "草",
     area: "vegetation",
-    src: "src/engine/vegetation/grass.ts:47 葉の寸法 / :20 色",
-    body: E(`w_leaf = 0.010 m,   h_tuft = 0.32(0.4 + 1.0ξ) m`),
+    src: "src/engine/vegetation/grass.ts:52 葉の寸法 / :24 色",
+    body: E(`w_leaf = 0.010 m,   h_tuft = 0.34(0.4 + 1.0ξ) m`),
     steps: [
       {
         note: "はじめ: 葉幅 3.4 cm の藁色 →「麦畑」",
@@ -349,7 +349,7 @@ const audio: Formula[] = [
     id: "audio.bird",
     title: "鳥の声",
     area: "audio",
-    src: "src/engine/audio/birds.ts:148 スイープ / :152 ビブラート",
+    src: "src/engine/audio/birds.ts:148 スイープ / :156 ビブラート",
     body: E(`f(t) = f_{0}(f_{1}/f_{0})^{t/T} + D·\\F{sin}{2πrt}`),
     steps: [
       { note: "指数スイープ（耳は比で聞く）", body: E(`f(t) = f_{0}(f_{m}/f_{0})^{2t/T}   (t < T/2)`) },
@@ -390,7 +390,7 @@ const core: Formula[] = [
     id: "core.noise",
     title: "ノイズ",
     area: "core",
-    src: "src/engine/core/noise.ts:34 noise2 / :53 fbm2",
+    src: "src/engine/core/noise.ts:42 noise2 / :61 fbm2",
     body: E(`n(p) = \\F{mix}{\\F{mix}{g_{00}·d_{00}, g_{10}·d_{10}, f(u)}, \\F{mix}{g_{01}·d_{01}, g_{11}·d_{11}, f(u)}, f(v)}`),
     steps: [
       { note: "補間の重み。端で 1 階も 2 階も 0 になる", body: E(`f(t) = 6t^{5} - 15t^{4} + 10t^{3}`) },
