@@ -28,7 +28,7 @@ function pad(s: string, width: number): string {
   return s.length >= width ? s : s + " ".repeat(width - s.length);
 }
 function clock(hour: number): string {
-  const h = Math.floor(hour), m = Math.floor((hour - h) * 60);
+  const h = Math.floor(hour), m = Math.min(59, Math.floor((hour - h) * 60 + 1e-4));
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
@@ -36,7 +36,7 @@ function clock(hour: number): string {
 function terrainPanel(hit: Extract<ProbeHit, { kind: "terrain" }>, compact: boolean): FormulaPanel {
   const t = hit.terms;
   const here = compact
-    ? `x ${num(hit.x, 1)}  z ${num(hit.z, 1)}  h ${num(hit.y, 2)} m ／ ${num(hit.dist, 0)} m 先 ／ 傾き ${num(hit.slopeDeg, 0)}°`
+    ? `x ${num(hit.x, 1)} z ${num(hit.z, 1)} h ${num(hit.y, 1)} m ／ ${num(hit.dist, 0)} m 先 ／ 傾き ${num(hit.slopeDeg, 0)}°`
     : `ここ x = ${num(hit.x, 1)}  z = ${num(hit.z, 1)}  h = ${num(hit.y, 2)} m ／ 距離 ${num(hit.dist, 0)} m ／ 傾き ${num(hit.slopeDeg, 0)}°`;
   const row = (name: string, v: number, def: string) =>
     compact ? `${pad(name, 9)}= ${num(v, 2, 6)}  ${def}` : `  ${pad(name, 10)}= ${num(v, 2, 7)}   ${def}`;
@@ -72,7 +72,7 @@ function terrainPanel(hit: Extract<ProbeHit, { kind: "terrain" }>, compact: bool
 function lakePanel(hit: Extract<ProbeHit, { kind: "lake" }>, compact: boolean): FormulaPanel {
   const w = Math.min(1.5, Math.max(0.15, hit.windSpeed / 8));
   const here = compact
-    ? `x ${num(hit.x, 1)}  z ${num(hit.z, 1)}  水面 y 0 ／ 水深 ${num(hit.depth, 1)} m ／ ${num(hit.dist, 0)} m 先`
+    ? `x ${num(hit.x, 1)} z ${num(hit.z, 1)} 水面 y 0 ／ 水深 ${num(hit.depth, 1)} m ／ ${num(hit.dist, 0)} m 先`
     : `ここ x = ${num(hit.x, 1)}  z = ${num(hit.z, 1)}  水面 y = 0 ／ 水深 ${num(hit.depth, 1)} m ／ 距離 ${num(hit.dist, 0)} m`;
   const wd = `(${num(hit.windDir.x, 2)}, ${num(hit.windDir.y, 2)})`;
   const lines = compact
@@ -122,7 +122,7 @@ function skyPanel(hit: Extract<ProbeHit, { kind: "sky" }>, compact: boolean): Fo
         `sky(ω) = mix(zenith, horizon, (1 ${MINUS} ω_y)^2.6)`,
         `       + dusk·(1 ${MINUS} ω_y)^6·(0.35 + 0.65·(ω·☉)^3) + halo·(ω·☉)^14`,
       ];
-  return { kind: "sky", title: "空", latin: "SKY", source: "core/glsl/atmosphere.glsl.ts · flip_skyColor / flip_aerial", here, lines };
+  return { kind: "sky", title: "空", latin: "SKY", source: "core/glsl/atmosphere.glsl.ts · flip_aerial", here, lines };
 }
 
 export function panelFor(hit: ProbeHit, compact: boolean): FormulaPanel {

@@ -39,7 +39,7 @@ export type HudProps = {
 
 export default function Hud(p: HudProps) {
   const [dragging, setDragging] = useState(false);
-  const hh = Math.floor(p.hour), mm = Math.floor((p.hour - hh) * 60);
+  const hh = Math.floor(p.hour), mm = Math.min(59, Math.floor((p.hour - hh) * 60 + 1e-4));
   const clock = `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
 
   return (
