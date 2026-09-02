@@ -31,14 +31,16 @@ export default function Landing({ phase, progress, heightmapRes, isMobile, onEnt
       <div className="landing-body">
         <h1 className="landing-title">数式の絶景</h1>
         <p className="landing-lead">
-          この風景の中に、画像は1枚もありません。
-          <br />
-          3Dモデルも、音のファイルも、
+          リアルな3Dには、大量の素材がいる。
           <MobileBreak />
-          1つもありません。
+          その常識を、ひっくり返しました。
+          <br />
+          この風景に、画像は1枚もありません。
+          <br />
+          3Dモデルも、音のファイルも0個です。
           <br />
           全部、<strong>数式</strong>です。
-          <br />
+          <MobileBreak />
           裏返すと、確かめられます。
         </p>
 
