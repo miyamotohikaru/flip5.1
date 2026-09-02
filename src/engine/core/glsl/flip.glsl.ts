@@ -30,7 +30,7 @@ float flip_edgeGlow(vec3 worldPos){
 float flip_line(float v, float w){
   float f = abs(fract(v) - 0.5);
   float d = fwidth(v);
-  return 1.0 - smoothstep(0.5 - w - d, 0.5 - w + d, f);
+  return smoothstep(0.5 - w - d, 0.5 - w + d, f);
 }
 // 格子（world xz、間隔 s メートル）
 float flip_grid(vec2 xz, float s){
