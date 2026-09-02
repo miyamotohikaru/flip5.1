@@ -49,10 +49,10 @@ export type WeatherCounts = {
 };
 
 export const WEATHER_COUNTS: Record<QualityTier, WeatherCounts> = {
-  low: { rain: 1600, splash: 120, fogSteps: 6, dust: 350, fireflies: 140, leaves: 16 },
-  mid: { rain: 3200, splash: 240, fogSteps: 9, dust: 800, fireflies: 280, leaves: 32 },
-  high: { rain: 5500, splash: 520, fogSteps: 16, dust: 1600, fireflies: 520, leaves: 64 },
-  ultra: { rain: 10000, splash: 800, fogSteps: 20, dust: 2600, fireflies: 800, leaves: 100 },
+  low: { rain: 1500, splash: 120, fogSteps: 6, dust: 220, fireflies: 90, leaves: 16 },
+  mid: { rain: 3000, splash: 240, fogSteps: 9, dust: 450, fireflies: 150, leaves: 32 },
+  high: { rain: 5000, splash: 400, fogSteps: 16, dust: 900, fireflies: 320, leaves: 44 },
+  ultra: { rain: 8000, splash: 620, fogSteps: 20, dust: 1500, fireflies: 400, leaves: 100 },
 };
 
 /** 稲妻の上端（雲底）の高さの既定（world y）。空担当が env.lightning.cloudHeight を書き換えれば追従する */
@@ -128,7 +128,7 @@ export class Weather {
     const amount = mist * (0.72 + 0.28 * (1 - dayness)) * (1 - 0.7 * w.rain);
     // 薄い層（スケール高さ 2〜3m）。塊のところは fog.ts 側で最大 2.75 倍まで厚くなる
     const scaleH = 1.8 + 1.2 * mist;
-    wx.uWxFog.value.set(amount, scaleH, WORLD.lakeLevel + scaleH * 16, w.rain * 0.00045 * (1 + 1.0 * w.storm));
+    wx.uWxFog.value.set(amount, scaleH, WORLD.lakeLevel + scaleH * 16, w.rain * 0.00030 * (1 + 1.3 * w.storm));
     // むらの流れ（風で進む。決定的: 時刻だけの関数）
     const drift = env.time * w.wind * 0.35;
     wx.uWxFogDrift.value.set(-w.windDir.x * drift, env.time * 0.15, -w.windDir.y * drift);
