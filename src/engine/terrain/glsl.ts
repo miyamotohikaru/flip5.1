@@ -111,7 +111,7 @@ vec2 tUv = flip_terrainUv(tXZ);
 vec4 tAux = texture2D(uTerrainAux, tUv);
 vec4 tF = texture2D(uTerrainField, tUv);
 vec3 gN;
-{ vec2 n2 = tAux.rg * 2.0 - 1.0; gN = normalize(vec3(n2.x, sqrt(max(1.0 - dot(n2, n2), 0.0)), n2.y)); }
+{ vec2 n2 = tAux.rg; gN = normalize(vec3(n2.x, sqrt(max(1.0 - dot(n2, n2), 0.0)), n2.y)); } // rg = 生の法線 xz（bake.ts は RGBA16F に焼く）
 float tAO = tAux.b;
 float tCav = tAux.a;
 float tSlope = 1.0 - gN.y;
@@ -136,14 +136,33 @@ float rockM = smoothstep(0.28 + 0.06 * tMacro, 0.44 + 0.06 * tMacro, tSlope + 0.
 float alpine = smoothstep(300.0 + 100.0 * tMacro, 480.0 + 100.0 * tMacro, tH);
 rockM = max(rockM, alpine * smoothstep(0.10, 0.24, tSlope + 0.06 * tMacro));
 float screeM = smoothstep(0.17, 0.27, tSlope + 0.04 * tPatch) * (1.0 - rockM) * smoothstep(120.0, 260.0, tH + 60.0 * tMacro);
-float dirtM = max(smoothstep(0.17, 0.30, tSlope + 0.05 * tMeso), 1.0 - smoothstep(0.22, 0.42, tCav)) * (1.0 - rockM) * (1.0 - screeM);
-float lee = dot(gN.xz, normalize(uWind.xy + vec2(1e-4, 0.0))); // 風下斜面で正
-float snowLine = 445.0 + 60.0 * tMacro - 35.0 * lee - 25.0 * tPatch;
-float snowM = smoothstep(snowLine, snowLine + 45.0, tH) * (1.0 - smoothstep(0.40, 0.62, tSlope - 0.15 * lee));
-// 岸: 砂は水際だけ。幅は岸線からの距離で 1〜4m（場所で変わる）。高さでも 1.5m までに限る（道路のような帯にしない）
-float beachW = 1.2 + 3.0 * smoothstep(-0.5, 0.5, tPatch + 0.5 * flip_gnoise(tXZ * 0.35 + 5.0));
-float sandM = (1.0 - smoothstep(beachW - 0.6, beachW + 0.6, tShore)) * (1.0 - smoothstep(1.1, 1.55, tAbove)) * (1.0 - smoothstep(0.35, 0.6, tSlope));
-float wetBand = 1.0 - smoothstep(0.0, 0.45, tAbove);
+float dirtM = max(smoothstep(0.12, 0.24, tSlope + 0.05 * tMeso), 1.0 - smoothstep(0.22, 0.42, tCav)) * (1.0 - rockM) * (1.0 - screeM);
+vec2 tWind = normalize(uWind.xy + vec2(1e-4, 0.0));
+float lee = dot(gN.xz, tWind); // 風下斜面で正
+// 雪: 45°（tSlope 0.29）を超える面には積もらない＝急な岩壁は黒く出る。
+// 吹き溜まり: 風下（lee）と窪み（tCav < 0.5）で雪線が下がり、風の当たる尾根（tCav > 0.5）では上がる
+float snowLine = 448.0 + 60.0 * tMacro - 48.0 * lee - 25.0 * tPatch - 70.0 * (tCav - 0.5);
+float snowM = smoothstep(snowLine, snowLine + 40.0, tH) * (1.0 - smoothstep(0.21, 0.33, tSlope - 0.09 * lee));
+// 岸: 砂は水際だけ。幅を -1.2〜4.6m（＝砂の無い岸もある）を 3〜25m のノイズでうねらせ、
+// 縁のぼけ幅と高さの上限も場所で変える（幅も縁も一定だと「プールの縁」に見える）。
+// ノイズは水際の帯でだけ引く（全画素で 3 回引くと重い）
+float bn1 = 0.0, bn2 = 0.0, bn3 = 0.0, sandM = 0.0, wetBand = 0.0;
+if (tShore < 9.0 && tAbove < 3.5) { // 砂は tShore ≤ 6.5m・水面 +2.75m まで。範囲外でノイズを引かない
+  bn1 = flip_gnoise(tXZ * 0.34 + 5.0);   // λ ≈ 3 m
+  bn2 = flip_gnoise(tXZ * 0.075 + 11.0); // λ ≈ 13 m
+  bn3 = flip_gnoise(tXZ * 0.04 + 17.0);  // λ ≈ 25 m
+  float beachW = -1.2 + 5.8 * smoothstep(-1.0, 1.0, 1.5 * bn3 + 1.1 * bn2 + 0.55 * bn1 + 0.3 * tPatch);
+  float beachEdge = 0.30 + 1.1 * smoothstep(-0.45, 0.45, bn2 + 0.6 * bn1); // 縁: 切り立つ所と砂が草に食い込む所
+  float sandTop = 1.15 + 0.75 * bn2 + 0.3 * bn1;
+  sandM = (1.0 - smoothstep(beachW - beachEdge, beachW + beachEdge, tShore + 0.45 * bn1))
+        * (1.0 - smoothstep(sandTop, sandTop + 0.55, tAbove))
+        * (1.0 - smoothstep(0.35, 0.6, tSlope));
+  // 草が砂に舌のように食い込む（境が一本の弧だと「プールの縁」）
+  sandM *= 1.0 - 0.85 * smoothstep(0.42, 0.78, flip_vnoise(tXZ * 0.55 + 13.0) + 0.35 * flip_vnoise(tXZ * 1.8 + 4.0) - 0.18);
+  // 水際の濡れ: 高さで一律に切ると等高線の帯（＝プールの縁）になる。幅を 0.15〜1.0m に散らす
+  float wetTop = 0.22 + 0.75 * smoothstep(-0.7, 0.7, bn2 + 0.65 * bn1 + 0.4 * bn3);
+  wetBand = 1.0 - smoothstep(-0.04, wetTop, tAbove);
+}
 float forestBand = smoothstep(8.0, 25.0, tH) * (1.0 - smoothstep(330.0 + 60.0 * tMacro, 420.0 + 60.0 * tMacro, tH)) * (1.0 - smoothstep(0.35, 0.55, tSlope));
 float forest = forestBand * forestDens;
 
@@ -151,25 +170,67 @@ float forest = forestBand * forestDens;
 // 枯れ草の斑: 13m の斑は数百 m のゾーン（tMacro）の中でだけ強く出す（中景が迷彩に見えないように）
 float dryZone = smoothstep(-0.2, 0.5, tMacro);
 vec3 grass = mix(vec3(0.050, 0.115, 0.025), vec3(0.19, 0.165, 0.065), smoothstep(-0.25, 0.45, tPatch + 0.3 * tMeso) * (0.25 + 0.5 * dryZone));
-grass *= 1.0 + 0.22 * tMacro;
+grass *= 1.0 + 0.30 * tMacro + 0.13 * tMeso; // 数百m と 36m のむら。一色の斜面は「ゴルフ場」に見える
 grass = mix(grass, vec3(0.19, 0.165, 0.06), smoothstep(250.0, 420.0, tH)); // 高山草地は黄ばむ
 // 林帯（10〜400m、緩斜面）: 木の下の暗い床。遠景では樹冠のざらつき
 grass = mix(grass, vec3(0.040, 0.070, 0.026) * (1.0 + 0.2 * tMacro), 0.7 * forest);
+// 森の床: 針葉のリターと剥き出しの根元。斑のスケールを変えて「絵の具」に見せない
+grass = mix(grass, vec3(0.070, 0.056, 0.030), forest * smoothstep(0.35, 0.85, flip_vnoise(tXZ * 0.42 + 21.0) + 0.4 * tPatch));
 if (forest > 0.01 && tNear < 0.99) grass *= 1.0 - 0.28 * forest * flip_vnoise(tXZ * 0.2 + 3.0) * (1.0 - tNear);
 // 中景（10〜60m）: 丈の高い草の群れ（2m）のやわらかい明暗
 if (tDist < 160.0 && uReflect < 0.5) grass *= 1.0 + 0.16 * flip_fbm(tXZ * 0.55 + 8.0, 2) * (1.0 - smoothstep(60.0, 160.0, tDist));
+// 枯れ草・落ち葉のリター（株の間から見える地面）。λ 3.5m の斑で 70m まで。
+// これが無いと地面が「一色の緑の絵の具」になる
+if (tDist < 70.0 && uReflect < 0.5) {
+  float lit = smoothstep(0.42, 0.86, flip_vnoise(tXZ * 0.29 + 17.0) + 0.45 * tPatch) * (1.0 - smoothstep(28.0, 70.0, tDist));
+  grass = mix(grass, vec3(0.155, 0.125, 0.062), 0.5 * lit * (1.0 - 0.6 * forest));
+}
 vec3 dirt = vec3(0.105, 0.078, 0.052) * (1.0 + 0.2 * tMacro);
 vec3 scree = vec3(0.19, 0.185, 0.175) * (0.85 + 0.3 * tMeso);
 vec3 rock = vec3(0.17, 0.155, 0.14) * (1.0 + 0.25 * tMacro);
 vec3 snow = vec3(0.60, 0.64, 0.71);
-if (snowM > 0.001) snow *= 0.92 + 0.12 * flip_vnoise(tXZ * 0.35 + 2.0);
+vec3 snowN = gN;
+if (snowM > 0.001) {
+  snow *= 0.92 + 0.12 * flip_vnoise(tXZ * 0.35 + 2.0);
+  // 風下に伸びる吹き溜まりの畝（λ 55m / 20m）。1〜2km 先でも 20〜60px あるので雪の起伏が読める。
+  // これが無いと遠景の雪が「メレンゲ」＝一様な白い塊になる
+  vec2 sa = vec2(dot(tXZ, tWind), dot(tXZ, vec2(-tWind.y, tWind.x)));
+  vec2 f0 = vec2(0.018, 0.055), f1 = vec2(0.20, 0.62), f2 = vec2(0.42, 1.15);
+  vec3 s0 = tn_gnoised(sa * f0 + 1.0);
+  float dFade = 1.0 - smoothstep(2400.0, 3400.0, tDist);
+  vec2 gs = s0.yz * f0 * 9.0 * dFade;
+  float sx = 0.0;
+  // サスツルギ（風紋）: 風向に細長い λ 5m と 2.4m の畝。近〜中景だけ（遠景では 1px 未満で意味がない）
+  float sFade = (1.0 - smoothstep(700.0, 1800.0, tDist)) * (1.0 - uReflect);
+  if (sFade > 0.01) {
+    vec3 s1 = tn_gnoised(sa * f1 + 3.0);
+    vec3 s2 = tn_gnoised(sa * f2 + 8.0);
+    gs += (s1.yz * f1 * 0.26 + s2.yz * f2 * 0.09) * sFade;
+    sx = (0.08 * s1.x + 0.04 * s2.x) * sFade;
+  }
+  vec2 gw = tWind * gs.x + vec2(-tWind.y, tWind.x) * gs.y;
+  snowN = normalize(gN - vec3(gw.x, 0.0, gw.y) * gN.y);
+  // 畝の谷は青く沈む（雪の透光）。風上側の斜面は硬く光る
+  snow *= 1.0 + 0.13 * s0.x * dFade + sx;
+  snow = mix(snow, vec3(0.50, 0.57, 0.72), 0.35 * smoothstep(0.15, -0.40, s0.x * 1.2 + 6.0 * sx) * dFade);
+  // 吹き溜まりの縁（雪と岩の境）を波打たせる: 薄い所は下地が透ける
+  snowM *= 0.55 + 0.45 * smoothstep(-0.60, 0.60, s0.x * 2.0 + 12.0 * sx + tMeso + 0.5 * tPatch);
+}
 // 砂利まじりの砂: 1〜3m の濃淡と、水際に近いほど暗く湿った砂利
-vec3 sand = vec3(0.25, 0.235, 0.195) * (1.0 + 0.1 * tMeso);
+vec3 sand = vec3(0.215, 0.205, 0.175) * (1.0 + 0.1 * tMeso); // 高山湖の岸は灰色の砂利。黄色いと「砂浜」に見える
 if (sandM > 0.001) {
   sand *= 0.8 + 0.4 * flip_vnoise(tXZ * 0.7 + 4.0);
   sand = mix(sand, vec3(0.16, 0.16, 0.15), 0.5 * smoothstep(0.55, 0.8, flip_vnoise(tXZ * 2.5 + 1.0)) * (1.0 - smoothstep(0.0, 6.0, tShore)));
+  // 水際の砂利は濡れて暗い（乾いた砂 → 濡れた砂 → 湖底 がつながる）
+  sand = mix(sand, sand * 0.52, wetBand);
+  // 湖底: 深いほど暗く、沈殿・藻のむらを入れる（一様に明るい灰色は「プールの底」に見える）
+  if (tAbove < 0.1) {
+    float dep = -tAbove;
+    sand *= 0.80 + 0.45 * flip_fbm(tXZ * 0.16 + 7.0, 2) + 0.25 * flip_vnoise(tXZ * 0.045 + 12.0);
+    sand = mix(sand, vec3(0.070, 0.086, 0.062), smoothstep(0.2, 4.0, dep));
+  }
 }
-vec3 wN = gN;
+vec3 wN = normalize(mix(gN, snowN, snowM));
 
 if (tNear > 0.0) {
   // 草の株: 30cm の房のなだらかなドーム（境界の線は出さない）。株ごとに色が少し違う
@@ -200,36 +261,81 @@ if (tNear > 0.0) {
   vec2 g = d1.yz * (2.2 * 0.03) * dNear2 + d2.yz * (7.5 * 0.02) * dNear1 + d3.yz * (13.0 * 0.01) * dNear0;
   // 太陽が低いと小さなこぶの陰影が画素より細かい斑点になるので弱める
   g *= (1.0 - rockM) * (1.0 - 0.6 * snowM) * (1.0 - 0.5 * sandM) * (0.45 + 0.55 * smoothstep(0.05, 0.45, uSunDir.y));
-  wN = normalize(gN - vec3(g.x, 0.0, g.y) * gN.y);
+  wN = normalize(wN - vec3(g.x, 0.0, g.y) * gN.y);
 }
 
-if (rockM > 0.005 && tMid > 0.0) {
-  // 岩: 層理（高さの帯）＋ トライプラナーの粒 ＋ 近景では支配面の亀裂 ＋ 面に沿ったバンプ
-  vec3 w = pow(abs(gN), vec3(4.0));
-  w /= (w.x + w.y + w.z);
-  float strata = sin((tH + 3.5 * flip_gnoise(tXZ * 0.035)) * 0.85 + 1.5 * flip_gnoise(tXZ * 0.11));
-  strata = smoothstep(-0.3, 0.9, strata);
-  float grain = (flip_vnoise(tP.zy * 1.6) * w.x + flip_vnoise(tP.xz * 1.6) * w.y + flip_vnoise(tP.xy * 1.6) * w.z) - 0.5;
-  float crack = 0.0;
-  float det = dNear1 * uDetail;
-  if (det > 0.0) {
-    vec2 pc = w.x > w.y ? (w.x > w.z ? tP.zy : tP.xy) : (w.y > w.z ? tP.xz : tP.xy);
-    vec3 c = tn_cell(pc * 0.45);
-    crack = (1.0 - smoothstep(0.0, 0.16, c.y - c.x)) * det;
-    grain += 0.3 * (c.z - 0.5) * det; // ブロックごとに明るさが違う
+if (rockM > 0.005 || screeM > 0.005) {
+  // 岩。遠景（山肌）にも効く層理・段・亀裂と、近景だけのトライプラナーの粒・ブロック割れ。
+  // 層理の帯は 7m 周期・段（ledge）は 6〜12m 周期で、1500m 先でも 8px 幅あるので迷彩にならない
+  float farFade = 1.0 - smoothstep(1900.0, 3200.0, tDist);
+  // 層理面は褶曲で波打つ。まっすぐ水平な縞が全山を走ると「等高線の模型」に見えるので、
+  // 600m 単位の傾き（tMacro）と λ36m の褶曲（tMeso）と λ13m のゆらぎ（tPatch）で帯を折り曲げる。
+  // どれも焼いた場（uTerrainField / fbm 1 回）の使い回しで、山肌はノイズを追加で引かない
+  float bedH = tH + 34.0 * tMacro + 13.0 * tMeso;
+  // 縞は 700m 以遠で消す（1km 先の細い縞はモアレ＝毛羽立った地図に見える）
+  float bedA = smoothstep(-0.42, 0.22, tMacro) * (1.0 - smoothstep(600.0, 1500.0, tDist));
+  float strata = smoothstep(-0.3, 0.9, sin(bedH * 0.85 + 1.7 * tPatch));
+  // 雨水の流れた黒い筋（岩壁を縦に走る）。斜面が急なほど濃い。遠景の山肌のコントラストはこれと tMeso で作る
+  float streakM = smoothstep(0.20, 0.45, tSlope) * farFade;
+  float streak = 0.0;
+  if (streakM > 0.01) {
+    streak = 1.0 - abs(flip_gnoise(vec2(dot(tXZ, vec2(0.36, -0.93)) * 0.05, tH * 0.0035) + 14.0));
+    streak = streak * streak * streak * streakM;
   }
-  rock *= mix(0.78, 1.15, strata) * (1.0 + 0.5 * grain) * (1.0 - 0.5 * crack);
+  float mott = tMeso + 0.55 * tPatch;
+  rock *= mix(1.0, mix(0.55, 1.25, strata), bedA) * (1.0 + 0.45 * mott * farFade) * (1.0 - 0.30 * streak);
+  // 岩の色みも場所で振る（曇天は陰影が無いので、明暗だけだと山肌が粘土に見える）
+  rock = mix(rock, rock * vec3(1.18, 1.03, 0.80), 0.55 * smoothstep(-0.1, 0.55, tMacro + 0.4 * tPatch) * farFade);
+  rock = mix(rock, rock * vec3(0.88, 0.93, 1.04), 0.45 * smoothstep(-0.1, 0.55, -tMacro + 0.4 * tMeso) * farFade);
+  // 急斜面（斜度 0.5 超）: 6〜12m 間隔の段（棚）と、面を縦に走る亀裂。albedo は薄く、法線で見せる
+  float steep = smoothstep(0.42, 0.62, tSlope) * bedA;
+  float ledge = 0.0, vcr = 0.0, ledgeS = 0.0;
+  if (steep > 0.01) {
+    float bandP = 9.0 + 3.0 * tMeso;
+    float bh = fract((bedH + 3.0 * tPatch) / bandP) - 0.5;
+    ledge = (1.0 - smoothstep(0.10, 0.44, abs(bh) * 2.0)) * steep;
+    ledgeS = bh < 0.0 ? 1.0 : -1.0;
+    // 縦の亀裂: 水平方向の位置でだけ変わる（高さにはゆっくり）＝壁を縦に走る溝。λ ≈ 8m
+    vcr = 1.0 - abs(flip_gnoise(vec2(dot(tXZ, vec2(0.92, 0.39)) * 0.125, tH * 0.010) + 5.0));
+    vcr = vcr * vcr * vcr * vcr * smoothstep(0.42, 0.62, tSlope) * farFade;
+  }
+  rock *= (1.0 - 0.17 * ledge) * (1.0 - 0.22 * vcr);
+  float grain = 0.0, crack = 0.0;
+  if (tMid > 0.0) {
+    vec3 w = pow(abs(gN), vec3(4.0));
+    w /= (w.x + w.y + w.z);
+    grain = ((flip_vnoise(tP.zy * 1.6) * w.x + flip_vnoise(tP.xz * 1.6) * w.y + flip_vnoise(tP.xy * 1.6) * w.z) - 0.5) * tMid;
+    float det = dNear1 * uDetail;
+    if (det > 0.0) {
+      vec2 pc = w.x > w.y ? (w.x > w.z ? tP.zy : tP.xy) : (w.y > w.z ? tP.xz : tP.xy);
+      vec3 c = tn_cell(pc * 0.45);
+      crack = (1.0 - smoothstep(0.0, 0.16, c.y - c.x)) * det;
+      grain += 0.3 * (c.z - 0.5) * det; // ブロックごとに明るさが違う
+    }
+  }
+  rock *= (1.0 + 0.5 * grain) * (1.0 - 0.5 * crack);
+  scree *= mix(1.0, mix(0.80, 1.15, strata), 0.7 * bedA) * (1.0 + 0.35 * grain) * (1.0 + 0.20 * mott * farFade);
   // 苔・地衣: 緩い岩の窪みに。遠くでは斑が迷彩に見えるので薄める
   rock = mix(rock, vec3(0.075, 0.105, 0.045), 0.55 * smoothstep(0.35, 0.7, tPatch + 0.5 * (0.5 - tCav)) * (1.0 - smoothstep(0.25, 0.5, tSlope)) * (0.35 + 0.65 * tMid));
-  vec3 up = abs(gN.y) < 0.98 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
-  vec3 T = normalize(cross(up, gN));
-  vec3 B = cross(gN, T);
-  vec2 pt = vec2(dot(tP, T), dot(tP, B));
-  vec3 b1 = tn_gnoised(pt * 1.4 + 2.0);
-  vec2 gb = b1.yz * (1.4 * 0.16) * tMid * (0.4 + 0.6 * dNear2);
-  if (dNear1 > 0.0) gb += tn_gnoised(pt * 4.5 + 7.0).yz * (4.5 * 0.05) * dNear1;
-  vec3 rN = normalize(gN - (T * gb.x + B * gb.y));
-  wN = normalize(mix(wN, rN, rockM));
+  // 法線: 段は遠景でも入れる（山肌が粘土に見えないように）。細かいバンプは近景だけ。
+  // どちらも無い遠景では接平面を作らずに飛ばす（山肌は画面の広い面積を占めるので効く）
+  if (steep > 0.01 || tMid > 0.0) {
+    vec3 up = abs(gN.y) < 0.98 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+    vec3 T = normalize(cross(up, gN));
+    vec3 B = cross(gN, T);
+    vec2 pt = vec2(dot(tP, T), dot(tP, B));
+    // 段は「高さ方向」に折れる。B は面に沿った上下方向なので B 成分を動かす（albedo より法線で見せる）
+    vec2 gb = vec2(0.0, ledgeS * ledge * 0.30);
+    if (tMid > 0.0) {
+      // 太陽が低いとバンプの陰影が強すぎて岩が「濡れたプラスチック」に見えるので弱める（地面の細部と同じ扱い）
+      float bAmp = 0.5 + 0.5 * smoothstep(0.03, 0.30, uSunDir.y);
+      vec3 b1 = tn_gnoised(pt * 1.4 + 2.0);
+      gb += b1.yz * (1.4 * 0.16) * tMid * (0.4 + 0.6 * dNear2) * bAmp;
+      if (dNear1 > 0.0) gb += tn_gnoised(pt * 4.5 + 7.0).yz * (4.5 * 0.05) * dNear1 * bAmp;
+    }
+    vec3 rN = normalize(gN - (T * gb.x + B * gb.y));
+    wN = normalize(mix(wN, rN, max(rockM, 0.55 * screeM)));
+  }
 }
 
 vec3 tCol = grass;
@@ -240,8 +346,8 @@ tCol = mix(tCol, snow, snowM);
 tCol = mix(tCol, sand, sandM);
 float tRough = mix(0.92, 0.80, dirtM);
 tRough = mix(tRough, 0.85, screeM);
-tRough = mix(tRough, 0.72, rockM);
-tRough = mix(tRough, 0.55, snowM);
+tRough = mix(tRough, 0.82, rockM); // 0.72 は低い太陽で岩がプラスチックのように光った
+tRough = mix(tRough, 0.80, snowM); // 0.55 は艶が出すぎて「メレンゲ」に見えた
 tRough = mix(tRough, 0.80, sandM);
 // 水際の濡れ・雨の濡れ・水たまり
 float wet = max(wetBand, uWetness * (1.0 - snowM));
@@ -254,9 +360,12 @@ if (uWetness > 0.05) {
   tRough = mix(tRough, 0.04, pud);
   wN = normalize(mix(wN, vec3(0.0, 1.0, 0.0), pud));
 }
-// 谷筋の陰と空の見え方
-tCol *= 0.70 + 0.60 * tCav;
-tAO = tAO * tAO * (0.85 + 0.3 * tCav);
+// 谷筋の陰と空の見え方。
+// cavity は「窪みの底ほど暗い」。谷筋（tCav < 0.4）を強めに効かせ、尾根（> 0.6）は明るく残す
+float cavD = smoothstep(0.62, 0.16, tCav);           // 0 = 尾根・平ら, 1 = 谷底
+tCol *= 1.0 - 0.42 * cavD;
+// 焼いた AO は空の照度にだけ掛かる。谷で効かせつつ 0.28 を下限に（影の中が真っ黒にならない）
+tAO = 0.28 + 0.72 * tAO * tAO * (1.0 - 0.45 * cavD);
 // 山の影（地平角マップ）: 太陽と、夜だけ月
 float tSunVis = flip_terrainSunVis(tXZ, uSunDir);
 float tMoonVis = (uMoonColor.r + uMoonColor.g + uMoonColor.b > 0.0005) ? flip_terrainSunVis(tXZ, uMoonDir) : 1.0;
@@ -278,7 +387,7 @@ reflectedLight.indirectSpecular *= tAO;
 
 /**
  * フラグメント: <fog_fragment> の差し替え。空気遠近 → 裏返し。
- * 裏返しは「合計の等高線（5m/25m）」＋「成分ごとの線の族」（山脈 20m・土台 4m・細部 0.5m）＋格子。
+ * 裏返しは「合計の等高線（10m 副線 / 50m 主線、太さ 4:1）」＋「成分ごとの細い線の族」（山脈 20m・土台 8m・細部 0.5m）＋格子。
  * 成分は heightfield.ts が焼いた uHeightParts（r = 山脈, g = 土台, b = 細部, a = 岸線からの距離）。
  */
 export const TERRAIN_FRAG_FOG = /* glsl */ `
@@ -293,15 +402,18 @@ if (uFlipRadius > 0.001) {
   float far = 1.0 - 0.6 * smoothstep(300.0, 2200.0, tDist);
   float midR = 1.0 - smoothstep(600.0, 1500.0, tDist);
   float nearR = 1.0 - smoothstep(200.0, 700.0, tDist);
-  float c5 = tn_line(tH / 5.0, 0.035) * nearR;
-  float c25 = tn_line(tH / 25.0, 0.06);
-  float lm = tn_line(pm / 20.0, 0.07) * smoothstep(0.5, 3.0, pm) * midR;
-  float lb = tn_line(pb / 8.0, 0.045) * nearR;
-  float lf = tn_line(pf / 0.5, 0.03) * (1.0 - smoothstep(40.0, 120.0, tDist));
-  fc += FLIP_LINE * (0.45 * c25 + 0.2 * c5) * far;
-  fc += vec3(0.75, 0.95, 1.0) * 0.45 * lm;
-  fc += FLIP_LINE * 0.25 * lb;
-  fc += FLIP_LINE * 0.13 * lf;
+  // 等高線: 10m ごとの副線（細）と 50m ごとの主線（太さ 4:1）。
+  // 5m 間隔で同じ太さだと「バーコード」に見える
+  float cMinor = tn_line(tH / 10.0, 0.012) * nearR;
+  float cMajor = tn_line(tH / 50.0, 0.048);
+  // 成分の族はさらに細く（合計の等高線を邪魔しない）
+  float lm = tn_line(pm / 20.0, 0.022) * smoothstep(0.5, 3.0, pm) * midR;
+  float lb = tn_line(pb / 8.0, 0.016) * nearR;
+  float lf = tn_line(pf / 0.5, 0.012) * (1.0 - smoothstep(40.0, 120.0, tDist));
+  fc += FLIP_LINE * (0.50 * cMajor + 0.17 * cMinor) * far;
+  fc += vec3(0.75, 0.95, 1.0) * 0.34 * lm;
+  fc += FLIP_LINE * 0.18 * lb;
+  fc += FLIP_LINE * 0.10 * lf;
   fc += FLIP_LINE * 0.08 * flip_grid(tXZ, 10.0) * (1.0 - smoothstep(200.0, 500.0, tDist));
   fc += FLIP_ACCENT * flip_edgeGlow(tP) * 1.5;
   // 紙には空気遠近の透過率だけを効かせ、散乱光は 3 割（白く霞ませない）

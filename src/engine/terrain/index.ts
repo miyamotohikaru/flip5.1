@@ -230,16 +230,21 @@ export class Terrain {
         m.position.set(sx, 0, sz);
       }
     }
+    // TODO: 影のバイアスは操作担当が core/lighting.ts へ移す作業を進めている。
+    //       lighting.ts が設定するようになったら、この for ループごと削除すること（二重設定になる）。
     // 影の normalBias: カスケードごとの texel 幅に比例させ（近くは薄く、遠くは厚く）、太陽が低いほど厚くする
-    // （地面と光が平行に近いと細かい起伏の影がアクネ状の斑点になる）。PCF の半径も少し広げて縁を柔らかく
-    const low = 1 + 3 * (1 - Math.min(1, Math.max(0, this.env.sunDir.y * 2)));
-    for (const light of this.lighting.csm.lights) {
-      const sh = light.shadow;
+    // （地面と光が平行に近いと細かい起伏の影がアクネ状の斑点になる）。
+    //   ・texel×1.6・低い太陽で ×4 は効きすぎで、落ち影が接地から 1m 以上離れて「昼に影が無い」ように見えていた
+    //   ・PCF（three の PCFShadowMap は 3×3）の半径は遠いカスケードほど広げて階段を潰す
+    const low = 1 + 1.6 * (1 - Math.min(1, Math.max(0, this.env.sunDir.y * 2.5)));
+    const lights = this.lighting.csm.lights;
+    for (let i = 0; i < lights.length; i++) {
+      const sh = lights[i].shadow;
       const c = sh.camera as THREE.OrthographicCamera;
       const texel = (c.right - c.left) / sh.mapSize.x;
-      sh.normalBias = (0.02 + texel * 1.6) * low;
-      sh.bias = -0.0003 * low;
-      sh.radius = 2;
+      sh.normalBias = Math.min(0.55, (0.015 + texel * 0.9) * low);
+      sh.bias = -0.00018 * low;
+      sh.radius = 1.6 + 1.1 * i;
     }
   }
 }
