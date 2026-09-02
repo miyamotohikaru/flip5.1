@@ -27,16 +27,19 @@ export type MixerOpts = {
   tickInterval?: number;
 };
 
+/** マスターの基準（＋2dB）。静かな晴れの昼で −26dBFS、嵐で −11dBFS 前後になる */
+const MASTER_LEVEL = 1.25;
+
 /** 層ごとの基準音量 */
 const TRIM: Record<LayerName, number> = {
   wind: 1.0,
   rain: 0.9,
   thunder: 1.0,
-  water: 0.9,
-  foot: 0.9,
-  birds: 0.8,
-  insects: 0.7,
-  pad: 0.22,
+  water: 1.4,
+  foot: 0.7,
+  birds: 0.75,
+  insects: 0.32,
+  pad: 0.03,
   ui: 0.8,
 };
 
@@ -50,6 +53,7 @@ export class Mixer {
   private crushWet: GainNode;
   private musicBus: GainNode;
   private uiBus: GainNode;
+  private uiMute: GainNode;
   private trims: Record<LayerName, GainNode>;
   private solo: LayerName | null = null;
   muted = false;
@@ -79,14 +83,15 @@ export class Mixer {
     const res = this.res;
 
     // マスター: envSum → comp → limiter → clip → master → analyser → destination
+    // ゆるい糊（突風や足音で環境音がポンピングしないよう浅く）と、速いリミッタ
     const comp = ctx.createDynamicsCompressor();
-    comp.threshold.value = -16;
-    comp.knee.value = 10;
-    comp.ratio.value = 2.5;
-    comp.attack.value = 0.01;
-    comp.release.value = 0.35;
+    comp.threshold.value = -10;
+    comp.knee.value = 12;
+    comp.ratio.value = 1.6;
+    comp.attack.value = 0.015;
+    comp.release.value = 0.5;
     const limiter = ctx.createDynamicsCompressor();
-    limiter.threshold.value = -4;
+    limiter.threshold.value = -3;
     limiter.knee.value = 0;
     limiter.ratio.value = 20;
     limiter.attack.value = 0.001;
@@ -94,17 +99,18 @@ export class Mixer {
     const clip = ctx.createWaveShaper();
     clip.curve = res.clip;
     clip.oversample = "2x";
+    // master（音量・ミュート・フェード）は圧縮の前。最後のソフトクリップが天井（−1.4dBFS）を守る
     this.master = gainNode(ctx, 0);
     this.analyser = ctx.createAnalyser();
     this.analyser.fftSize = 2048;
     this.analyser.smoothingTimeConstant = 0.5;
+    this.master.connect(comp);
     comp.connect(limiter);
     limiter.connect(clip);
-    clip.connect(this.master);
-    this.master.connect(this.analyser);
+    clip.connect(this.analyser);
     this.analyser.connect(ctx.destination);
 
-    // 環境音バス → 裏返しのローファイ（LP ＋ 階段の歪み）→ comp
+    // 環境音バス → 裏返しのローファイ（LP ＋ 階段の歪み）→ master
     this.envBus = gainNode(ctx, 1);
     this.lofiLP = biquad(ctx, "lowpass", 20000, 0.5);
     this.crushDry = gainNode(ctx, 1);
@@ -115,12 +121,16 @@ export class Mixer {
     this.lofiLP.connect(this.crushDry);
     this.lofiLP.connect(crusher);
     crusher.connect(this.crushWet);
-    this.crushDry.connect(comp);
-    this.crushWet.connect(comp);
+    this.crushDry.connect(this.master);
+    this.crushWet.connect(this.master);
     this.musicBus = gainNode(ctx, 1);
-    this.musicBus.connect(comp);
+    this.musicBus.connect(this.master);
+    // UI は糊を通さず、リミッタの手前へ
     this.uiBus = gainNode(ctx, 1);
-    this.uiBus.connect(limiter);
+    const uiLevel = gainNode(ctx, MASTER_LEVEL);
+    this.uiBus.connect(uiLevel);
+    uiLevel.connect(limiter);
+    this.uiMute = uiLevel;
 
     const trims = {} as Record<LayerName, GainNode>;
     for (const name of LAYER_NAMES) {
@@ -147,21 +157,25 @@ export class Mixer {
   enter(withSound: boolean, fade = 2.5) {
     const t = this.ctx.currentTime;
     if (!this.muted) {
-      if (fade <= 0) this.master.gain.setValueAtTime(1, t);
-      else this.master.gain.setTargetAtTime(1, t, fade / 3);
+      if (fade <= 0) this.master.gain.setValueAtTime(MASTER_LEVEL, t);
+      else this.master.gain.setTargetAtTime(MASTER_LEVEL, t, fade / 3);
     }
     if (withSound) playEnter(this.ctx, this.trims.ui, this.res, t + 0.05);
   }
 
   setMuted(m: boolean) {
     this.muted = m;
-    this.master.gain.setTargetAtTime(m ? 0 : 1, this.ctx.currentTime, 0.05);
+    const t = this.ctx.currentTime;
+    this.master.gain.setTargetAtTime(m ? 0 : MASTER_LEVEL, t, 0.05);
+    this.uiMute.gain.setTargetAtTime(m ? 0 : MASTER_LEVEL, t, 0.05);
   }
 
   /** 隠れたときに素早く絞る（suspend の前に） */
   duck(on: boolean) {
     if (this.muted) return;
-    this.master.gain.setTargetAtTime(on ? 0 : 1, this.ctx.currentTime, 0.04);
+    const t = this.ctx.currentTime;
+    this.master.gain.setTargetAtTime(on ? 0 : MASTER_LEVEL, t, 0.04);
+    this.uiMute.gain.setTargetAtTime(on ? 0 : MASTER_LEVEL, t, 0.04);
   }
 
   /** 検証用: 1 層だけ鳴らす */
@@ -217,6 +231,9 @@ export class Mixer {
     const rx = -fz, rz = fx; // 右手（Y up、yaw=0 で −Z を向く → 右は +X）
     const dl = Math.hypot(p.x, p.z) || 1;
     const lx = -p.x / dl, lz = -p.z / dl;
+    // 風が吹いてくる側: windDir は「風の向かう向き」なので、風上は −windDir
+    const wd = w.windDir;
+    const windPan = wd && Number.isFinite(wd.x) && Number.isFinite(wd.y) ? -(wd.x * rx + wd.y * rz) : 0;
     return {
       t,
       hour,
@@ -229,7 +246,7 @@ export class Mixer {
       fog: w.fog,
       wetness: w.wetness,
       shoreDist: sd,
-      shoreFactor: sd <= 0 ? 1 : Math.exp(-sd / 22),
+      shoreFactor: sd <= 0 ? 1 : Math.exp(-sd / 30),
       altitude: h,
       grass: smooth(-1.5, 1.5, h) * (1 - smooth(70, 180, h)),
       forest: smooth(9, 45, h) * (1 - smooth(300, 430, h)),
@@ -242,6 +259,7 @@ export class Mixer {
       right: { x: rx, z: rz },
       lakePan: lx * rx + lz * rz,
       lakeFront: lx * fx + lz * fz,
+      windPan,
       day,
       night: 1 - day,
       dawn: smooth(4.3, 5.5, hour) * (1 - smooth(7, 8.5, hour)),

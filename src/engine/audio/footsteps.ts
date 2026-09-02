@@ -61,14 +61,14 @@ export class FootstepLayer {
         n.connect(hp);
         hp.connect(g);
         g.connect(pan);
-        n.stop(attackDecay(g.gain, t, 0.7 * loud, 0.001, 0.008));
+        n.stop(attackDecay(g.gain, t, 0.42 * loud, 0.001, 0.008));
         const n2 = noise(t, 0.02);
         const bp = biquad(ctx, "bandpass", r.logRange(900, 1500) * pitch, 14);
         const g2 = gainNode(ctx, 0);
         n2.connect(bp);
         bp.connect(g2);
         g2.connect(pan);
-        n2.stop(attackDecay(g2.gain, t, 0.9 * loud, 0.001, r.range(0.03, 0.05)) + 0.1);
+        n2.stop(attackDecay(g2.gain, t, 0.6 * loud, 0.001, r.range(0.03, 0.05)) + 0.1);
         const gr = oneShot(ctx, res.gravel, t + 0.01, r.range(0.06, 0.12) * durK, r.range(0, 2.5), pitch);
         const bp3 = biquad(ctx, "bandpass", 3800 * pitch, 1.2);
         const g3 = gainNode(ctx, 0);

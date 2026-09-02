@@ -31,6 +31,26 @@ export class Audio {
   start() {
     if (this.started) return;
     this.started = true;
+    // まだ一度も操作されていないページ（?auto=1 の撮影など）では AudioContext を作らず、最初の操作まで待つ
+    // （ブラウザの自動再生の警告を出さない。iOS でも同じ道で確実に鳴る）
+    const activation = (navigator as unknown as { userActivation?: { hasBeenActive: boolean } }).userActivation;
+    if (activation && !activation.hasBeenActive) {
+      const once = () => {
+        window.removeEventListener("pointerdown", once);
+        window.removeEventListener("keydown", once);
+        window.removeEventListener("touchend", once);
+        this.boot();
+      };
+      window.addEventListener("pointerdown", once, { passive: true });
+      window.addEventListener("keydown", once);
+      window.addEventListener("touchend", once, { passive: true });
+      return;
+    }
+    this.boot();
+  }
+
+  private boot() {
+    if (this.ctx) return;
     try {
       const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       this.ctx = new Ctx();

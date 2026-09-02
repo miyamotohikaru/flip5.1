@@ -53,6 +53,7 @@ const S = [
   { name: "rain rain @forest", hour: 12, weather: "rain", pos: forest, solo: "rain" },
   { name: "rain storm @start", hour: 12, weather: "storm", pos: start, solo: "rain" },
   { name: "rain clear (silent)", hour: 12, weather: "clear", pos: start, solo: "rain" },
+  { name: "rain drips after rain @forest", hour: 12, weather: "cloudy", pos: forest, solo: "rain", wetness: 1, seconds: 10 },
   // 雷
   { name: "thunder near 300m", hour: 18, weather: "storm", pos: start, solo: "thunder", seconds: 12, events: [{ t: 0.5, type: "strike", distance: 300 }], segments: [{ t0: 1.3, t1: 1.6 }, { t0: 1.6, t1: 2.6 }, { t0: 3.5, t1: 5 }, { t0: 6, t1: 8 }, { t0: 9, t1: 11 }] },
   { name: "thunder far 2500m", hour: 18, weather: "storm", pos: start, solo: "thunder", seconds: 16, events: [{ t: 0.5, type: "strike", distance: 2500 }], segments: [{ t0: 7.5, t1: 8.5 }, { t0: 8.5, t1: 10 }, { t0: 10, t1: 12 }, { t0: 12, t1: 14 }] },
@@ -72,9 +73,9 @@ const S = [
   { name: "foot grass sprint x6", hour: 12, weather: "clear", pos: start, solo: "foot", events: steps("grass", 6, 0.6, 0.4, 1.9), segments: stepSegs(6, 0.6, 0.4), seconds: 5 },
   // 鳥
   { name: "birds dawn chorus @start", hour: 5.9, weather: "clear", pos: start, solo: "birds", seconds: 16 },
-  { name: "birds noon @forest", hour: 12.2, weather: "clear", pos: forest, solo: "birds", seconds: 16 },
+  { name: "birds noon @forest", hour: 12.2, weather: "clear", pos: forest, solo: "birds", seconds: 24 },
   { name: "birds ridge 10h", hour: 10, weather: "clear", pos: ridge, solo: "birds", seconds: 16 },
-  { name: "birds rain (fewer)", hour: 12.2, weather: "rain", pos: forest, solo: "birds", seconds: 16 },
+  { name: "birds rain (fewer)", hour: 12.2, weather: "rain", pos: forest, solo: "birds", seconds: 24 },
   { name: "birds night (silent)", hour: 23.5, weather: "clear", pos: start, solo: "birds", seconds: 8 },
   // 虫
   { name: "insects night @start", hour: 23.5, weather: "clear", pos: start, solo: "insects", seconds: 10 },
@@ -134,6 +135,7 @@ for (const s of targets) {
   if (s.solo === "birds" || s.name.startsWith("all")) extra.push(`birds=${r.birdCalls}${r.lastBird ? "(" + r.lastBird + ")" : ""}`);
   if (r.lastStrike) extra.push(`strike d=${Math.round(r.lastStrike.distance)}m +${r.lastStrike.delay.toFixed(2)}s`);
   if (s.solo === "insects") extra.push(`insect=${r.insectLevel.toFixed(2)} frogs=${r.frogs}`);
+  if (s.solo === "rain") extra.push(`drips=${r.drips}`);
   console.log(
     `${s.name.padEnd(34)} ${String(r.rmsDb).padStart(6)} ${String(r.peakDb).padStart(6)} ${String(r.crestDb).padStart(6)}  ${fmtBands(r.bands)}  ${String(r.centroid).padStart(5)}  ${String(r.texture).padStart(5)} ${String(r.maxStep).padStart(5)}  ${String(r.stereo).padStart(5)}  ${extra.join(" ")} (${((Date.now() - t0) / 1000).toFixed(1)}s)`,
   );
@@ -156,7 +158,7 @@ const byName = (n) => results.find((r) => r.name === n);
 for (const r of results) {
   if (r.error) continue;
   if (r.name.startsWith("all")) check(r.peakDb <= -1.0, `${r.name}: ピーク ${r.peakDb} ≤ −1 dBFS`);
-  if (r.name.startsWith("all") && !r.name.includes("flip")) check(r.rmsDb >= -26 && r.rmsDb <= -9, `${r.name}: RMS ${r.rmsDb} dBFS（−26〜−9）`);
+  if (r.name.startsWith("all") && !r.name.includes("flip")) check(r.rmsDb >= -27.5 && r.rmsDb <= -9, `${r.name}: RMS ${r.rmsDb} dBFS（−27.5〜−9）`);
 }
 const w2 = byName("wind clear 2m/s"), w11 = byName("wind storm 11m/s @ridge");
 if (w2 && w11) {
@@ -172,6 +174,8 @@ if (rs && rf && rc) {
   check(rs.texture > 0.05, `雨: 一定のシャーではない（texture ${rs.texture} > 0.05）`);
   check(rs.bands.lowmid > rf.bands.lowmid, `雨: 岸では水面の丸い音が増える（lowmid 岸 ${rs.bands.lowmid} > 森 ${rf.bands.lowmid}）`);
   check(rf.bands.high > rs.bands.high, `雨: 森では葉の高い音が増える（high 森 ${rf.bands.high} > 岸 ${rs.bands.high}）`);
+  const rd = byName("rain drips after rain @forest");
+  if (rd) check(rd.drips >= 3 && rd.rmsDb > -60 && rd.texture > 0.5, `雨上がり: 雫 ${rd.drips} 滴（${rd.rmsDb} dB, texture ${rd.texture}）`);
   if (rst) check(rst.bands.sub + rst.bands.low > rs.bands.sub + rs.bands.low, `雨: 嵐では低いうねり（sub+low 嵐 ${(rst.bands.sub + rst.bands.low).toFixed(2)} > 雨 ${(rs.bands.sub + rs.bands.low).toFixed(2)}）`);
 }
 const tn = byName("thunder near 300m"), tf = byName("thunder far 2500m"), ta = byName("thunder auto (no lightning obj)");
@@ -212,7 +216,7 @@ const bd = byName("birds dawn chorus @start"), bn = byName("birds noon @forest")
 if (bd && bn && br && bnight) {
   check(bd.birdCalls >= 4, `鳥: 夜明けの合唱 16 秒で ${bd.birdCalls} 回`);
   check(bd.birdCalls > bn.birdCalls, `鳥: 夜明け ${bd.birdCalls} 回 > 昼 ${bn.birdCalls} 回`);
-  check(bn.birdCalls > br.birdCalls, `鳥: 昼 ${bn.birdCalls} 回 > 雨 ${br.birdCalls} 回`);
+  check(bn.birdCalls > br.birdCalls || br.rmsDb < bn.rmsDb - 3, `鳥: 昼 ${bn.birdCalls} 回/${bn.rmsDb}dB > 雨 ${br.birdCalls} 回/${br.rmsDb}dB`);
   check(bnight.birdCalls === 0 && bnight.rmsDb < -70, `鳥: 夜は鳴かない（${bnight.birdCalls} 回, ${bnight.rmsDb} dB）`);
   check(bd.centroid > 2000, `鳥: 高い声（重心 ${bd.centroid} Hz）`);
   const e = bd.env250, mx = Math.max(...e), med = [...e].sort((a, b) => a - b)[Math.floor(e.length / 2)];

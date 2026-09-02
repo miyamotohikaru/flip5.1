@@ -1,5 +1,5 @@
 // 起動時に一度だけ作る素材。全部 dsp.ts の関数から生える（ファイルは読まない）。
-import { cricketPattern, crusherCurve, impulseResponse, pinkNoise, rainGrains, shapePow, smoothNoise, softClipCurve, waveEnvelope, whiteNoise, type F32 } from "./dsp";
+import { cricketPattern, crusherCurve, impulseResponse, normalize01, pinkNoise, rainGrains, shapePow, smoothNoise, softClipCurve, waveEnvelope, whiteNoise, type F32 } from "./dsp";
 import { makeBuffer, periodic, type Ctx } from "./graph";
 import type { QualityTier } from "../core/env";
 
@@ -23,6 +23,8 @@ export type Resources = {
   rainWater: AudioBuffer;
   ticks: AudioBuffer;
   gravel: AudioBuffer;
+  rustleA: AudioBuffer;
+  rustleB: AudioBuffer;
   ctlGust: AudioBuffer;
   ctlDrift: AudioBuffer;
   ctlFlutter: AudioBuffer;
@@ -57,12 +59,15 @@ export function buildResources(ctx: Ctx, tier: QualityTier, isMobile: boolean): 
   const rainWater = mono(rainGrains(sr, 8 * k, 26, "water", 45));
   const ticks = mono(rainGrains(sr, 4, 27, "tick", 40));
   const gravel = mono(rainGrains(sr, 3, 28, "gravel", 220));
+  // 葉のこすれ（風のざわめきの粒。突風で密度が上がったように聞こえる）
+  const rustleA = mono(rainGrains(sr, 5 * k, 29, "gravel", 900));
+  const rustleB = mono(rainGrains(sr, 4.6 * k, 30, "gravel", 900));
 
   // 制御信号（8kHz）。突風は「たまに強い」ので尖らせる
   const c = CTL_RATE;
-  const ctlGust = mono(shapePow(smoothNoise(c * 40, 31, c * 2.6, 3), 1.7), c);
-  const ctlDrift = mono(smoothNoise(c * 40, 32, c * 5, 2), c);
-  const ctlFlutter = mono(shapePow(smoothNoise(c * 10, 33, Math.floor(c * 0.13), 2), 1.3), c);
+  const ctlGust = mono(shapePow(normalize01(smoothNoise(c * 40, 31, c * 2.6, 3)), 2.2), c);
+  const ctlDrift = mono(normalize01(smoothNoise(c * 40, 32, c * 5, 2)), c);
+  const ctlFlutter = mono(shapePow(normalize01(smoothNoise(c * 10, 33, Math.floor(c * 0.13), 2)), 1.3), c);
   const ctlWave = mono(waveEnvelope(c * 60, c, 34, 6.5), c);
   const ctlFoam = mono(smoothNoise(c * 10, 35, Math.floor(c * 0.06), 2), c);
 
@@ -71,7 +76,7 @@ export function buildResources(ctx: Ctx, tier: QualityTier, isMobile: boolean): 
   const clip = softClipCurve(0.85, 0.6);
 
   const irForest = makeBuffer(ctx, impulseResponse(sr, lite ? 1.0 : 1.6, 41, { decay: lite ? 0.8 : 1.3, lpStart: 9000, lpEnd: 1800, hp: 120, early: 7, predelay: 0.012 }));
-  const irThunder = makeBuffer(ctx, impulseResponse(sr, lite ? 2.4 : 4.2, 42, { decay: lite ? 1.6 : 2.6, lpStart: 1400, lpEnd: 220, hp: 28, early: 4, predelay: 0.03 }));
+  const irThunder = makeBuffer(ctx, impulseResponse(sr, lite ? 2.2 : 3.6, 42, { decay: lite ? 1.4 : 1.9, lpStart: 1400, lpEnd: 220, hp: 28, early: 4, predelay: 0.03 }));
 
   const cricketPatterns: AudioBuffer[] = [];
   const bellPatterns: AudioBuffer[] = [];
@@ -81,7 +86,7 @@ export function buildResources(ctx: Ctx, tier: QualityTier, isMobile: boolean): 
   return {
     sr, tier, lite,
     noiseL, noiseR, noiseShort, pink,
-    rainHiss, rainLeafA, rainLeafB, rainGround, rainSparse, rainWater, ticks, gravel,
+    rainHiss, rainLeafA, rainLeafB, rainGround, rainSparse, rainWater, ticks, gravel, rustleA, rustleB,
     ctlGust, ctlDrift, ctlFlutter, ctlWave, ctlFoam,
     waveSoft, crusher, clip, irForest, irThunder, cricketPatterns, bellPatterns,
   };

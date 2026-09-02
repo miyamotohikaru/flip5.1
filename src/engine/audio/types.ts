@@ -27,6 +27,8 @@ export interface AudioEnv {
     wetness: number;
     /** 天気担当が足す予定の突風 0..1（無ければ自前の変調だけで動く） */
     gust?: number;
+    /** 風向（xz、正規化）。あれば風上側の耳を少し強くする */
+    windDir?: { x: number; y: number };
   };
   flip: number;
   flipTarget: number;
@@ -77,6 +79,8 @@ export type Scene = {
   /** 湖の中心の方向（-1 左 … 1 右）と、正面らしさ（1 正面 … -1 背中） */
   lakePan: number;
   lakeFront: number;
+  /** 風が吹いてくる側（-1 左 … 1 右。0 = 正面か背中、または風向が無い） */
+  windPan: number;
   day: number;
   night: number;
   dawn: number;

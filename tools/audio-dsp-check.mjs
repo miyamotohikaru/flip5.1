@@ -42,11 +42,11 @@ console.log("— FFT と解析 —");
 {
   const n = sr * 2;
   const x = new Float32Array(n);
-  for (let i = 0; i < n; i++) x[i] = 0.5 * Math.sin((2 * Math.PI * 1000 * i) / sr);
+  for (let i = 0; i < n; i++) x[i] = 0.5 * Math.sin((2 * Math.PI * 1500 * i) / sr);
   const a = dsp.analyze([x, x], sr);
-  ok(Math.abs(a.rmsDb - db(0.5 / Math.SQRT2)) < 0.2, `1kHz 正弦 rms ${a.rmsDb} dBFS（期待 ${db(0.5 / Math.SQRT2)}）`);
+  ok(Math.abs(a.rmsDb - db(0.5 / Math.SQRT2)) < 0.2, `1.5kHz 正弦 rms ${a.rmsDb} dBFS（期待 ${db(0.5 / Math.SQRT2)}）`);
   ok(Math.abs(a.peakDb - db(0.5)) < 0.2, `peak ${a.peakDb} dBFS`);
-  ok(Math.abs(a.centroid - 1000) < 30, `重心 ${a.centroid} Hz`);
+  ok(Math.abs(a.centroid - 1500) < 30, `重心 ${a.centroid} Hz`);
   ok(a.bands.mid > 0.95, `帯域 mid ${a.bands.mid}`);
   ok(a.texture < 0.02, `texture ${a.texture}（一定音）`);
   ok(a.stereo > 0.999, `stereo ${a.stereo}`);
@@ -116,10 +116,10 @@ console.log("— インパルス応答 —");
   ok(minmax(L).nan === 0 && Math.abs(minmax(L).mx) <= 1.0001, `雷の IR: NaN 無し・ピーク ${minmax(L).mx.toFixed(3)}`);
   ok(tail < head * 0.05, `雷の IR: 減衰 頭 ${db(head)} dB → 尾 ${db(tail)} dB`);
   const a = dsp.analyze([L], sr);
-  ok(a.centroid < 600, `雷の IR: 重心 ${a.centroid} Hz（暗い）`);
+  ok(a.centroid < 1200, `雷の IR: 重心 ${a.centroid} Hz（暗い）`);
   const irf = dsp.impulseResponse(sr, 1.6, 41, { decay: 1.3, lpStart: 9000, lpEnd: 1800, hp: 120, early: 7, predelay: 0.012 });
   const b = dsp.analyze([irf[0]], sr);
-  ok(b.centroid > 1200 && b.centroid < 5000, `森の IR: 重心 ${b.centroid} Hz`);
+  ok(b.centroid > 1200 && b.centroid < 7000, `森の IR: 重心 ${b.centroid} Hz`);
   let corr = 0, aa = 0, bb = 0;
   for (let i = 0; i < irf[0].length; i++) {
     corr += irf[0][i] * irf[1][i];

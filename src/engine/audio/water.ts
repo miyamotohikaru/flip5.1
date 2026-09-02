@@ -60,7 +60,7 @@ export class WaterLayer {
     for (let ch = 0; ch < 2; ch++) {
       setT(this.gWash[ch].gain, wash * 0.18, t, 0.4);
       setT(this.dWash[ch].gain, wash * 0.85, t, 0.4);
-      setT(this.washLP[ch].frequency, 650 + 1100 * w + (inWater ? 250 : 0) - 250 * (1 - near), t, 0.6);
+      setT(this.washLP[ch].frequency, 1200 + 2000 * w + (inWater ? 300 : 0) - 500 * (1 - near), t, 0.6);
     }
     setT(this.gFoam.gain, foam * 0.2, t, 0.4);
     setT(this.dFoam.gain, foam * 0.8, t, 0.4);

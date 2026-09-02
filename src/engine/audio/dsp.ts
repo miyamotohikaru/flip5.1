@@ -26,6 +26,18 @@ export function normalizePeak(x: F32, peak = 0.95): F32 {
   return x;
 }
 
+/** [min, max] → [0, 1] に伸ばす（制御信号の振れ幅を使い切る） */
+export function normalize01(x: F32): F32 {
+  let mn = Infinity, mx = -Infinity;
+  for (let i = 0; i < x.length; i++) {
+    if (x[i] < mn) mn = x[i];
+    if (x[i] > mx) mx = x[i];
+  }
+  const s = mx > mn ? 1 / (mx - mn) : 0;
+  for (let i = 0; i < x.length; i++) x[i] = (x[i] - mn) * s;
+  return x;
+}
+
 export function rmsOf(x: ArrayLike<number>, from = 0, to = x.length): number {
   let s = 0;
   const n = Math.max(1, to - from);
@@ -152,13 +164,14 @@ export function impulseResponse(sr: number, seconds: number, seed: number, o: IR
       const a = e.a * r.range(0.75, 1.25);
       for (let m = 0; m < bl && i0 + m < n; m++) x[i0 + m] += a * (r.next() * 2 - 1) * (1 - m / bl);
     }
-    // 時間とともに暗くなるローパス
-    let y = 0;
+    // 時間とともに暗くなるローパス（一次を 2 段 ＝ 12dB/oct）
+    let y1 = 0, y2 = 0;
     for (let i = 0; i < n; i++) {
       const fc = o.lpStart * Math.pow(o.lpEnd / o.lpStart, i / n);
       const a = 1 - Math.exp((-2 * Math.PI * fc) / sr);
-      y += a * (x[i] - y);
-      x[i] = y;
+      y1 += a * (x[i] - y1);
+      y2 += a * (y1 - y2);
+      x[i] = y2;
     }
     onePoleHP(x, o.hp ?? 40, sr);
     normalizePeak(x, 1);
@@ -259,7 +272,7 @@ export function thunderCurve(n: number, seed: number, closeness: number): F32 {
   const bl: { p: number; w: number; h: number }[] = [];
   for (let j = 0; j < bumps; j++) {
     const p = r.range(0.08, 0.85);
-    bl.push({ p, w: r.range(0.03, 0.11), h: r.range(0.25, 0.95) * Math.exp(-p / 0.6) });
+    bl.push({ p, w: r.range(0.02, 0.08), h: r.range(0.35, 1.1) * Math.exp(-p / 0.6) });
   }
   const fl = smoothNoise(n, seed + 1, Math.max(4, n / 40), 2);
   let m = 0;
@@ -270,7 +283,7 @@ export function thunderCurve(n: number, seed: number, closeness: number): F32 {
       const d = (x - b.p) / b.w;
       v += b.h * Math.exp(-d * d);
     }
-    v *= 0.55 + 0.45 * fl[i];
+    v *= 0.35 + 0.65 * fl[i];
     v *= 1 - smooth(0.88, 1, x); // 末尾は静かに
     out[i] = v;
     if (v > m) m = v;
@@ -296,7 +309,7 @@ export function cricketPattern(sr: number, seed: number, kind: "cricket" | "bell
     const period = sr / rate;
     const on = Math.floor(period * 0.5);
     while (t < n) {
-      const pulses = 3 + r.int(4);
+      const pulses = 5 + r.int(5);
       const a = r.range(0.7, 1);
       for (let p = 0; p < pulses; p++) {
         const s0 = Math.floor(t + p * period);
@@ -306,7 +319,7 @@ export function cricketPattern(sr: number, seed: number, kind: "cricket" | "bell
           out[i] = a * 0.5 * (1 - Math.cos((2 * Math.PI * k) / on)); // 上げ下げの丸いパルス
         }
       }
-      t += pulses * period + sr * r.range(0.18, 0.7);
+      t += pulses * period + sr * r.range(0.12, 0.45);
     }
   } else {
     const am = r.range(52, 66);

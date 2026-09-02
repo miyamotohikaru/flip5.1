@@ -17,6 +17,8 @@ export class BirdLayer {
   private slots: (Slot | null)[] = [null, null, null, null, null, null];
   private nextCall = 0;
   private rng = new Rng(777);
+  /** 鳴き声の音符はまとめて作らず、鳴る直前の tick で少しずつ作る（メインスレッドの山を作らない） */
+  private queue: { n: Note; t0: number; dest: GainNode; r: Rng }[] = [];
   calls = 0;
   /** 検証用: 最後に鳴いた鳥 */
   lastCall: { species: Species; at: number; dist: number } | null = null;
@@ -36,16 +38,25 @@ export class BirdLayer {
   activity(s: Scene): number {
     const h = s.hour;
     const dawn = smooth(4.4, 5.6, h) * (1 - smooth(8.5, 10.5, h));
-    const mid = smooth(6, 8, h) * (1 - smooth(16.5, 18.6, h)) * 0.4;
+    const mid = smooth(6, 8, h) * (1 - smooth(16.5, 18.6, h)) * 0.5;
     const eve = smooth(15.5, 17, h) * (1 - smooth(18.2, 19.2, h)) * 0.45;
     let a = Math.min(1, dawn + mid + eve);
-    a *= (1 - 0.85 * s.rain) * (1 - s.storm) * (1 - 0.6 * smooth(0.45, 0.9, s.wind));
+    a *= (1 - 0.95 * s.rain) * (1 - s.storm) * (1 - 0.6 * smooth(0.45, 0.9, s.wind));
     a *= 0.35 + 0.65 * Math.min(1, s.grass + s.forest + 0.4 * s.rock);
     return a;
   }
 
   tick(s: Scene) {
     const t = s.t;
+    if (this.queue.length) {
+      // 0.35 秒以内に鳴る音符だけ組む
+      const keep: typeof this.queue = [];
+      for (const q of this.queue) {
+        if (q.t0 + q.n.t < t + 0.35) this.note(q.n, q.t0, q.dest, q.r);
+        else keep.push(q);
+      }
+      this.queue = keep;
+    }
     if (t < this.nextCall) return;
     const act = this.activity(s);
     if (act < 0.02) {
@@ -56,7 +67,8 @@ export class BirdLayer {
     let slot = this.slots[idx];
     if (!slot || t > slot.until || Math.hypot(slot.x - s.pos.x, slot.z - s.pos.z) > 220) slot = this.slots[idx] = this.spawn(s);
     this.play(birdCall(slot.species, new Rng(100 + this.calls++, idx)), slot, s, t + 0.08);
-    this.nextCall = t + (2.2 + 9 * (1 - act)) * this.rng.range(0.55, 1.6);
+    // 活発なら 2〜4 秒おき、静かなら 30 秒に一度くらい
+    this.nextCall = t + (2.2 + 9 * (1 - act) + 22 * Math.pow(1 - act, 4)) * this.rng.range(0.55, 1.6);
     // 夜明けの合唱: もう一羽が重なる
     if (act > 0.7 && this.rng.chance(0.5)) {
       const j = (idx + 1 + this.rng.int(5)) % this.slots.length;
@@ -85,7 +97,10 @@ export class BirdLayer {
     chain.apply(sp, base, Math.max(this.ctx.currentTime, t0 - 0.05));
     this.lastCall = { species: call.species, at: t0, dist: sp.dist };
     const r = new Rng(900 + this.calls, 3);
-    for (const n of call.notes) this.note(n, t0, chain.input, r);
+    for (const n of call.notes) {
+      if (n.t < 0.35) this.note(n, t0, chain.input, r);
+      else this.queue.push({ n, t0, dest: chain.input, r });
+    }
   }
 
   private note(n: Note, t0: number, dest: AudioNode, r: Rng) {

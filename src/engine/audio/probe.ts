@@ -35,6 +35,8 @@ export type ProbeConfig = {
   flip?: boolean;
   /** 開始時から突風を与える（天気担当の gust を模す） */
   gust?: number;
+  /** 濡れ 0..1 を上書き（雨上がりの雫の確認用） */
+  wetness?: number;
 };
 
 export type ProbeResult = Analysis & {
@@ -46,6 +48,7 @@ export type ProbeResult = Analysis & {
   lastStrike: { at: number; distance: number; delay: number } | null;
   insectLevel: number;
   frogs: number;
+  drips: number;
   ticks: number;
 };
 
@@ -65,8 +68,9 @@ class FakeEnv implements AudioEnv {
 
   constructor(cfg: ProbeConfig) {
     this.hour = cfg.hour;
-    this.weather = { ...WEATHER_PRESETS[cfg.weather], wetness: WEATHER_PRESETS[cfg.weather].rain > 0 ? 1 : 0 };
+    this.weather = { ...WEATHER_PRESETS[cfg.weather], wetness: WEATHER_PRESETS[cfg.weather].rain > 0 ? 1 : 0, windDir: { x: 0.9701, y: 0.2425 } };
     if (cfg.gust !== undefined) this.weather.gust = cfg.gust;
+    if (cfg.wetness !== undefined) this.weather.wetness = cfg.wetness;
     const [x, z] = cfg.pos ?? [0, 360];
     this.cameraPos = { x, y: 1.7, z };
     this.yaw = THREE.MathUtils.degToRad(cfg.yaw ?? 0);
@@ -118,15 +122,15 @@ export async function renderOffline(cfg: ProbeConfig): Promise<ProbeResult> {
   const events = cfg.events ?? [];
   const step = 1 / 30;
   const pending: Promise<void>[] = [];
-  let fired = 0;
-  for (let t = step; t < seconds - step * 0.5; t += step) {
-    const tt = t;
+  const done = new Set<ProbeEvent>();
+  for (let k = 1; k * step < seconds - step * 0.5; k++) {
+    const tt = k * step;
     pending.push(
       ctx.suspend(tt).then(() => {
         env.tick(step, tt);
         for (const e of events) {
-          if (!(e.t >= tt - step && e.t < tt)) continue;
-          fired++;
+          if (done.has(e) || e.t > tt) continue;
+          done.add(e);
           switch (e.type) {
             case "step":
               mixer.speed = (e.speed ?? 1) * 3.4;
@@ -167,6 +171,7 @@ export async function renderOffline(cfg: ProbeConfig): Promise<ProbeResult> {
     lastStrike: mixer.thunder.lastStrike,
     insectLevel: mixer.insects.level,
     frogs: mixer.insects.frogs,
+    drips: mixer.rain.drips,
     ticks: mixer.ticks,
   };
   if (cfg.segments) {
@@ -175,6 +180,5 @@ export async function renderOffline(cfg: ProbeConfig): Promise<ProbeResult> {
       return { t0, t1, ...analyze(chs.map((c) => c.slice(a, b)), sr) };
     });
   }
-  void fired;
   return out;
 }

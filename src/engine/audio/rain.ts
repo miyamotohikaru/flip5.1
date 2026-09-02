@@ -6,7 +6,8 @@
 //   water  … 水面の気泡「ピチョ」（岸に近いほど。湖の方向から）
 //   rumble … 嵐の低いうねり
 import { smooth } from "./dsp";
-import { biquad, control, gainNode, loop, setT, type Ctx } from "./graph";
+import { attackDecay, biquad, control, gainNode, lfo, loop, oneShot, setT, type Ctx } from "./graph";
+import { Rng } from "./rng";
 import type { Resources } from "./resources";
 import type { Scene } from "./types";
 
@@ -22,12 +23,19 @@ export class RainLayer {
   private waterPan: StereoPannerNode;
   private gRumble: GainNode;
   private dRumble: GainNode;
+  private nextDrip = 0;
+  private rng = new Rng(8080);
+  /** 検証用: 雨上がりの雫の数 */
+  drips = 0;
 
-  constructor(ctx: Ctx, dest: AudioNode, res: Resources) {
+  constructor(private ctx: Ctx, dest: AudioNode, private res: Resources) {
     this.out = gainNode(ctx, 1);
     this.out.connect(dest);
     const merger = ctx.createChannelMerger(2);
     merger.connect(this.out);
+    // 粒のループが「同じ並び」に聞こえないよう、再生速度をごくゆっくり揺らす
+    const now = ctx.currentTime;
+    const drift = (src: AudioBufferSourceNode, rate: number, phase: number) => lfo(ctx, rate, 0.02, src.playbackRate, now + phase);
 
     for (let ch = 0; ch < 2; ch++) {
       // 芯
@@ -45,6 +53,7 @@ export class RainLayer {
 
       // 葉
       const leaf = loop(ctx, ch ? res.rainLeafB : res.rainLeafA, { rate: ch ? 0.93 : 1, offset: ch ? 2.2 : 0 });
+      drift(leaf, 0.031 + 0.01 * ch, ch * 0.3);
       const lbp = biquad(ctx, "bandpass", 4200, 0.8);
       const lg = gainNode(ctx, 0);
       leaf.connect(lbp);
@@ -54,6 +63,7 @@ export class RainLayer {
 
       // 地面
       const ground = loop(ctx, res.rainGround, { rate: ch ? 1.06 : 1, offset: ch ? 4.4 : 1.1 });
+      drift(ground, 0.023 + 0.013 * ch, 0.7 + ch * 0.4);
       const gbp = biquad(ctx, "bandpass", 1900, 0.8);
       const gg = gainNode(ctx, 0);
       ground.connect(gbp);
@@ -63,6 +73,7 @@ export class RainLayer {
 
       // 数滴
       const sparse = loop(ctx, res.rainSparse, { rate: ch ? 0.96 : 1, offset: ch ? 3.7 : 0 });
+      drift(sparse, 0.017 + 0.009 * ch, 1.1 + ch * 0.5);
       const shp = biquad(ctx, "highpass", 1500, 0.6);
       const sg = gainNode(ctx, 0);
       sparse.connect(shp);
@@ -76,6 +87,7 @@ export class RainLayer {
     this.waterPan = ctx.createStereoPanner();
     for (let i = 0; i < 2; i++) {
       const w = loop(ctx, res.rainWater, { rate: i ? 1.04 : 1, offset: i ? 3.3 : 0.7 });
+      drift(w, 0.027 + 0.011 * i, 2 + i * 0.6);
       const bp = biquad(ctx, "bandpass", 1300, 1.2);
       w.connect(bp);
       bp.connect(this.gWater);
@@ -114,5 +126,38 @@ export class RainLayer {
     setT(this.waterPan.pan, s.lakePan * (s.shoreDist < -3 ? 0.15 : 0.7), t, 0.3);
     setT(this.gRumble.gain, rumble * 0.5, t, 0.5);
     setT(this.dRumble.gain, rumble * 0.8, t, 0.5);
+    // 雨上がり: 濡れた木から雫が落ちる（雨が弱いほど・森ほど）
+    const drip = s.wetness * (1 - smooth(0.05, 0.3, r)) * (0.25 + 0.75 * s.forest + 0.2 * s.grass);
+    if (drip > 0.05 && t >= this.nextDrip) {
+      this.drip(t + 0.03, drip);
+      this.nextDrip = t + this.rng.range(0.35, 2.6) / (0.4 + drip);
+    }
+  }
+
+  private drip(t: number, level: number) {
+    const ctx = this.ctx, r = new Rng(8100 + this.drips++);
+    const pan = ctx.createStereoPanner();
+    pan.pan.value = r.range(-0.85, 0.85);
+    const dist = r.logRange(0.5, 1);
+    pan.connect(this.out);
+    // 気泡の「ピチョ」（周波数が上がる）
+    const o = ctx.createOscillator();
+    const f0 = r.logRange(600, 1900);
+    o.frequency.setValueAtTime(f0, t);
+    o.frequency.exponentialRampToValueAtTime(f0 * r.range(1.25, 1.6), t + 0.03);
+    const og = gainNode(ctx, 0);
+    o.connect(og);
+    og.connect(pan);
+    const end = attackDecay(og.gain, t, 0.28 * level * dist, 0.002, r.range(0.012, 0.03));
+    o.start(t);
+    o.stop(end + 0.05);
+    // 当たった瞬間の小さなクリック
+    const n = oneShot(ctx, this.res.noiseShort, t, 0.01, r.range(0, 1.5));
+    const bp = biquad(ctx, "bandpass", r.range(2500, 5000), 3);
+    const ng = gainNode(ctx, 0);
+    n.connect(bp);
+    bp.connect(ng);
+    ng.connect(pan);
+    n.stop(attackDecay(ng.gain, t, 0.12 * level * dist, 0.001, 0.004) + 0.02);
   }
 }

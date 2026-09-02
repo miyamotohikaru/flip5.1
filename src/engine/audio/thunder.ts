@@ -43,7 +43,10 @@ export class ThunderLayer {
     if (!L) return;
     let hit = false;
     if (typeof L.lastStrikeTime === "number") {
-      if (this.lastStrikeTime !== undefined && L.lastStrikeTime !== this.lastStrikeTime) hit = true;
+      if (this.lastStrikeTime === undefined) {
+        // 初めて見た値: いま起きたばかり（1 秒以内）なら落雷、古い値なら見送る
+        if (env.time - L.lastStrikeTime < 1.0 && env.time - L.lastStrikeTime >= 0) hit = true;
+      } else if (L.lastStrikeTime !== this.lastStrikeTime) hit = true;
       this.lastStrikeTime = L.lastStrikeTime;
     } else if (typeof L.flash === "number") {
       if (L.flash > 0.5 && this.prevFlash < 0.25) hit = true;
@@ -86,7 +89,7 @@ export class ThunderLayer {
     g.connect(send);
     send.connect(this.wet);
 
-    // crack
+    // crack（近い雷ほど鋭く大きい。胴体より先に来る）
     if (d < 2000) {
       const n = oneShot(ctx, res.noiseShort, t0, 0.4, r.range(0, 1.5));
       const hp = biquad(ctx, "highpass", 1500 + 4000 * bright, 0.7);
@@ -94,7 +97,7 @@ export class ThunderLayer {
       n.connect(hp);
       hp.connect(gc);
       gc.connect(g);
-      const end = attackDecay(gc.gain, t0, 0.9 * Math.pow(bright, 1.5), 0.002, 0.05 + 0.1 * bright);
+      const end = attackDecay(gc.gain, t0, 1.0 * Math.pow(bright, 1.2), 0.004, 0.08 + 0.12 * bright);
       n.stop(end + 0.1);
     }
     // tear
@@ -135,18 +138,19 @@ export class ThunderLayer {
       gb2.gain.setValueCurveAtTime(thunderCurve(128, seed + 1, bright * 0.5), tb + 0.101, D * 1.15);
       n2.stop(tb + D * 1.15 + 0.4);
     }
-    // sub
+    // sub（バリッの少し後に胸に来る）
     {
+      const ts = t0 + 0.06 + 0.1 * (1 - bright);
       const o = ctx.createOscillator();
       o.type = "sine";
       const f0 = r.range(42, 55);
-      o.frequency.setValueAtTime(f0, t0);
-      o.frequency.exponentialRampToValueAtTime(f0 * 0.7, t0 + 2.2);
+      o.frequency.setValueAtTime(f0, ts);
+      o.frequency.exponentialRampToValueAtTime(f0 * 0.7, ts + 2.2);
       const gs = gainNode(ctx, 0);
       o.connect(gs);
       gs.connect(g);
-      const end = attackDecay(gs.gain, t0, 0.55 * (0.5 + 0.5 * bright), 0.05 + 0.2 * (1 - bright), 1.2 + 1.5 * (1 - bright));
-      o.start(t0);
+      const end = attackDecay(gs.gain, ts, 0.5 * (0.5 + 0.5 * bright), 0.05 + 0.2 * (1 - bright), 1.2 + 1.5 * (1 - bright));
+      o.start(ts);
       o.stop(end + 0.2);
     }
   }
