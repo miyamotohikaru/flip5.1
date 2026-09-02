@@ -136,7 +136,7 @@ export class World {
     this.terrain = new Terrain(this.scene, env, this.lighting, this.q);
     this.water = new Water(this.scene, env, this.q);
     this.vegetation = new Vegetation(this.scene, env, this.lighting, this.q);
-    this.weather = new Weather(this.scene, env, this.lighting, this.q);
+    this.weather = new Weather(this.scene, env, this.lighting, this.q, this.pipeline);
     this.post = new Post(env, this.q);
     this.controls = new Controls(env, this.canvas, this.audio);
     this.runtime = new Runtime(this);
