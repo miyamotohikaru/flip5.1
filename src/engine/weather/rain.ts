@@ -201,21 +201,23 @@ void main(){
   float t = vLife;
   float r = 0.18 + 0.5 * t;
   float h = sin(t * 3.1416) * 0.6;
-  // 王冠: 手前半周の楕円の環 ＋ 5本の短い水柱と先端の玉
-  vec2 e = vec2(q.x / r, (q.y - 0.04) / (r * 0.28));
-  float ring = exp(-pow(abs(length(e) - 1.0) * 5.0, 2.0)) * step(q.y, 0.04 + r * 0.28);
+  // 王冠: 手前半周の楕円の環（ぼかし）＋ 3本の短い水柱と先端の玉（柔らかく、記号に見えないように）
+  vec2 e = vec2(q.x / r, (q.y - 0.04) / (r * 0.3));
+  float ring = exp(-pow(abs(length(e) - 1.0) * 3.0, 2.0)) * step(q.y, 0.04 + r * 0.3) * 0.7;
   float spikes = 0.0;
-  for (int i = 0; i < 4; i++) {
+  for (int i = 0; i < 3; i++) {
     float fi = float(i);
-    float ang = (fi + 0.5 + 0.6 * (flip_hash11(fi * 7.7 + floor(vWorld.z * 11.0)) - 0.5)) / 4.0 * 3.1416;
-    float hh = h * (0.55 + 0.45 * flip_hash11(fi * 3.1 + floor(vWorld.x * 13.0) + floor(vWorld.z * 7.0)));
-    vec2 base = vec2(cos(ang) * r, 0.04 - sin(ang) * r * 0.28 * 0.5);
-    vec2 tip = vec2(cos(ang) * r * (1.0 + 0.35 * t), base.y + hh);
+    float ang = (fi + 0.5 + 0.7 * (flip_hash11(fi * 7.7 + floor(vWorld.z * 11.0)) - 0.5)) / 3.0 * 3.1416;
+    float hh = h * (0.5 + 0.5 * flip_hash11(fi * 3.1 + floor(vWorld.x * 13.0) + floor(vWorld.z * 7.0)));
+    vec2 base = vec2(cos(ang) * r, 0.04 - sin(ang) * r * 0.15);
+    vec2 tip = vec2(cos(ang) * r * (1.0 + 0.45 * t), base.y + hh);
     float d = segDist(q, base, tip);
-    spikes += exp(-d * d * 900.0) * 0.7;
-    spikes += exp(-dot(q - tip, q - tip) * 1800.0);
+    spikes += exp(-d * d * 350.0) * 0.45;
+    spikes += exp(-dot(q - tip, q - tip) * 700.0) * 0.8;
   }
-  float shape = clamp(ring * 0.8 + spikes, 0.0, 1.0);
+  // 中心の水しぶきの霧（ごく薄い）
+  float mist = exp(-dot(q - vec2(0.0, 0.1), q - vec2(0.0, 0.1)) * 25.0) * 0.25 * (1.0 - t);
+  float shape = clamp(ring + spikes + mist, 0.0, 1.0);
   float sunUp = smoothstep(-0.05, 0.05, uSunDir.y);
   // 水しぶきは空を映して白く光る（濡れた暗い地面の上で目立つ）
   vec3 col = uSkyAmbient * 1.5 + uGroundAmbient * 0.25 + vec3(0.22) + uSunColor * 0.08 * sunUp + vec3(0.8, 0.85, 1.0) * uLightning;
