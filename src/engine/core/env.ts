@@ -166,6 +166,11 @@ export class Env {
     uSkyFog2: { value: new THREE.Vector4(0, 6, 0, 0) },
     /** 霧に当たる光（空からの平均放射輝度） */
     uSkyFogLight: { value: new THREE.Color(0.3, 0.4, 0.55) },
+    // ---- 実験室（engine/lab）のつまみ。**既定は全部 1 ＝ 何も変わらない**。lab/apply.ts が書き込む ----
+    /** 大気: x = ミー散乱の倍率, y = レイリーの倍率, z = オゾンの倍率, w = 予備 */
+    uLabSky: { value: new THREE.Vector4(1, 1, 1, 1) },
+    /** 植生: x = 草の密度の倍率, yzw = 予備 */
+    uLabVeg: { value: new THREE.Vector4(1, 1, 1, 1) },
   };
 
   setWeather(name: WeatherPresetName) {

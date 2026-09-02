@@ -11,6 +11,7 @@
 //   mtn  = 山脈（東西に走る尾根 × 山腹を流れ下る谷筋 × 段丘）。方角で高さが変わる（北が主峰）
 //   fine = 数m〜数十mの細かい起伏
 import { noise2, smoothstep } from "./noise";
+import { onSeed, subSeed } from "./seed";
 
 export const WORLD = {
   /** ハイトマップが覆う一辺（m）。これより外は霧の向こう。 */
@@ -30,10 +31,10 @@ export const WORLD = {
 // 地形専用の速いグラディエントノイズ（固定 seed の置換表。TypedArray で分岐なし）。
 // noise.ts の noise2 と同じ考え方だが 4M 回×20 層を 1.5 秒で焼くために別に持つ。
 const P2 = new Uint8Array(512);
-{
+function buildP2() {
   const p = new Uint8Array(256);
   for (let i = 0; i < 256; i++) p[i] = i;
-  let s = 2027 >>> 0;
+  let s = subSeed("terrain") >>> 0;
   const rnd = () => {
     s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
     return s / 4294967296;
@@ -81,14 +82,38 @@ function nzd(x: number, y: number): number {
   return (a + u * k0 + v * k1 + u * v * k2) * 1.414;
 }
 
+/**
+ * 地形の式のつまみ（実験室が動かす）。1 が既定＝今の谷。
+ * 変えたらハイトマップを焼き直す（engine/lab/rebuild.ts）。Worker にも同じ値を送ること。
+ */
+export type TerrainTune = {
+  /** 山脈の高さ（amp の倍率）。h の mtn 項 */
+  amp: number;
+  /** 尾根の鋭さ（sharp と round の混ぜ方）。1 で今、0 で丸い稜線だけ、2 で全部鋭い */
+  ridge: number;
+  /** 侵食の強さ（erodedFbm の傾き減衰 0.55 の倍率）。大きいほど斜面が滑らかで平地に細部が残る */
+  erode: number;
+};
+export const TERRAIN_TUNE_DEFAULT: TerrainTune = { amp: 1, ridge: 1, erode: 1 };
+const TUNE: TerrainTune = { ...TERRAIN_TUNE_DEFAULT };
+export function setTerrainTune(t: Partial<TerrainTune>) {
+  if (t.amp !== undefined) TUNE.amp = t.amp;
+  if (t.ridge !== undefined) TUNE.ridge = t.ridge;
+  if (t.erode !== undefined) TUNE.erode = t.erode;
+}
+export function getTerrainTune(): TerrainTune {
+  return { ...TUNE };
+}
+
 /** 侵食風フラクタル: 累積した傾きが大きいところほど高いオクターブを弱める（斜面は滑らか、平地は細かい）。 */
 function erodedFbm(x: number, y: number, octaves: number): number {
   let sum = 0, amp = 0.5, norm = 0, gx = 0, gy = 0;
+  const k = 0.55 * TUNE.erode;
   for (let i = 0; i < octaves; i++) {
     const n = nzd(x, y);
     gx += dNx;
     gy += dNy;
-    sum += (amp * n) / (1 + 0.55 * (gx * gx + gy * gy));
+    sum += (amp * n) / (1 + k * (gx * gx + gy * gy));
     norm += amp;
     x = x * 2.0 + 19.1;
     y = y * 2.0 + 7.9;
@@ -136,14 +161,21 @@ const angShore = new Float32Array(ANG_N + 1);
 const angBank = new Float32Array(ANG_N + 1);
 const angRange = new Float32Array(ANG_N + 1);
 const angMassif = new Float32Array(ANG_N + 1);
-for (let i = 0; i <= ANG_N; i++) {
-  const a = (i / ANG_N) * Math.PI * 2 - Math.PI;
-  const ca = Math.cos(a), sa = Math.sin(a);
-  angShore[i] = WORLD.lakeRadius + 70 * noise2(ca * 1.7 + 5.2, sa * 1.7 + 5.2) + 26 * noise2(ca * 4.1 + 1.3, sa * 4.1 + 9.1);
-  angBank[i] = nz(ca * 2.6 + 3.3, sa * 2.6 + 8.1);
-  angRange[i] = 120 * nz(ca * 1.9 + 1.2, sa * 1.9 + 4.4);
-  angMassif[i] = 0.74 + 0.26 * nz(ca * 1.4 + 7.7, sa * 1.4 + 2.2);
+function buildAngleTables() {
+  for (let i = 0; i <= ANG_N; i++) {
+    const a = (i / ANG_N) * Math.PI * 2 - Math.PI;
+    const ca = Math.cos(a), sa = Math.sin(a);
+    angShore[i] = WORLD.lakeRadius + 70 * noise2(ca * 1.7 + 5.2, sa * 1.7 + 5.2) + 26 * noise2(ca * 4.1 + 1.3, sa * 4.1 + 9.1);
+    angBank[i] = nz(ca * 2.6 + 3.3, sa * 2.6 + 8.1);
+    angRange[i] = 120 * nz(ca * 1.9 + 1.2, sa * 1.9 + 4.4);
+    angMassif[i] = 0.74 + 0.26 * nz(ca * 1.4 + 7.7, sa * 1.4 + 2.2);
+  }
 }
+// 置換表 → 角度の表 の順に作り直す（角度の表は nz / noise2 を引くので後）
+onSeed(() => {
+  buildP2();
+  buildAngleTables();
+});
 let angI = 0, angF = 0;
 function angIndex(x: number, z: number) {
   const fi = ((Math.atan2(z, x) + Math.PI) / (Math.PI * 2)) * ANG_N;
@@ -223,7 +255,7 @@ export function heightAt(x: number, z: number): number {
     const dotPeak = ca * PEAK_DIR_X + sa * PEAK_DIR_Z;
     const dotValley = ca * VALLEY_DIR_X + sa * VALLEY_DIR_Z;
     const dotValley2 = ca * VALLEY2_DIR_X + sa * VALLEY2_DIR_Z;
-    let amp = (320 + 360 * northness * northness) * angGet(angMassif);
+    let amp = (320 + 360 * northness * northness) * angGet(angMassif) * TUNE.amp;
     amp *= 1 + 0.24 * smoothstep(0.86, 1.0, dotPeak);
     const valleyCut = smoothstep(0.955, 0.993, dotValley) + 0.8 * smoothstep(0.965, 0.995, dotValley2);
     amp *= 1 - 0.72 * Math.min(1, valleyCut);
@@ -234,8 +266,10 @@ export function heightAt(x: number, z: number): number {
     const px = (x + wx) * 0.00048 + 0.5, pz = (z + wz) * 0.00078 + 0.9;
     const sharp = ridgedBoth(px, pz, 5);
     const round = ridgeRound;
-    const sharpness = 0.45 + 0.55 * smoothstep(-0.35, 0.45, nz(x * 0.0008 + 2.9, z * 0.0008 + 8.8));
+    let sharpness = (0.45 + 0.55 * smoothstep(-0.35, 0.45, nz(x * 0.0008 + 2.9, z * 0.0008 + 8.8))) * TUNE.ridge;
+    sharpness = sharpness < 0 ? 0 : sharpness > 1.6 ? 1.6 : sharpness;
     let m = round + (sharp - round) * sharpness;
+    m = m < 0 ? 0 : m > 1 ? 1 : m; // sharpness を 1 より上へ振ったときの外挿を止める
     m = m * m * (1.9 - 0.9 * m); // 谷底を締め、山頂は残す
 
     // 山腹を流れ下る谷筋（北側では南北に、東西側では東西に伸びた溝）。稜線と裾は残す

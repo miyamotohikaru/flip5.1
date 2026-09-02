@@ -5,6 +5,7 @@ import { hash2, smoothstep, clamp } from "../core/noise";
 import { WORLD, sampleHeightmap, type Heightmap } from "../core/heightfield";
 import { forestDensity, sampleVegMap, type VegMap } from "./vegmap";
 import { SHOTS } from "../core/params";
+import { LAB } from "../lab/store";
 
 export type Scatter = {
   count: number;
@@ -79,7 +80,8 @@ export function scatterTrees(hm: Heightmap, vm: VegMap, cell: number, variants: 
       if (sampleVegMap(vm, x, z, 1) < 0.02) continue;
       const h = sampleHeightmap(hm, x, z);
       const ny = groundNy(hm, x, z);
-      const p = forestDensity(x, z, h, ny);
+      // 実験室の「木の密度」はここに掛かる（既定は 1 ＝ そのまま）
+      const p = forestDensity(x, z, h, ny) * LAB.vegTree;
       if (h1 > p) continue;
       // 定点撮影の立ち位置の中に幹が来ないように
       let blocked = false;

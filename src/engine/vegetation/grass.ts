@@ -108,6 +108,7 @@ function bladeGeometry(segments: number, blades: number, offsets: Float32Array):
 const GRASS_PLACE = /* glsl */ `
 uniform vec4 uRing;   // x = セル(m), y = 内径, z = 外径, w = 株の広がり(m)
 uniform vec4 uBlade;  // x = 高さ(m), y = 幅(m), z = フェード帯(m), w = 未使用
+uniform vec4 uLabVeg;  // 実験室のつまみ。x = 草の密度の倍率（既定 1）
 uniform sampler2D uVegMap;
 uniform vec4 uVegMapInfo;
 attribute vec2 aCell;
@@ -133,6 +134,7 @@ void veg_grass(out vec3 p, out vec3 n){
   density *= 1.0 - smoothstep(380.0, 420.0, h);
   // 細かい斑（同じセルの株は同じ斑）
   density *= 0.7 + 0.6 * flip_vnoise(root2 * 0.35 + 3.0);
+  density *= uLabVeg.x;
   float band = uBlade.z;
   float ringFade = smoothstep(uRing.y - band, uRing.y + band * 0.3, dist) * (1.0 - smoothstep(uRing.z - band, uRing.z + band * 0.3, dist));
   float hh = flip_hash12(cw * 2.17 + 5.0 + k * 0.37);

@@ -10,6 +10,7 @@ import { smooth } from "./dsp";
 import { biquad, control, gainNode, loop, setT, type Ctx } from "./graph";
 import type { Resources } from "./resources";
 import type { Scene } from "./types";
+import { LAB } from "../lab/store";
 
 type Side = {
   gRoar: GainNode;
@@ -102,6 +103,8 @@ export class WindLayer {
 
   tick(s: Scene) {
     const t = s.t;
+    // 実験室のつまみ（既定は 1 ＝ 変化なし）
+    const gd = LAB.audioGust, bd = LAB.audioBand;
     const ext = s.hasGust ? s.gust : 0;
     const w = Math.min(1.25, s.wind * (s.hasGust ? 0.7 + 0.6 * ext : 1));
     // 帯域が狭いほど雑音の通る量が少ない（roar は白色雑音の約 1.4%、rustle は約 15%、hiss は約 84%）ので、
@@ -118,24 +121,24 @@ export class WindLayer {
       // 風上側の耳（右が +）を少し強く
       const side = 1 + 0.35 * s.windPan * (ch ? 1 : -1);
       setT(sd.gRoar.gain, roar * 0.7 * side, t, 0.3);
-      setT(sd.dRoar.gain, roar * 3.5 * side, t, 0.3);
+      setT(sd.dRoar.gain, roar * 3.5 * side * gd, t, 0.3);
       setT(sd.gRustle.gain, rustle * 0.3, t, 0.3);
-      setT(sd.dRustle.gain, rustle * 1.4, t, 0.3);
+      setT(sd.dRustle.gain, rustle * 1.4 * gd, t, 0.3);
       setT(sd.dDrift.gain, rustle * 0.35, t, 0.3);
       setT(sd.gLeaves.gain, leaves * 0.3, t, 0.3);
-      setT(sd.dLeaves.gain, leaves * 3.2, t, 0.3);
+      setT(sd.dLeaves.gain, leaves * 3.2 * gd, t, 0.3);
       setT(sd.gHiss.gain, hiss * side, t, 0.3);
       setT(sd.gBuffet.gain, buffet * 0.7 * side, t, 0.3);
-      setT(sd.dBuffet.gain, buffet * 2.0 * side, t, 0.3);
+      setT(sd.dBuffet.gain, buffet * 2.0 * side * gd, t, 0.3);
       setT(sd.roar1.frequency, 110 + 220 * w, t, 0.5);
       setT(sd.dRoarF.gain, 90 + 120 * w, t, 0.5);
-      setT(sd.rustle.frequency, 1000 + 1200 * w, t, 0.5);
-      setT(sd.dRustleF.gain, 600 + 900 * w, t, 0.5);
+      setT(sd.rustle.frequency, (1000 + 1200 * w) * bd, t, 0.5);
+      setT(sd.dRustleF.gain, (600 + 900 * w) * bd * gd, t, 0.5);
       setT(sd.rustle.Q, 1.2 - 0.6 * Math.min(1, w), t, 0.5);
     }
     setT(this.gHowl.gain, howl * 1.5, t, 0.4);
-    setT(this.dHowl.gain, howl * 9, t, 0.4);
-    setT(this.howl.frequency, 420 + 200 * w, t, 0.5);
+    setT(this.dHowl.gain, howl * 9 * gd, t, 0.4);
+    setT(this.howl.frequency, (420 + 200 * w) * bd, t, 0.5);
     setT(this.dHowlF.gain, 350 + 250 * w, t, 0.5);
     setT(this.howlPan.pan, s.windPan * 0.5, t, 0.5);
   }

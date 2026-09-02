@@ -20,6 +20,8 @@ import { LUT_VERT, TRANS_FRAG, MS_FRAG, SKYVIEW_FRAG, AERIAL_FRAG, PROBE_FRAG } 
 import { NOISE_SHAPE_FRAG, NOISE_DETAIL_FRAG, WEATHER_FRAG, CLOUD_FRAG, CLOUD_SHADOW_FRAG } from "./clouds.glsl";
 import { SKY_VERT, SKY_FRAG } from "./sky.glsl";
 import { ATMO, transmittance, moonDirection, luminance } from "./cpu";
+import { subFloat } from "../core/seed";
+import { LAB } from "../lab/store";
 
 type U = Record<string, THREE.IUniform>;
 
@@ -91,6 +93,11 @@ export class Sky {
   private envTimer = 1e9;
   private envSunDir = new THREE.Vector3(0, -2, 0);
   private baked = { shape: 0, detail: 0, weather: false, hazeKm: -1 };
+  /** シードが変わったとき（engine/lab/rebuild.ts）に呼ぶ。次のフレームで雲の天気マップを焼き直す */
+  reseed() {
+    (this.weatherMat.uniforms.uWeatherSeed.value as THREE.Vector2).set(subFloat("sky", 1) * 4, subFloat("sky", 2) * 4);
+    this.baked.weather = false;
+  }
   private probeBuf = new Float32Array(16);
   private probePending = false;
   private probeValid = false;
@@ -185,7 +192,8 @@ export class Sky {
     this.probeMat = lutMat(PROBE_FRAG, { uSunDirK: { value: new THREE.Vector3(0, 1, 0) } });
     this.shapeMat = lutMat(NOISE_SHAPE_FRAG, { uZ: { value: 0 } });
     this.detailMat = lutMat(NOISE_DETAIL_FRAG, { uZ: { value: 0 } });
-    this.weatherMat = lutMat(WEATHER_FRAG);
+    // 雲の天気マップは世界のシードでずらす（既定のシードでは 0 ＝ 今の並び）
+    this.weatherMat = lutMat(WEATHER_FRAG, { uWeatherSeed: { value: new THREE.Vector2(subFloat("sky", 1) * 4, subFloat("sky", 2) * 4) } });
 
     // ---- 雲（レイマーチ・影） ----
     const cloudCommonU = (): U => ({
@@ -305,8 +313,9 @@ export class Sky {
     env.moonIntensity = moonIrr > 1e-6 ? 1 : 0;
 
     // ---- 雲の層 ----
-    const cov = 0.16 + 1.0 * Math.pow(w.cloud, 1.05);
-    const base = 1900 - 700 * w.storm - 250 * w.rain;
+    // 実験室の「雲量」「雲の高さ」はここに掛かる（既定は 1 ＝ 変化なし）
+    const cov = (0.16 + 1.0 * Math.pow(w.cloud, 1.05)) * LAB.skyCloud;
+    const base = (1900 - 700 * w.storm - 250 * w.rain) * LAB.skyCloudBase;
     const top = base + 1500 + 800 * w.cloud + 500 * w.storm;
     const sigma = 0.03 + 0.025 * w.storm;
     const layer = this.cloudU.uCloudLayer.value as THREE.Vector4;

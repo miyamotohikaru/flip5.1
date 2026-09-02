@@ -33,6 +33,8 @@ export const ATMO_COMMON = /* glsl */ `
 #define FLIP_AERIAL_D 16.0
 uniform sampler2D uSkyTransLut;
 uniform vec4 uSkyParams;
+// 実験室のつまみ（core/env.ts の uLabSky）。x = ミー, y = レイリー, z = オゾン。既定は 1
+uniform vec4 uLabSky;
 #define FLIP_RGROUND (FLIP_RG + uSkyParams.w)
 
 // 海抜 h (km) の媒質。sR = レイリー散乱, sM = ミー＋靄の散乱, sE = 消散（散乱＋吸収）
@@ -42,11 +44,11 @@ void flip_atmoMedium(float h, out vec3 sR, out vec3 sM, out vec3 sE){
   float dM = exp(-hr / 2.5);
   float dH = uSkyParams.z * exp(-max(h - uSkyParams.w, 0.0) / 1.0);
   float dO = max(0.0, 1.0 - abs(hr - 25.0) / 15.0);
-  sR = vec3(5.802, 13.558, 33.1) * 1e-3 * dR;
-  float mS = 3.2e-3 * dM + dH * 0.9;
-  float mA = 0.35e-3 * dM + dH * 0.1;
+  sR = vec3(5.802, 13.558, 33.1) * 1e-3 * dR * uLabSky.y;
+  float mS = (3.2e-3 * dM + dH * 0.9) * uLabSky.x;
+  float mA = (0.35e-3 * dM + dH * 0.1) * uLabSky.x;
   sM = vec3(mS);
-  sE = sR + vec3(mS + mA) + vec3(0.65, 1.881, 0.085) * 0.75e-3 * dO;
+  sE = sR + vec3(mS + mA) + vec3(0.65, 1.881, 0.085) * 0.75e-3 * dO * uLabSky.z;
 }
 float flip_phaseR(float c){ return 0.0596831 * (1.0 + c * c); }
 // Cornette-Shanks

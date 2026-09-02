@@ -14,6 +14,7 @@ import { WaveSim } from "./wavesim";
 import { WATER_VERT, WATER_FRAG } from "./shaders";
 import { ShoreDecal } from "./shore";
 import { GpuTimer } from "./gputimer";
+import { LAB } from "../lab/store";
 
 /** カメラ中心の極座標格子。半径は等比で増える（近くほど細かい） */
 function buildPolarGrid(nr: number, nt: number, rMin: number, rMax: number): THREE.BufferGeometry {
@@ -60,6 +61,8 @@ export class Water {
   private reflCamera = new THREE.PerspectiveCamera();
   private textureMatrix = new THREE.Matrix4();
   private lastTime = -1;
+  /** 実験室の「うねりの向き」で回した風向（毎フレームの生成を避ける） */
+  private labWindDir = new THREE.Vector2(1, 0);
   private camFwd = new THREE.Vector3();
   private tmp = {
     reflectorPlane: new THREE.Plane(),
@@ -253,7 +256,15 @@ export class Water {
     const under = env.underwater > 0.5;
 
     // 波
-    this.sim.setWind(w.windDir, w.wind, w.storm);
+    // 実験室の「風速」「うねりの向き」はここに掛かる（既定は 1 と 0 ＝ 天気そのまま）
+    if (LAB.waterWind === 1 && LAB.waterDir === 0) {
+      this.sim.setWind(w.windDir, w.wind, w.storm);
+    } else {
+      const a = (LAB.waterDir * Math.PI) / 180;
+      const ca = Math.cos(a), sa = Math.sin(a);
+      this.labWindDir.set(w.windDir.x * ca - w.windDir.y * sa, w.windDir.x * sa + w.windDir.y * ca);
+      this.sim.setWind(this.labWindDir, w.wind * LAB.waterWind, w.storm);
+    }
     const dt = this.lastTime < 0 ? 0 : Math.max(env.time - this.lastTime, 0);
     this.lastTime = env.time;
     this.timer.begin("sim");

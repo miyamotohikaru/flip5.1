@@ -1,5 +1,8 @@
 // 音まわりの決定的な乱数。Math.random は使わない（同じ操作をすれば同じ音が鳴る）。
 // 整数ハッシュで種を作り、xorshift32 で列を出す。
+// 世界のシード（core/seed.ts の "audio"）が全部の種に混ざる＝?seed= を変えると鳥の鳴き方も雷の形も変わる。
+// （音の素材は起動時に一度だけ合成するので、シードが効くのは読み込みの時点）
+import { subSeed } from "../core/seed";
 
 /** 整数のハッシュ → 32bit 符号なし */
 export function hashU32(a: number, b = 0, c = 0): number {
@@ -12,7 +15,7 @@ export function hashU32(a: number, b = 0, c = 0): number {
 export class Rng {
   private s: number;
   constructor(seed: number, salt = 0) {
-    this.s = hashU32(seed, salt) || 0x1234567;
+    this.s = hashU32(seed + subSeed("audio"), salt) || 0x1234567;
   }
   /** [0, 1) */
   next(): number {

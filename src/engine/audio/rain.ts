@@ -10,6 +10,7 @@ import { attackDecay, biquad, control, gainNode, lfo, loop, oneShot, setT, type 
 import { Rng } from "./rng";
 import type { Resources } from "./resources";
 import type { Scene } from "./types";
+import { LAB } from "../lab/store";
 
 export class RainLayer {
   out: GainNode;
@@ -25,6 +26,9 @@ export class RainLayer {
   private dRumble: GainNode;
   private nextDrip = 0;
   private rng = new Rng(8080);
+  /** 粒の列（rainGrains）の音源と、作ったときの再生速度。実験室の「雨粒の密度」で速度を変える＝粒/秒が変わる */
+  private grains: { src: AudioBufferSourceNode; base: number }[] = [];
+  private grainRate = 1;
   /** 検証用: 雨上がりの雫の数 */
   drips = 0;
 
@@ -40,6 +44,7 @@ export class RainLayer {
     for (let ch = 0; ch < 2; ch++) {
       // 芯
       const src = loop(ctx, res.rainHiss, { offset: ch ? 3.1 : 0.4, rate: ch ? 1 : 0.97 });
+      this.grains.push({ src, base: ch ? 1 : 0.97 });
       const hp = biquad(ctx, "highpass", 500, 0.6);
       const lp = biquad(ctx, "lowpass", 5000, 0.5);
       const g = gainNode(ctx, 0);
@@ -53,6 +58,7 @@ export class RainLayer {
 
       // 葉
       const leaf = loop(ctx, ch ? res.rainLeafB : res.rainLeafA, { rate: ch ? 0.93 : 1, offset: ch ? 2.2 : 0 });
+      this.grains.push({ src: leaf, base: ch ? 0.93 : 1 });
       drift(leaf, 0.031 + 0.01 * ch, ch * 0.3);
       const lbp = biquad(ctx, "bandpass", 4200, 0.8);
       const lg = gainNode(ctx, 0);
@@ -63,6 +69,7 @@ export class RainLayer {
 
       // 地面
       const ground = loop(ctx, res.rainGround, { rate: ch ? 1.06 : 1, offset: ch ? 4.4 : 1.1 });
+      this.grains.push({ src: ground, base: ch ? 1.06 : 1 });
       drift(ground, 0.023 + 0.013 * ch, 0.7 + ch * 0.4);
       const gbp = biquad(ctx, "bandpass", 1900, 0.8);
       const gg = gainNode(ctx, 0);
@@ -73,6 +80,7 @@ export class RainLayer {
 
       // 数滴
       const sparse = loop(ctx, res.rainSparse, { rate: ch ? 0.96 : 1, offset: ch ? 3.7 : 0 });
+      this.grains.push({ src: sparse, base: ch ? 0.96 : 1 });
       drift(sparse, 0.017 + 0.009 * ch, 1.1 + ch * 0.5);
       const shp = biquad(ctx, "highpass", 1500, 0.6);
       const sg = gainNode(ctx, 0);
@@ -87,6 +95,7 @@ export class RainLayer {
     this.waterPan = ctx.createStereoPanner();
     for (let i = 0; i < 2; i++) {
       const w = loop(ctx, res.rainWater, { rate: i ? 1.04 : 1, offset: i ? 3.3 : 0.7 });
+      this.grains.push({ src: w, base: i ? 1.04 : 1 });
       drift(w, 0.027 + 0.011 * i, 2 + i * 0.6);
       const bp = biquad(ctx, "bandpass", 1300, 1.2);
       w.connect(bp);
@@ -107,6 +116,11 @@ export class RainLayer {
 
   tick(s: Scene) {
     const t = s.t, r = s.rain;
+    // 実験室の「雨粒の密度」: 粒の列の再生速度を変える（列は N 粒／T 秒なので、速度 k で N·k/T 粒/秒）
+    if (LAB.audioRain !== this.grainRate) {
+      this.grainRate = LAB.audioRain;
+      for (const g of this.grains) g.src.playbackRate.setTargetAtTime(g.base * this.grainRate, t, 0.08);
+    }
     const on = r > 0.004;
     const hiss = on ? 0.9 * Math.pow(smooth(0.12, 1, r), 1.3) : 0;
     const leaf = on ? 0.55 * Math.sqrt(r) * (0.45 + 0.55 * s.forest + 0.25 * s.grass) : 0;

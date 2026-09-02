@@ -119,8 +119,11 @@ void main(){
 export const WEATHER_FRAG = /* glsl */ `
 ${PERIODIC_NOISE}
 varying vec2 vUv;
+// 世界のシードによるずらし（core/seed.ts の subFloat("sky")）。既定のシードでは 0＝今の雲の並び。
+// 周期ノイズなので定数を足してもタイルの継ぎ目は出ない
+uniform vec2 uWeatherSeed;
 void main(){
-  vec2 p = vUv;
+  vec2 p = vUv + uWeatherSeed;
   float c = cl_fbm2p(p, 4.0, 6) * 0.5 + 0.5;
   c = smoothstep(0.22, 0.86, c);
   float type = cl_fbm2p(p + 3.7, 2.0, 3) * 0.5 + 0.5;

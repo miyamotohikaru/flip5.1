@@ -17,6 +17,11 @@ import { Audio } from "./audio";
 import { Controls } from "./controls";
 import { Runtime } from "./controls/runtime";
 import { bakeHeightmapAsync, type BakeMode } from "./controls/bake";
+import { Lab } from "./lab/rebuild";
+import { LAB } from "./lab/store";
+import { readLabParamsFromLocation } from "./lab/params";
+import { setTerrainTune } from "./core/height";
+import { getSeed } from "./core/seed";
 
 export type WorldEvent = "ready" | "progress" | "frame" | "enter" | "exit" | "flip" | "photo" | "contextlost" | "contextrestored" | "tier";
 type Listener = (payload?: unknown) => void;
@@ -55,6 +60,10 @@ export class World {
   controls!: Controls;
   /** 操作・性能監視・堅牢性の配線（controls/runtime.ts） */
   runtime!: Runtime;
+  /** 実験室（つまみとシード）。UI から触る。閉じている間は何もしない */
+  lab!: Lab;
+  /** この世界のシード（?seed=）。全部の乱数がここから生えている */
+  seed = getSeed();
   /** 動的解像度の倍率（controls/performance が変える）。resize() で pixelRatio に掛かる */
   renderScale = 1;
   /** ハイトマップの焼き方と所要時間（起動時間の確認用） */
@@ -69,6 +78,9 @@ export class World {
 
   constructor(public canvas: HTMLCanvasElement) {
     registerChunks();
+    // 実験室のつまみ（?p=…）は、ハイトマップを焼く前・植生を並べる前に読む
+    readLabParamsFromLocation();
+    setTerrainTune({ amp: LAB.terrainAmp, ridge: LAB.terrainRidge, erode: LAB.terrainErode });
     this.params = parseParams(typeof location !== "undefined" ? location.search : "");
     this.env.isMobile = isMobileDevice();
     this.renderer = new THREE.WebGLRenderer({
@@ -140,6 +152,8 @@ export class World {
     this.post = new Post(env, this.q);
     this.controls = new Controls(env, this.canvas, this.audio);
     this.runtime = new Runtime(this);
+    this.lab = new Lab(this);
+    this.lab.applyUniforms();
 
     const start = startPosition();
     const p = this.params;
