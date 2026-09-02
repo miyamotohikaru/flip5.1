@@ -16,16 +16,20 @@ uniform vec3 uWindOffset;    // 3D ノイズのずれ (m)
 float cl_remap(float v, float l0, float h0, float l1, float h1){ return l1 + (v - l0) * (h1 - l1) / (h0 - l0); }
 vec4 cl_weather(vec2 xz){ return texture2D(uWeatherMap, xz * uWeatherParams.x + uWeatherParams.yz); }
 float cl_coverage(vec4 w){ return clamp((w.r - (1.0 - uCloudLayer.z)) / 0.5, 0.0, 1.0); }
-// 層の中の高さ hf (0..1) と型 (0 = 層雲: 低く平ら, 1 = 積雲: 高い) による密度の重み
-float cl_heightGrad(float hf, float type){
+// 層の中の高さ hf (0..1) と型 (0 = 層雲: 低く平ら, 1 = 積雲: 高い) による密度の重み。
+// undul = 雲底のうねり（その雲の厚み top に対する割合、-1..1）。底だけを上下させるので、
+// 底が上がったところは雲が薄くなって光が通る＝「暗い塊とすき間」になる
+float cl_heightGrad(float hf, float type, float undul){
   type = clamp(type + uCloudShape.x, 0.0, 1.0);
   float top = mix(0.30, 1.0, type) * uCloudShape.y;
-  return smoothstep(0.0, 0.07, hf) * (1.0 - smoothstep(top * 0.55, top, hf));
+  float b = max(undul, -0.9) * 0.5 * top;
+  return smoothstep(b, b + 0.07, hf) * (1.0 - smoothstep(top * 0.55, top, hf));
 }
 float cl_density(vec3 p, float hf, vec4 w, bool detail){
   float cov = cl_coverage(w);
   if (cov <= 0.002) return 0.0;
-  float hg = cl_heightGrad(hf, w.g);
+  // 雲底のうねり（嵐・雨）。天気マップの細かいむら（w.b、λ≈3km）で底の高さを上下させる
+  float hg = cl_heightGrad(hf, w.g, uCloudShape.z * (w.b - 0.5) * 2.0);
   if (hg <= 0.002) return 0.0;
   vec3 sp = (p + uWindOffset) * (1.0 / 4200.0);
   vec4 s = texture(uNoiseShape, sp);
@@ -119,8 +123,11 @@ void main(){
 export const WEATHER_FRAG = /* glsl */ `
 ${PERIODIC_NOISE}
 varying vec2 vUv;
+// 世界のシードによるずらし（core/seed.ts の subFloat("sky")）。既定のシードでは 0＝今の雲の並び。
+// 周期ノイズなので定数を足してもタイルの継ぎ目は出ない
+uniform vec2 uWeatherSeed;
 void main(){
-  vec2 p = vUv;
+  vec2 p = vUv + uWeatherSeed;
   float c = cl_fbm2p(p, 4.0, 6) * 0.5 + 0.5;
   c = smoothstep(0.22, 0.86, c);
   float type = cl_fbm2p(p + 3.7, 2.0, 3) * 0.5 + 0.5;

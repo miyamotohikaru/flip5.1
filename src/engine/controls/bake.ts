@@ -3,6 +3,8 @@
 // 1〜4 個の Worker に分け、Float32Array を transfer で受け取って DataTexture に組み立てる。
 // Worker が作れない／失敗した／時間切れのときはメインスレッドで焼く（結果は同じ）。
 import { bakeHeightmap, heightmapFromData, type Heightmap } from "../core/heightfield";
+import { getTerrainTune } from "../core/height";
+import { getSeed } from "../core/seed";
 
 export type BakeMode = "worker" | "sync";
 export type BakeResult = { heightmap: Heightmap; ms: number; mode: BakeMode; workers: number };
@@ -100,7 +102,8 @@ function bakeInWorkers(res: number, n: number, onProgress?: (p: number) => void)
           }
         }
       };
-      w.postMessage({ res, j0, j1 });
+      // Worker は URL を見られないので、シードと地形のつまみを毎回渡す（同じ世界を焼くため）
+      w.postMessage({ res, j0, j1, seed: getSeed(), tune: getTerrainTune() });
     }
     if (workers.length === 0) fail(new Error("no bake workers"));
   });

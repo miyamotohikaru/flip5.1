@@ -6,6 +6,8 @@
 // 2 つのカスケード（大きい波 / さざ波）を 1 枚のアトラス（横に並べる）で一度に処理する。
 import * as THREE from "three";
 import { FS_VERT, type Pipeline } from "../core/pipeline";
+import { seedOffset } from "../core/seed";
+import { LAB } from "../lab/store";
 
 export type CascadeDef = {
   /** タイルの一辺（m） */
@@ -253,7 +255,8 @@ export class WaveSim {
         uKp: { value: 3 },
         uDirPow: { value: 3 },
         uKt: { value: 30 },
-        uSeed: { value: 0.37 },
+        // 波のガウス乱数の種。世界のシードから（既定のシードでは 0.37 ＝ 今の波）
+        uSeed: { value: 0.37 + seedOffset("water", 1) },
       },
       vertexShader: FS_VERT,
       fragmentShader: SPECTRUM_FRAG,
@@ -279,6 +282,11 @@ export class WaveSim {
     });
   }
 
+  /** 世界のシードが変わったとき（engine/lab/rebuild.ts）に波のガウス乱数の種をつけ直す */
+  reseed() {
+    this.specMat.uniforms.uSeed.value = 0.37 + seedOffset("water", 1);
+  }
+
   /** 傾きテクスチャ（現在のもの） */
   derivTexture(c: number): THREE.Texture {
     return this.derivRTs[c][this.derivIndex].texture;
@@ -291,7 +299,7 @@ export class WaveSim {
   setWind(dir: THREE.Vector2, speed: number, storm: number) {
     const U = Math.max(speed, 0.3);
     const hs = 0.0025 + 0.0042 * U * U;                   // 2m/s: 2cm, 5m/s: 11cm, 11m/s: 51cm
-    const lambdaP = 0.35 + 0.062 * U * U;                 // 2m/s: 0.6m, 5m/s: 1.9m, 11m/s: 7.9m
+    const lambdaP = (0.35 + 0.062 * U * U) * LAB.waterPeriod; // 2m/s: 0.6m, 5m/s: 1.9m, 11m/s: 7.9m
     const kp = (2 * Math.PI) / lambdaP;
     const amp = ((hs / 4) * (hs / 4) * kp * kp) / 2;
     const t = Math.min(Math.max((U - 3) / 7, 0), 1);

@@ -59,7 +59,17 @@ URL パラメータ（`src/engine/core/params.ts`）:
 `?auto=1` 入口を飛ばす ／ `?nohud=1` ／ `?freeze=1` 時間停止 ／ `?t=17.5` 時刻 ／
 `?w=clear|cloudy|mist|rain|storm` ／ `?pos=x,z[,y]` ／ `?look=yaw,pitch`（度）／
 `?flip=1&flipr=300` 裏返しの波の半径 ／ `?q=low|mid|high|ultra` ／ `?shot=<定点名>` ／
-`?stats=1` 負荷表示 ／ `?dbg=noref,nocopy,notrans,nopost` 段階を飛ばす（調査用）。
+`?stats=1` 負荷表示 ／ `?dbg=noref,nocopy,notrans,nopost` 段階を飛ばす（調査用）／
+`?seed=12345` 世界のシード（既定 20271337 ＝ 今の谷）／ `?lab=1` 実験室を開いて始める ／
+`?p=terrain.amp:1.4,sky.mie:2` 実験室のつまみ（`src/engine/lab/params.ts`）。
+
+### シード（`core/seed.ts`）
+**全部の乱数はひとつの数から生える。** `setSeed(n)` / `getSeed()` / `subSeed(用途)` / `seedOffset(用途, i)`。
+用途は terrain（地形の置換表・角度の表）/ noise（共通ノイズの置換表）/ place（配置のハッシュの塩）/
+sky（雲の天気マップ）/ water（波のスペクトル）/ audio（音の乱数）。
+**`seedOffset()` は既定のシードでは 0 を返す**ので、手で置いたノイズの定数に足しても今の絵は変わらない。
+シードは `core/seed.ts` の読み込み時に URL から決まる（`core/params.ts` が module scope で `startPosition()` を
+呼ぶより先でないといけない）。Worker には `controls/bake.ts` が毎回 `seed` と地形のつまみを渡す。
 
 定点（`SHOTS`）: golden / noon / dawn / cloudy / rain / storm / night / sunset_water / forest / ridge /
 flip_half / flip_full。批評はこの12枚＋携帯2枚で行う。

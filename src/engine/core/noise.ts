@@ -1,24 +1,32 @@
 // CPU側の決定的ノイズ。地形の高さ関数や配置の乱数に使う。
 // 画像も乱数表ファイルも使わない――全部この関数群から生える。
+// 置換表もハッシュの塩も core/seed.ts のシードひとつから作る（?seed=12345 で世界が丸ごと変わる）。
 // GPU側の同等品は glsl/noise.glsl.ts（値は一致しない。役割が違う）。
+import { onSeed, subSeed } from "./seed";
 
 const PERM = new Uint8Array(512);
+/** 配置のハッシュに混ぜる塩。シードから決まる（既定のシードでは 0 ＝ 今までと同じ並び） */
+let placeSalt = 0;
 {
-  // 固定seedのLCGで置換表をつくる（Math.randomは使わない＝毎回同じ世界）
-  const p = new Uint8Array(256);
-  for (let i = 0; i < 256; i++) p[i] = i;
-  let s = 1337 >>> 0;
-  const rnd = () => {
-    s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
-    return s / 4294967296;
+  // 置換表はシードから作る（Math.randomは使わない＝同じシードなら毎回同じ世界）
+  const build = () => {
+    const p = new Uint8Array(256);
+    for (let i = 0; i < 256; i++) p[i] = i;
+    let s = subSeed("noise") >>> 0;
+    const rnd = () => {
+      s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
+      return s / 4294967296;
+    };
+    for (let i = 255; i > 0; i--) {
+      const j = Math.floor(rnd() * (i + 1));
+      const t = p[i];
+      p[i] = p[j];
+      p[j] = t;
+    }
+    for (let i = 0; i < 512; i++) PERM[i] = p[i & 255];
+    placeSalt = subSeed("place") | 0;
   };
-  for (let i = 255; i > 0; i--) {
-    const j = Math.floor(rnd() * (i + 1));
-    const t = p[i];
-    p[i] = p[j];
-    p[j] = t;
-  }
-  for (let i = 0; i < 512; i++) PERM[i] = p[i & 255];
+  onSeed(build);
 }
 
 const GRAD = [
@@ -78,9 +86,9 @@ export function ridged2(x: number, y: number, octaves = 5, lacunarity = 2.0, gai
   return sum / norm;
 }
 
-/** 整数座標のハッシュ [0, 1)。配置の乱数用。 */
+/** 整数座標のハッシュ [0, 1)。配置の乱数用。世界のシード（place）が塩として混ざる。 */
 export function hash2(x: number, y: number, seed = 0): number {
-  let h = (Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263) + Math.imul(seed | 0, 2246822519)) | 0;
+  let h = (Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263) + Math.imul((seed | 0) + placeSalt, 2246822519)) | 0;
   h = Math.imul(h ^ (h >>> 13), 1274126177);
   h ^= h >>> 16;
   return (h >>> 0) / 4294967296;

@@ -23,6 +23,7 @@ export const ATMO_COMMON = /* glsl */ `
 #define PI 3.141592653589793
 #endif
 #endif
+#define FLIP_MIE_K vec3(0.727, 1.0, 1.40)
 #define FLIP_RG 6360.0
 #define FLIP_RT 6460.0
 #define FLIP_TRANS_W 256.0
@@ -33,6 +34,8 @@ export const ATMO_COMMON = /* glsl */ `
 #define FLIP_AERIAL_D 16.0
 uniform sampler2D uSkyTransLut;
 uniform vec4 uSkyParams;
+// 実験室のつまみ（core/env.ts の uLabSky）。x = ミー, y = レイリー, z = オゾン。既定は 1
+uniform vec4 uLabSky;
 #define FLIP_RGROUND (FLIP_RG + uSkyParams.w)
 
 // 海抜 h (km) の媒質。sR = レイリー散乱, sM = ミー＋靄の散乱, sE = 消散（散乱＋吸収）
@@ -42,11 +45,15 @@ void flip_atmoMedium(float h, out vec3 sR, out vec3 sM, out vec3 sE){
   float dM = exp(-hr / 2.5);
   float dH = uSkyParams.z * exp(-max(h - uSkyParams.w, 0.0) / 1.0);
   float dO = max(0.0, 1.0 - abs(hr - 25.0) / 15.0);
-  sR = vec3(5.802, 13.558, 33.1) * 1e-3 * dR;
-  float mS = 3.2e-3 * dM + dH * 0.9;
-  float mA = 0.35e-3 * dM + dH * 0.1;
-  sM = vec3(mS);
-  sE = sR + vec3(mS + mA) + vec3(0.65, 1.881, 0.085) * 0.75e-3 * dO;
+  // uLabSky = 実験室のつまみ（既定は全部 1 ＝ 何も変わらない）
+  sR = vec3(5.802, 13.558, 33.1) * 1e-3 * dR * uLabSky.y;
+  // ミー（エアロゾル）。黄昏に「橙の帯」が出る量。cpu.ts の extinction() と同じ値にすること
+  // FLIP_MIE_K = 波長依存（Angstrom 指数 1.5＝大陸性エアロゾル）。青いほど強く減るので、
+  // 厚い斜め経路を通った直射光と、その光を前方散乱した地平線の帯が橙になる
+  float mS = (8.0e-3 * dM + dH * 0.9) * uLabSky.x;
+  float mA = (1.0e-3 * dM + dH * 0.1) * uLabSky.x;
+  sM = FLIP_MIE_K * mS;
+  sE = sR + FLIP_MIE_K * (mS + mA) + vec3(0.65, 1.881, 0.085) * 1.0e-3 * dO * uLabSky.z;
 }
 float flip_phaseR(float c){ return 0.0596831 * (1.0 + c * c); }
 // Cornette-Shanks
@@ -175,9 +182,10 @@ float flip_fogPatch(vec2 xz){
 }
 // 霧に入ってくる光（等方の空の光＋太陽・月の前方散乱）
 vec3 flip_fogLight(vec3 dir){
-  // 等方の空の光と、視線の先（地平線寄り）の空の色を半々に（前方散乱で「向こうの空」の色が乗る）
+  // 等方の空の光と、視線の先（地平線寄り）の空の色を混ぜる（前方散乱で「向こうの空」の色が乗る）。
+  // 方向の側を強めにすると、薄明の霧が朝日・夕日の側だけ暖色になる（一色フィルターにならない）
   vec3 hz = normalize(vec3(dir.x, max(dir.y, 0.04), dir.z));
-  vec3 l = uSkyFogLight * 0.55 + flip_skyColor(hz) * 0.45;
+  vec3 l = uSkyFogLight * 0.42 + flip_skyColor(hz) * 0.62;
   l += uSunColor * flip_phaseHG(dot(dir, uSunDir), 0.6) * 0.9;
   l += uMoonColor * 4.0 * flip_phaseHG(dot(dir, uMoonDir), 0.6) * 0.9;
   return l;

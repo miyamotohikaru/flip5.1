@@ -3,6 +3,8 @@
 // 何をひっくり返したか／中に何が入っているか／裏返すとは／どう作ったか、を書く。
 import { useEffect, useRef } from "react";
 import MobileBreak from "./MobileBreak";
+import SeedFinale from "./SeedFinale";
+import type { World } from "@/engine/world";
 
 type Props = {
   open: boolean;
@@ -10,11 +12,13 @@ type Props = {
   /** src/ 以下の行数（ビルド時に数える。取れなければ null） */
   sourceLines: number | null;
   isMobile: boolean;
+  /** 締め（シード）で使う。まだ無ければボタンは押せない */
+  world: World | null;
 };
 
 export const FLIPLIST_URL = "https://fliplist.kosukuma.com/";
 
-export default function About({ open, onClose, sourceLines, isMobile }: Props) {
+export default function About({ open, onClose, sourceLines, isMobile, world }: Props) {
   const closeRef = useRef<HTMLButtonElement>(null);
   const restore = useRef<Element | null>(null);
 
@@ -164,6 +168,66 @@ export default function About({ open, onClose, sourceLines, isMobile }: Props) {
           </a>
         </p>
 
+        <p className="about-label">先にやった人たち</p>
+        <p>
+          「数式だけで風景を描く」には、
+          <MobileBreak />
+          20 年以上の歴史があります。
+          <br />
+          <b>Elevated</b>（2009年・Rgba &amp; TBC）は、
+          <MobileBreak />
+          4,096 バイトの実行ファイルの中で、
+          <br />
+          山も湖も霧も音楽も
+          <MobileBreak />
+          その場で計算して描きました。
+          <br />
+          <b>Shadertoy</b>（2013年〜）には、
+          <MobileBreak />
+          素材ゼロの風景が何千と並んでいます。
+          <br />
+          <b>.kkrieger</b>（2004年）は、
+          <MobileBreak />
+          96 キロバイトに収めた FPS でした。
+          <br />
+          この作品は、その系譜の上にあります。
+        </p>
+        <p>そのうえで、ここが違います。</p>
+        <ul className="about-what">
+          <li>
+            <b>歩ける。</b>
+            先行作の多くは「見るもの」でした。
+            <br />
+            ここは、自分の足で入っていけます。
+          </li>
+          <li>
+            <b>裏返せる。</b>
+            素材ゼロは普通、
+            <MobileBreak />
+            ソースを読める人しか確かめられません。
+            <br />
+            ここでは、ボタン 1 つで誰でも確かめられます。
+          </li>
+          <li>
+            <b>音も合成。</b>
+            雷は、落ちた場所までの距離のぶん
+            <MobileBreak />
+            遅れて鳴ります。
+            <br />
+            風景と音が、同じ数式でつながっています。
+          </li>
+          <li>
+            <b>作り方そのものが作品。</b>
+            9 分野を別々の AI が並行して作り、
+            <br />
+            別の審査 AI が大作ゲームと見比べて、
+            <MobileBreak />
+            採点し直させています。
+            <br />
+            その記録は <a href="/log" target="_blank" rel="noopener noreferrer">/log</a> にあります。
+          </li>
+        </ul>
+
         <p className="about-label">たとえるなら</p>
         <p>
           絵の具も写真も使わず、自然のルール
@@ -184,6 +248,11 @@ export default function About({ open, onClose, sourceLines, isMobile }: Props) {
               <MobileBreak />
               裏返す・写真・音・天気・時刻
             </li>
+            <li>
+              「いじる」で数式のつまみ
+              <MobileBreak />
+              （動かすと目の前が変わります）
+            </li>
           </ul>
         ) : (
           <ul className="about-keys">
@@ -197,7 +266,7 @@ export default function About({ open, onClose, sourceLines, isMobile }: Props) {
               <kbd>F</kbd> 裏返す ／ <kbd>P</kbd> 写真 ／ <kbd>M</kbd> 音 ／ <kbd>T</kbd> 時間を進める
             </li>
             <li>
-              <kbd>H</kbd> 表示を全部消す ／ <kbd>Esc</kbd> マウス固定をやめる
+              <kbd>L</kbd> 数式をいじる ／ <kbd>H</kbd> 表示を全部消す ／ <kbd>Esc</kbd> マウス固定をやめる
             </li>
           </ul>
         )}
@@ -214,6 +283,8 @@ export default function About({ open, onClose, sourceLines, isMobile }: Props) {
           <br />
           1つも入っていません。
         </p>
+
+        <SeedFinale world={world} sourceLines={sourceLines} isMobile={isMobile} inAbout />
 
         <p className="about-foot">
           <a href={FLIPLIST_URL} target="_blank" rel="noopener noreferrer">

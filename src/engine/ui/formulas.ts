@@ -115,18 +115,18 @@ function skyPanel(hit: Extract<ProbeHit, { kind: "sky" }>, compact: boolean): Fo
         `L = ∫₀ᴰ T·(σᴿpᴿ + σᴹpᴹ)·E☉ ds`,
         `T(a,b) = exp(${MINUS}∫ₐᵇ σₑ(h) ds)`,
         `σᴿ(h) = (5.8,13.6,33.1)e${MINUS}3·e^(${MINUS}h/8km)`,
-        `σᴹ(h) = 3.2e${MINUS}3·e^(${MINUS}h/2.5km) + 靄`,
+        `σᴹ(h) = 8.0e${MINUS}3·e^(${MINUS}h/2.5km) + 靄`,
         `pᴿ(θ) = 3/16π(1+cos²θ) = ${num(a.phaseR, 3)}`,
-        `pᴹ(θ) = C–S(θ, g=0.76) = ${num(a.phaseM, 3)}`,
+        `pᴹ(θ) = C–S(θ, g=0.82) = ${num(a.phaseM, 3)}`,
         `θ = ${num(a.thetaDeg, 0)}°   T(5km) = ${T}`,
       ]
     : [
         `L(ω) = ∫₀ᴰ T(0,s)·(σₛᴿ(s)·pᴿ(θ) + σₛᴹ(s)·pᴹ(θ))·E☉ ds     Hillaire 2020`,
         `T(a,b) = exp(${MINUS}∫ₐᵇ σₑ(h(s)) ds)`,
         `σᴿ(h) = (5.802, 13.558, 33.10)e${MINUS}3 · e^(${MINUS}h/8.0 km)      青が最も散る`,
-        `σᴹ(h) = 3.2e${MINUS}3 · e^(${MINUS}h/2.5 km) + 靄 ${num(a.haze, 3)}·e^(${MINUS}h/1 km)`,
+        `σᴹ(h) = 8.0e${MINUS}3 · e^(${MINUS}h/2.5 km) + 靄 ${num(a.haze, 3)}·e^(${MINUS}h/1 km)`,
         `pᴿ(θ) = 3/(16π)·(1 + cos²θ)                       = ${num(a.phaseR, 4)}`,
-        `pᴹ(θ) = Cornette${MINUS}Shanks(θ, g = 0.76)               = ${num(a.phaseM, 4)}`,
+        `pᴹ(θ) = Cornette${MINUS}Shanks(θ, g = 0.82)               = ${num(a.phaseM, 4)}`,
         `θ（視線と太陽のなす角） = ${num(a.thetaDeg, 1)}°     T(0, 5km) = ${T}`,
       ];
   return { kind: "sky", title: "空", latin: "SKY", source: "sky/atmosphere.glsl.ts · flip_aerial", here, lines };

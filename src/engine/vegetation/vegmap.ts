@@ -32,6 +32,10 @@ export function forestDensity(x: number, z: number, h: number, ny: number): numb
   const big = fbm2(x * 0.00105 + 5.3, z * 0.00105 + 9.1, 3);
   const mid = fbm2(x * 0.0047 - 2.2, z * 0.0047 + 4.8, 2);
   let f = smoothstep(-0.28, 0.32, big * 0.75 + mid * 0.45);
+  // 林の中の空地（λ 40〜80m）。面積のおよそ 3 割を空ける。
+  // これが無いと森が「同じ高さの壁」になり、縁が定規で切ったように見える
+  const gap = noise2(x * 0.017 + 31.7, z * 0.017 - 12.4) * 0.65 + noise2(x * 0.031 - 5.1, z * 0.031 + 7.9) * 0.35;
+  f *= 0.20 + 0.80 * smoothstep(-0.22, 0.24, gap + 0.14);
   // 岸の草地には孤立木がまばらに
   const sd = Math.hypot(x, z) - shoreRadius(x, z);
   const meadow = 1 - smoothstep(150, 320, sd);

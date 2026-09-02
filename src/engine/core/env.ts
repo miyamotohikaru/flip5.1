@@ -149,6 +149,13 @@ export class Env {
     uTerrainHorizonB: { value: null as THREE.Texture | null },
     /** 高さの3成分（heightfield.ts の Heightmap.parts）。裏返しの「数式の足し算」表示に使う */
     uHeightParts: { value: null as THREE.Texture | null },
+    /**
+     * 植生マップ（vegetation/vegmap.ts が起動時に焼く。RGBA8、texel の対応は uHeightmap と同じ）:
+     * r = 草の密度（木の根元で薄い）, g = 林の密度, b = 乾き, a = 岩っぽさ。
+     * 木を実際に置いた密度そのものなので、地形の林床の色もこれを見る（別のノイズで判断すると
+     * 「木の下なのに草原の色」になる）。植生モジュールが焼いた直後に入れる。
+     */
+    uVegMap: { value: null as THREE.Texture | null },
     // ---- 空モジュール（sky/）が毎フレーム値を入れる。他モジュールは flip_atmosphere チャンクの関数経由で使う ----
     /** 大気の透過率 LUT（Hillaire 2020。x = 視線の天頂角, y = 高度。RGBA16F 256×64） */
     uSkyTransLut: { value: null as THREE.Texture | null },
@@ -166,6 +173,11 @@ export class Env {
     uSkyFog2: { value: new THREE.Vector4(0, 6, 0, 0) },
     /** 霧に当たる光（空からの平均放射輝度） */
     uSkyFogLight: { value: new THREE.Color(0.3, 0.4, 0.55) },
+    // ---- 実験室（engine/lab）のつまみ。**既定は全部 1 ＝ 何も変わらない**。lab/apply.ts が書き込む ----
+    /** 大気: x = ミー散乱の倍率, y = レイリーの倍率, z = オゾンの倍率, w = 予備 */
+    uLabSky: { value: new THREE.Vector4(1, 1, 1, 1) },
+    /** 植生: x = 草の密度の倍率, yzw = 予備 */
+    uLabVeg: { value: new THREE.Vector4(1, 1, 1, 1) },
   };
 
   setWeather(name: WeatherPresetName) {

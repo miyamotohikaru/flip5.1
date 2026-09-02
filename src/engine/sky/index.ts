@@ -20,6 +20,8 @@ import { LUT_VERT, TRANS_FRAG, MS_FRAG, SKYVIEW_FRAG, AERIAL_FRAG, PROBE_FRAG } 
 import { NOISE_SHAPE_FRAG, NOISE_DETAIL_FRAG, WEATHER_FRAG, CLOUD_FRAG, CLOUD_SHADOW_FRAG } from "./clouds.glsl";
 import { SKY_VERT, SKY_FRAG } from "./sky.glsl";
 import { ATMO, transmittance, moonDirection, luminance } from "./cpu";
+import { seedOffset } from "../core/seed";
+import { LAB } from "../lab/store";
 
 type U = Record<string, THREE.IUniform>;
 
@@ -90,7 +92,12 @@ export class Sky {
   private envRT: THREE.WebGLRenderTarget | null = null;
   private envTimer = 1e9;
   private envSunDir = new THREE.Vector3(0, -2, 0);
-  private baked = { shape: 0, detail: 0, weather: false, hazeKm: -1 };
+  private baked = { shape: 0, detail: 0, weather: false, hazeKm: -1, lab: -1 };
+  /** シードが変わったとき（engine/lab/rebuild.ts）に呼ぶ。次のフレームで雲の天気マップを焼き直す */
+  reseed() {
+    (this.weatherMat.uniforms.uWeatherSeed.value as THREE.Vector2).set(seedOffset("sky", 1) * 0.004, seedOffset("sky", 2) * 0.004);
+    this.baked.weather = false;
+  }
   private probeBuf = new Float32Array(16);
   private probePending = false;
   private probeValid = false;
@@ -185,7 +192,8 @@ export class Sky {
     this.probeMat = lutMat(PROBE_FRAG, { uSunDirK: { value: new THREE.Vector3(0, 1, 0) } });
     this.shapeMat = lutMat(NOISE_SHAPE_FRAG, { uZ: { value: 0 } });
     this.detailMat = lutMat(NOISE_DETAIL_FRAG, { uZ: { value: 0 } });
-    this.weatherMat = lutMat(WEATHER_FRAG);
+    // 雲の天気マップは世界のシードでずらす（既定のシードでは 0 ＝ 今の並び）
+    this.weatherMat = lutMat(WEATHER_FRAG, { uWeatherSeed: { value: new THREE.Vector2(seedOffset("sky", 1) * 0.004, seedOffset("sky", 2) * 0.004) } });
 
     // ---- 雲（レイマーチ・影） ----
     const cloudCommonU = (): U => ({
@@ -278,7 +286,9 @@ export class Sky {
 
     // ---- 大気: 靄（uFog）と地表の霧 ----
     const fogK = clamp((w.fog - 0.15) / 0.85, 0, 1);
-    const hazeKm = 0.008 + 0.10 * Math.pow(fogK, 1.3);
+    // 靄（エアロゾル）。太陽が低いほど厚い層を通るので、黄昏・薄明では 1.8 倍にして前方散乱を強める
+    const lowSun = 1 - smoothstep(0.02, 0.25, env.sunDir.y);
+    const hazeKm = 0.025 * (1 + 0.8 * lowSun) + 0.04 * Math.pow(fogK, 1.3);
     eu.uSkyParams.value.set(SHADOW_EXTENT, AERIAL_MAX, hazeKm, GROUND_ALT_KM);
     const mistK = smoothstep(0.5, 1.0, w.fog);
     const t = env.time;
@@ -305,14 +315,17 @@ export class Sky {
     env.moonIntensity = moonIrr > 1e-6 ? 1 : 0;
 
     // ---- 雲の層 ----
-    const cov = 0.16 + 1.0 * Math.pow(w.cloud, 1.05);
-    const base = 1900 - 700 * w.storm - 250 * w.rain;
-    const top = base + 1500 + 800 * w.cloud + 500 * w.storm;
+    // 嵐で 1.0 に飽和させない（飽和すると一枚板になって塊とすき間が消える）
+    // 実験室の「雲量」「雲の高さ」はここに掛かる（既定は 1 ＝ 変化なし）
+    const cov = (0.16 + 1.0 * Math.pow(w.cloud, 1.05) - 0.20 * w.storm) * LAB.skyCloud;
+    const base = (1900 - 900 * w.storm - 250 * w.rain) * LAB.skyCloudBase;
+    const top = base + 1500 + 800 * w.cloud + 1500 * w.storm;
     const sigma = 0.03 + 0.025 * w.storm;
     const layer = this.cloudU.uCloudLayer.value as THREE.Vector4;
     layer.set(base, top, cov, sigma);
     const shape = this.cloudU.uCloudShape.value as THREE.Vector4;
-    shape.set(-0.55 * w.storm - 0.25 * w.rain, 1.0, 0, 0);
+    // z = 雲底のうねり（層の高さに対する割合）。嵐・雨で雲底が平らな板にならないように
+    shape.set(-0.35 * w.storm - 0.20 * w.rain, 1.0, 0.30 * w.storm + 0.15 * w.rain, 0);
     const drift = w.wind * 1.8 * t;
     const wp = this.cloudU.uWeatherParams.value as THREE.Vector4;
     wp.set(1 / WEATHER_TILE, (-w.windDir.x * drift) / WEATHER_TILE, (-w.windDir.y * drift) / WEATHER_TILE, 1);
@@ -358,7 +371,9 @@ export class Sky {
     const stormDark = 1 - 0.65 * w.storm;
     const ambTop = this.ambTop.copy(p.skyIrr).multiplyScalar((1.05 / Math.PI) * stormDark);
     (this.cloudU.uAmbTop.value as THREE.Vector3).set(ambTop.r, ambTop.g, ambTop.b);
-    const ambBottom = this.ambBottom.copy(skyEff).multiplyScalar(0.22 / Math.PI).add(this.tmpC2.copy(p.groundIrr).multiplyScalar(0.40 / Math.PI)).multiplyScalar(stormDark);
+    // 雲底に届く空の光。嵐では 0.12 まで落として「暗い塊」を出す
+    const ambBotK = 0.22 - 0.10 * w.storm;
+    const ambBottom = this.ambBottom.copy(skyEff).multiplyScalar(ambBotK / Math.PI).add(this.tmpC2.copy(p.groundIrr).multiplyScalar(0.40 / Math.PI)).multiplyScalar(stormDark);
     (this.cloudU.uAmbBottom.value as THREE.Vector3).set(ambBottom.r, ambBottom.g, ambBottom.b);
     const cheap = this.tmpC.copy(sunCloudE).multiplyScalar(0.10).add(this.tmpC2.copy(ambTop).multiplyScalar(0.8));
     for (const m of [this.material, this.envMat]) (m.uniforms.uCheapCloudColor.value as THREE.Vector3).set(cheap.r, cheap.g, cheap.b);
@@ -366,7 +381,10 @@ export class Sky {
     // ---- 露出（物理量から。目の順応のように暗いほど上げるが、上げきらない＝夜は暗いまま） ----
     // 目安 = 地面の平均輝度 ＋ 太陽側の地平線の帯の輝度（夕焼けの明るい帯で露出が決まるように）
     const keyL = 0.064 * (luminance(sunGround) + luminance(skyEff) + 2.0 * luminance(moonGround)) + 0.1 * luminance(p.sunside) * (1 - 0.7 * coverG) + 1e-5;
-    const target = clamp(0.8 * Math.pow(0.33 / keyL, 0.65), 0.5, 30);
+    // 露出の上限。夜（太陽が −11° より下）は 6 で止める＝これ以上開くと月明かりの地面が
+    // 昼と同じ明るさになる（「青い昼」）。薄明（−11°〜−2°）は実際に夜の 10 倍以上明るいので 13 まで開く
+    const nightCap = 6 + 7 * smoothstep(-0.20, -0.03, env.sunDir.y);
+    const target = clamp(0.8 * Math.pow(0.24 / keyL, 0.65), 0.5, nightCap);
     if (this.exposure < 0) this.exposure = target;
     else this.exposure += (target - this.exposure) * (1 - Math.exp(-dt * 2.0));
     env.exposure = this.exposure * this.exposureBias;
@@ -377,7 +395,8 @@ export class Sky {
     const ax = new THREE.Vector3(1, 0, 0).applyAxisAngle(e3, theta);
     const e1 = this.e1.copy(ax).normalize();
     const e2 = this.e2.crossVectors(e3, e1).normalize();
-    const veil = 1 - smoothstep(-0.19, -0.04, env.sunDir.y);
+    // 太陽高度 −6°（航海薄明の入口）で見え始め、−14° で全部見える
+    const veil = 1 - smoothstep(-0.25, -0.10, env.sunDir.y);
     for (const m of [this.material, this.envMat]) {
       (m.uniforms.uStarFrame.value as THREE.Matrix3).set(e1.x, e1.y, e1.z, e2.x, e2.y, e2.z, e3.x, e3.y, e3.z);
       m.uniforms.uStarVeil.value = veil;
@@ -431,10 +450,14 @@ export class Sky {
       b.detail = DETAIL_RES;
     }
     const hazeKm = this.env.uniforms.uSkyParams.value.z;
-    if (Math.abs(hazeKm - b.hazeKm) > 0.004) {
+    // 実験室で媒質（ミー・レイリー・オゾン）を動かしたら、透過率と多重散乱の LUT も焼き直す
+    const lb = this.env.uniforms.uLabSky.value as THREE.Vector4;
+    const labKey = lb.x + lb.y * 7.13 + lb.z * 31.77;
+    if (Math.abs(hazeKm - b.hazeKm) > 0.004 || labKey !== b.lab) {
       this.blit(this.transMat, this.transRT);
       this.blit(this.msMat, this.msRT);
       b.hazeKm = hazeKm;
+      b.lab = labKey;
     }
 
     // 空の LUT
