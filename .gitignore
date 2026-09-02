@@ -6,3 +6,4 @@ out/
 shots/
 *.log
 .env*
+tsconfig.tsbuildinfo
