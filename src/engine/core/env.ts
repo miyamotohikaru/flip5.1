@@ -183,8 +183,10 @@ export class Env {
     this.flip += (this.flipTarget - this.flip) * fk;
     const targetRadius = this.flipTarget > 0.5 ? 6000 : 0;
     const speed = 900; // m/s で「数式の波」が広がる
-    if (this.flipRadius < targetRadius) this.flipRadius = Math.min(targetRadius, this.flipRadius + speed * dt);
-    else if (this.flipRadius > targetRadius) this.flipRadius = Math.max(targetRadius, this.flipRadius - speed * 1.6 * dt);
+    if (!this.freeze) {
+      if (this.flipRadius < targetRadius) this.flipRadius = Math.min(targetRadius, this.flipRadius + speed * dt);
+      else if (this.flipRadius > targetRadius) this.flipRadius = Math.max(targetRadius, this.flipRadius - speed * 1.6 * dt);
+    }
 
     // 太陽・月
     Env.sunDirection(this.hour, this.sunDir);
