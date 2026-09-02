@@ -20,7 +20,7 @@ import { LUT_VERT, TRANS_FRAG, MS_FRAG, SKYVIEW_FRAG, AERIAL_FRAG, PROBE_FRAG } 
 import { NOISE_SHAPE_FRAG, NOISE_DETAIL_FRAG, WEATHER_FRAG, CLOUD_FRAG, CLOUD_SHADOW_FRAG } from "./clouds.glsl";
 import { SKY_VERT, SKY_FRAG } from "./sky.glsl";
 import { ATMO, transmittance, moonDirection, luminance } from "./cpu";
-import { subFloat } from "../core/seed";
+import { seedOffset } from "../core/seed";
 import { LAB } from "../lab/store";
 
 type U = Record<string, THREE.IUniform>;
@@ -95,7 +95,7 @@ export class Sky {
   private baked = { shape: 0, detail: 0, weather: false, hazeKm: -1, lab: -1 };
   /** シードが変わったとき（engine/lab/rebuild.ts）に呼ぶ。次のフレームで雲の天気マップを焼き直す */
   reseed() {
-    (this.weatherMat.uniforms.uWeatherSeed.value as THREE.Vector2).set(subFloat("sky", 1) * 4, subFloat("sky", 2) * 4);
+    (this.weatherMat.uniforms.uWeatherSeed.value as THREE.Vector2).set(seedOffset("sky", 1) * 0.004, seedOffset("sky", 2) * 0.004);
     this.baked.weather = false;
   }
   private probeBuf = new Float32Array(16);
@@ -193,7 +193,7 @@ export class Sky {
     this.shapeMat = lutMat(NOISE_SHAPE_FRAG, { uZ: { value: 0 } });
     this.detailMat = lutMat(NOISE_DETAIL_FRAG, { uZ: { value: 0 } });
     // 雲の天気マップは世界のシードでずらす（既定のシードでは 0 ＝ 今の並び）
-    this.weatherMat = lutMat(WEATHER_FRAG, { uWeatherSeed: { value: new THREE.Vector2(subFloat("sky", 1) * 4, subFloat("sky", 2) * 4) } });
+    this.weatherMat = lutMat(WEATHER_FRAG, { uWeatherSeed: { value: new THREE.Vector2(seedOffset("sky", 1) * 0.004, seedOffset("sky", 2) * 0.004) } });
 
     // ---- 雲（レイマーチ・影） ----
     const cloudCommonU = (): U => ({

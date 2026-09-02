@@ -188,6 +188,11 @@ export default function About({ open, onClose, sourceLines, isMobile, world }: P
               <MobileBreak />
               裏返す・写真・音・天気・時刻
             </li>
+            <li>
+              「いじる」で数式のつまみ
+              <MobileBreak />
+              （動かすと目の前が変わります）
+            </li>
           </ul>
         ) : (
           <ul className="about-keys">
@@ -201,7 +206,7 @@ export default function About({ open, onClose, sourceLines, isMobile, world }: P
               <kbd>F</kbd> 裏返す ／ <kbd>P</kbd> 写真 ／ <kbd>M</kbd> 音 ／ <kbd>T</kbd> 時間を進める
             </li>
             <li>
-              <kbd>H</kbd> 表示を全部消す ／ <kbd>Esc</kbd> マウス固定をやめる
+              <kbd>L</kbd> 数式をいじる ／ <kbd>H</kbd> 表示を全部消す ／ <kbd>Esc</kbd> マウス固定をやめる
             </li>
           </ul>
         )}

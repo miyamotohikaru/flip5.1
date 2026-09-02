@@ -7,7 +7,7 @@
 //   - 開いている間の更新は 400ms に 1 回だけ（「いま効いている値」の文字列）。毎フレームは触らない
 //   - 項のハイライトは class の付け外しだけ（DOM を作り直さない）
 //   - 地形のつまみは、指を置いている間は 256² の粗焼き、離したら本焼き（engine/lab/rebuild.ts）
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { World } from "@/engine/world";
 import { LAB, LAB_DEFAULTS } from "@/engine/lab/store";
 import { LAB_GROUPS, LAB_PARAMS, splitFormula, type LabGroup, type LabParam } from "@/engine/lab/params";
@@ -72,6 +72,13 @@ export default function Lab({ world, open, onClose, sourceLines, isMobile }: Pro
   }, [world]);
 
   const dirty = useMemo(() => LAB_PARAMS.some((p) => vals[p.id] !== LAB_DEFAULTS[p.id]), [vals]);
+  // 「いま効いている値」は親でまとめて作る。中身が変わった行だけが描き直る（Row は memo）
+  const lives = useMemo(() => {
+    const m: Record<string, string | null> = {};
+    for (const p of LAB_PARAMS) m[p.id] = p.live ? p.live(vals[p.id], world) : null;
+    return m;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vals, world, tick]);
   const groups = useMemo(() => {
     const m = new Map<LabGroup, LabParam[]>();
     for (const p of LAB_PARAMS) {
@@ -113,7 +120,7 @@ export default function Lab({ world, open, onClose, sourceLines, isMobile }: Pro
           <section key={g.id} className="lab-group">
             <h3>{g.label}</h3>
             {(groups.get(g.id) ?? []).map((p) => (
-              <Row key={p.id} p={p} v={vals[p.id]} hot={hot === p.id} world={world} tick={tick} onChange={change} />
+              <Row key={p.id} p={p} v={vals[p.id]} hot={hot === p.id} live={lives[p.id]} onChange={change} />
             ))}
           </section>
         ))}
@@ -124,19 +131,17 @@ export default function Lab({ world, open, onClose, sourceLines, isMobile }: Pro
   );
 }
 
-function Row({
+const Row = memo(function Row({
   p,
   v,
   hot,
-  world,
-  tick,
+  live,
   onChange,
 }: {
   p: LabParam;
   v: number;
   hot: boolean;
-  world: World | null;
-  tick: number;
+  live: string | null;
   onChange: (p: LabParam, v: number, dragging: boolean) => void;
 }) {
   const dragging = useRef(false);
@@ -158,8 +163,6 @@ function Row({
   }, [onChange, p]);
   // 式は 1 回だけ割る（描き直さない）
   const [pre, term, post] = useMemo(() => splitFormula(p.formula), [p.formula]);
-  // 「いま効いている値」は 400ms ごと ＋ つまみが動いたときだけ作り直す
-  const live = useMemo(() => (p.live ? p.live(v, world) : null), [p, v, world, tick]);
   const dflt = LAB_DEFAULTS[p.id];
   const shown = p.unit === "°" ? `${v > 0 ? "+" : ""}${v.toFixed(0)}°` : `×${v.toFixed(2)}`;
 
@@ -191,5 +194,5 @@ function Row({
       </div>
     </div>
   );
-}
+});
 

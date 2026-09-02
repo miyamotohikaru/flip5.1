@@ -331,7 +331,8 @@ html:has(.log), body:has(.log) { overflow: auto; }
   width: min(392px, calc(100vw - 24px)); max-height: calc(100dvh - 24px - var(--safe-t) - var(--safe-b));
   display: flex; flex-direction: column;
   border: 1px solid var(--line); border-radius: 10px;
-  background: rgba(6, 10, 24, 0.9); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  /* backdrop-filter は使わない: 動き続ける canvas の上に置くと、この面積の分だけ毎フレーム GPU を食う */
+  background: rgba(7, 11, 26, 0.95);
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
   animation: lab-in 0.3s cubic-bezier(0.2, 0.8, 0.3, 1) both;
 }

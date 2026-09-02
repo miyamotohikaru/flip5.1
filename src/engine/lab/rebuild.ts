@@ -164,7 +164,8 @@ export class Lab {
         this.coarse = false;
         this.timing.full = performance.now() - t0;
         this.status(true, "山の陰と木を並べ直しています", 0.85);
-        // 描画の1フレームを挟んでから重い作り直しへ（画面が固まったように見えないように）
+        // 「並べ直しています」を出してから重い作り直しへ（画面が固まったように見えないように）
+        await nextFrame();
         await nextFrame();
         this.rebakeTerrainAux();
         this.rebuildVegetation();

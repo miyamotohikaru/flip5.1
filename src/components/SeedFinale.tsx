@@ -77,22 +77,25 @@ export default function SeedFinale({ world, sourceLines, isMobile, busy, inAbout
         <code>?seed={seed}</code>
       </p>
 
-      <ul className="seedfin-counts">
-        {lines ? (
+      {/* 「この風景について」では、すぐ上の「中身」が同じ数を出しているので重ねない */}
+      {inAbout ? null : (
+        <ul className="seedfin-counts">
+          {lines ? (
+            <li>
+              数式 <b>{lines}</b> 行
+            </li>
+          ) : null}
           <li>
-            数式 <b>{lines}</b> 行
+            画像 <b>0</b> 枚
           </li>
-        ) : null}
-        <li>
-          画像 <b>0</b> 枚
-        </li>
-        <li>
-          3Dモデル <b>0</b> 個
-        </li>
-        <li>
-          音源 <b>0</b> 個
-        </li>
-      </ul>
+          <li>
+            3Dモデル <b>0</b> 個
+          </li>
+          <li>
+            音源 <b>0</b> 個
+          </li>
+        </ul>
+      )}
 
       {work ? (
         <div className="seedfin-bake" role="status">
