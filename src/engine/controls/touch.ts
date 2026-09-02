@@ -171,8 +171,8 @@ export class TouchInput {
       } else if (t.identifier === this.lookId) {
         this.lookId = -1;
         this.look.active = false;
-        // 直前まで動いていたら、その速さで慣性を付ける
-        if (now - this.lastMoveT < 80) {
+        // 直前（120ms 以内）まで動いていたら、その速さで慣性を付ける（止めてから離せば付かない）
+        if (now - this.lastMoveT < 120) {
           const m = Math.hypot(this.velX, this.velY);
           const k = m > 120 ? Math.min(1, INERTIA_MAX / Math.max(m, 1e-6)) : 0;
           this.inertiaX = this.velX * k;

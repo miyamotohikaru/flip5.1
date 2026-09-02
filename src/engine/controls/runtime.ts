@@ -26,7 +26,10 @@ export class Runtime {
       },
       { calibrate: this.device.uncertain && !fixedTier, persist: !fixedTier },
     );
-    this.lifecycle = new Lifecycle(world, () => this.perf.reset());
+    // 定点撮影（時間停止）では解像度を動かさない（撮るたびに絵が変わらないように）
+    if (world.params.freeze || world.params.shot) this.perf.active = false;
+    // 復帰直後はシェーダの作り直しで重いので、コンテキスト復帰は 3 秒、タブ復帰は 1 秒待ってから判断する
+    this.lifecycle = new Lifecycle(world, (reason) => this.perf.reset(performance.now(), reason === "restored" ? 3000 : 1000));
     const c = world.controls;
     c.onExit = () => world.emit("exit");
     c.onFlip = () => world.toggleFlip();

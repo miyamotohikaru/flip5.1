@@ -3,7 +3,7 @@
 //   目標（q.targetFrameMs: high/ultra 16.7ms、mid/low 33.3ms）を超え続けたら描画解像度の倍率
 //   renderScale を 0.05 刻みで下げ（下限 0.5）、余裕があれば上げる（上限 1.0）。
 //   上げてすぐ下がったら、次に上げてみるまでの間隔を倍にする（振動しない）。
-//   下限でも足りなければ「次回起動時の段階」を 1 つ下げて localStorage に保存する
+//   下限でも 10 秒足りなければ「次回起動時の段階」を 1 つ下げて localStorage に保存する（7 日で期限切れ）
 //   （段階 q は各モジュールが起動時にしか読まないので、今回は解像度で凌ぐ）。
 //   GPU 名が取れず段階に確信がない端末は、起動直後 30 フレームの実測で「次回の段階」を決める。
 import type { QualityTier } from "../core/env";
@@ -41,6 +41,8 @@ export class PerformanceMonitor {
   tierReason = "";
   /** 解像度を変えた回数 */
   changes = 0;
+  /** false なら測るだけで解像度・段階を変えない（?freeze=1 / ?shot= の定点撮影） */
+  active = true;
   readonly minScale: number;
   readonly maxScale: number;
   private persist: boolean;
@@ -91,14 +93,17 @@ export class PerformanceMonitor {
     if (now - this.winStart >= 1000) this.evaluate(now);
   }
 
-  /** タブが戻った・コンテキストが戻った・解像度以外の理由で止まった後に呼ぶ（平均をやり直す） */
-  reset(now = performance.now()) {
+  /**
+   * タブが戻った・コンテキストが戻った・解像度以外の理由で止まった後に呼ぶ（平均をやり直す）。
+   * warmupMs の間は判断しない（コンテキスト復帰直後はシェーダの作り直しで重いので長めに）。
+   */
+  reset(now = performance.now(), warmupMs = 1000) {
     this.lastNow = 0;
     this.winStart = now;
     this.sumIv = this.sumCpu = 0;
     this.n = 0;
     this.startedAt = now;
-    this.warmupMs = 1000;
+    this.warmupMs = warmupMs;
     this.overSince = -1;
   }
 
@@ -116,12 +121,13 @@ export class PerformanceMonitor {
     if (n < 5) return;
 
     const t = this.targetMs, iv = this.intervalMs;
-    if (this.calibrating && this.measured >= 30 && now - this.startedAt > 1500) {
+    if (this.active && this.calibrating && this.measured >= 30 && now - this.startedAt > 1500) {
       this.calibrating = false;
       if (iv < t * 0.62 && this.tier !== "ultra") {
         this.decideTier(higherTier(this.tier), `起動直後の実測 ${iv.toFixed(1)}ms が目標 ${t}ms より十分速い`);
       }
     }
+    if (!this.active) return;
     if (now - this.startedAt < this.warmupMs) return;
     if (now - this.lastChange < 900) return; // 解像度を変えた直後は落ち着くまで見ない（1 秒に 1 段まで）
 
@@ -134,7 +140,8 @@ export class PerformanceMonitor {
         this.setScale(this.renderScale - step, now);
         // 上げた直後に戻したなら、次に上げてみるまでの間隔を倍に
         if (now - this.lastUp < 4000) this.probeMs = Math.min(60000, this.probeMs * 2);
-      } else if (now - this.overSince > 5000 && !this.tierNext && this.tier !== "low") {
+      } else if (now - this.overSince > 10000 && !this.tierNext && this.tier !== "low") {
+        // 下限で 10 秒重いままなら次回の段階を下げる（一時的な負荷で誤って下げないよう長めに見る）
         this.decideTier(lowerTier(this.tier), `解像度 ${this.minScale} でも ${iv.toFixed(1)}ms（目標 ${t}ms）`);
       }
     } else {

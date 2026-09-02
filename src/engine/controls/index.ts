@@ -4,7 +4,7 @@
 //   走り（Shift / RT / スティック倒し切り）で視野角が 6° 広がる。
 //   頭の揺れ: 歩幅に合わせた上下（歩ごとに沈む）＋左右の 8 の字＋わずかなロール。走りで大きく、止まると滑らかに収束。
 //   斜面: 登りは遅く（5°→35° で最大 60% 減）、35° を超えると登れず滑る。下りは少し速い。
-//   水際: 湖面 +0.3m の濡れた砂から減速し、深さ 0.45m（足首〜すね）より深くは進めない。
+//   水際: 湖面 +0.15m の濡れた砂から減速し、深さ 0.35m（足首の上）より深くは進めない。
 //   マウス感度は DPI・画面倍率に依存しない（生のカウント × sensitivity）。視線のピッチは ±85°。
 //   Esc などでポインタロックが外れたら onExit（world が "exit" を emit する）。
 // UI が読むもの: stick（仮想スティックの中心・つまみ・押されているか）、lookTouch、sprinting、gyroEnabled、gamepadConnected。
@@ -24,8 +24,8 @@ export type { StickState, LookTouchState };
 const DEG = Math.PI / 180;
 const TAN35 = Math.tan(35 * DEG);
 const PITCH_LIMIT = 85 * DEG;
-/** これより深い水には入れない（m） */
-const MAX_DEPTH = 0.45;
+/** これより深い水には入れない（m）= 足首の上まで */
+const MAX_DEPTH = 0.35;
 /** 斜面の勾配を測る幅（m） */
 const GRAD_EPS = 0.6;
 
@@ -94,6 +94,10 @@ export class Controls {
   private moveStick = new THREE.Vector2();
   private releaseSpeed = 0;
   private sprintT = 0;
+  /** 止まった瞬間の小さな沈み込み（減衰ばね） */
+  private settleY = 0;
+  private settleV = 0;
+  private peakSpeed = 0;
   private fwd = new THREE.Vector3();
   private right = new THREE.Vector3();
   private wish = new THREE.Vector3();
@@ -170,6 +174,7 @@ export class Controls {
     this.pitch = THREE.MathUtils.degToRad(pitchDeg);
     this.velocity.set(0, 0, 0);
     this.bobAmount = 0;
+    this.settleY = this.settleV = this.peakSpeed = 0;
     this.apply();
   }
 
@@ -275,7 +280,7 @@ export class Controls {
       }
     }
     this.slopeDeg = Math.atan(s) / DEG;
-    const waterFactor = 1 - 0.55 * smoothstep(-0.3, MAX_DEPTH, this.waterDepth);
+    const waterFactor = 1 - 0.5 * smoothstep(-0.15, MAX_DEPTH, this.waterDepth);
     const tx = wish.x * spd * slopeFactor * waterFactor;
     const tz = wish.z * spd * slopeFactor * waterFactor;
     const tLen = Math.hypot(tx, tz);
@@ -331,6 +336,18 @@ export class Controls {
         this.onStep?.(this.surface);
         this.audio.footstep(this.surface);
       }
+    }
+    // 走ってから止まると、体が一度わずかに沈んで戻る（0.45 秒で収束）
+    if (speedH > 1.5) this.peakSpeed = Math.max(this.peakSpeed, speedH);
+    else if (speedH < 0.3 && this.peakSpeed > 0) {
+      this.settleV -= 0.3 * (this.peakSpeed / this.sprint);
+      this.peakSpeed = 0;
+    }
+    if (this.settleY !== 0 || this.settleV !== 0) {
+      const k = 200, c = 20;
+      this.settleV += (-k * this.settleY - c * this.settleV) * dt;
+      this.settleY += this.settleV * dt;
+      if (Math.abs(this.settleY) < 1e-4 && Math.abs(this.settleV) < 1e-3) this.settleY = this.settleV = 0;
     }
     const fovTarget = this.baseFov + this.sprintFovBoost * this.sprintT;
     this.fov += (fovTarget - this.fov) * (1 - Math.exp(-dt * 8));
@@ -396,12 +413,12 @@ export class Controls {
     const cam = this.env.camera;
     const A = this.bobAmount, st = this.sprintT, phi = this.bobPhase;
     // 歩ごとに沈む上下（0..−amp）と、2 歩で 1 往復する左右（8 の字）＋わずかなロールと頷き
-    const vertAmp = 0.032 + 0.036 * st;
-    const latAmp = 0.016 + 0.018 * st;
-    const bobY = (-Math.cos(2 * phi) - 1) * 0.5 * vertAmp * A;
+    const vertAmp = 0.025 + 0.04 * st;
+    const latAmp = 0.012 + 0.02 * st;
+    const bobY = (-Math.cos(2 * phi) - 1) * 0.5 * vertAmp * A + this.settleY;
     const bobX = Math.sin(phi) * latAmp * A;
-    const roll = Math.sin(phi) * (0.35 + 0.6 * st) * DEG * A;
-    const nod = -Math.cos(2 * phi) * 0.12 * DEG * A;
+    const roll = Math.sin(phi) * (0.3 + 0.7 * st) * DEG * A;
+    const nod = -Math.cos(2 * phi) * 0.1 * DEG * A;
     const rx = Math.cos(this.yaw), rz = -Math.sin(this.yaw);
     cam.position.set(this.position.x + rx * bobX, this.position.y + bobY, this.position.z + rz * bobX);
     cam.rotation.set(this.pitch + nod, this.yaw, roll, "YXZ");

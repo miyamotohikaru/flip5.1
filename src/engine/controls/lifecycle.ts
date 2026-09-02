@@ -12,7 +12,7 @@ export class Lifecycle {
 
   constructor(
     private world: World,
-    private onResume?: () => void,
+    private onResume?: (reason: "visible" | "restored") => void,
   ) {
     const canvas = world.canvas;
     canvas.addEventListener("webglcontextlost", this.onLost, false);
@@ -34,7 +34,7 @@ export class Lifecycle {
     const w = this.world;
     if (!w.ready) return;
     w.resize();
-    this.onResume?.();
+    this.onResume?.("restored");
     if (!document.hidden) w.start();
     w.emit("contextrestored");
   };
@@ -45,7 +45,7 @@ export class Lifecycle {
       w.stop();
       w.controls?.releaseAll();
     } else if (w.ready && !this.contextLost) {
-      this.onResume?.();
+      this.onResume?.("visible");
       w.start();
     }
   };

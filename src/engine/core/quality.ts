@@ -81,7 +81,8 @@ export function isMobileDevice(): boolean {
 // ---------------------------------------------------------------------------
 
 const TIER_KEY = "mathscape.tier";
-const TIER_TTL_MS = 30 * 24 * 3600 * 1000;
+/** 保存した段階の有効期間。環境が変わっても（外付け GPU、ブラウザ更新）そのうち測り直す */
+const TIER_TTL_MS = 7 * 24 * 3600 * 1000;
 
 export type SavedTier = { tier: QualityTier; reason: string; at: number; ua: string };
 
