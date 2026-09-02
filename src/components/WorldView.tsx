@@ -7,6 +7,8 @@ import type { World, Stats } from "@/engine/world";
 import type { WeatherPresetName } from "@/engine/core/env";
 import { extras } from "@/engine/ui/controlsApi";
 import Landing from "./Landing";
+import Blackboard from "./Blackboard";
+import NowFormula from "./NowFormula";
 import Hud from "./Hud";
 import FormulaOverlay from "./FormulaOverlay";
 import WorldLabels from "./WorldLabels";
@@ -237,6 +239,8 @@ export default function WorldView({ sourceLines }: { sourceLines: number | null 
     <div className="world">
       <canvas ref={canvasRef} className={grabbing ? "grabbing" : ""} />
 
+      {!landingGone && <Blackboard phase={phase} isMobile={isMobile} />}
+
       {!landingGone && (
         <Landing phase={phase} progress={progress} heightmapRes={heightmapRes} isMobile={isMobile} onEnter={enter} onAbout={openAbout} />
       )}
@@ -266,6 +270,7 @@ export default function WorldView({ sourceLines }: { sourceLines: number | null 
       )}
 
       <FormulaOverlay world={world} active={overlays} compact={compact} />
+      <NowFormula world={world} active={overlays} compact={compact} />
       <WorldLabels world={world} active={labelsOn} compact={compact} />
       {isMobile && <Joystick world={world} active={overlays} />}
       <PhotoMode ref={photoRef} world={world} />
