@@ -1,47 +1,51 @@
-// 地形。土台版: GPU クリップマップ（同心の環を4種の穴ずれで持つ）＋ 斜度・標高で塗り分ける材質。
-// 地形担当は材質（岩肌・草・雪・砂・濡れ・トライプラナー・ディテール法線）と裏返し表現を作り込む。
-// 高さ関数（core/heightfield.ts の heightAt）は凍結。形を変えると他モジュールの配置が狂う。
+// 地形。GPU クリップマップ（同心の環 7 段）＋ 実行時 GLSL で作る材質（草・土・岩・ガレ・雪・砂・濡れ）＋ 裏返し。
+//   - 高さは flip_height（ハイトマップ）だけ。環の外縁は LOD モーフで粗いレベルの補間値へ寄せる（割れ目なし）
+//   - 影: customDepthMaterial に同じ変位を入れて CSM に落とす。normalBias はカスケードの texel 幅から毎フレーム決める
+//   - 起動時に法線・AO・cavity・8方位の地平角を GPU で焼き（bake.ts）、env.uniforms に載せる（他モジュールも読める）
+//   - 材質の GLSL は glsl.ts
 import * as THREE from "three";
 import type { Env } from "../core/env";
 import type { Lighting } from "../core/lighting";
 import { patchMaterial, replaceOnce } from "../core/patch";
 import type { QualitySettings } from "../core/quality";
+import { bakeTerrainAux, type TerrainBake } from "./bake";
+import {
+  injectTerrainShadow,
+  TERRAIN_FRAG_AO,
+  TERRAIN_FRAG_FOG,
+  TERRAIN_FRAG_MATERIAL,
+  TERRAIN_FRAG_NORMAL,
+  TERRAIN_FRAG_PARS,
+  TERRAIN_VERT_HEIGHT,
+  TERRAIN_VERT_NORMAL,
+  TERRAIN_VERT_PARS,
+} from "./glsl";
 
-type Level = { size: number; step: number; meshes: THREE.Mesh[]; uStep: THREE.IUniform<number> };
+type Level = {
+  size: number;
+  step: number;
+  meshes: THREE.Mesh[];
+  uStep: THREE.IUniform<number>;
+  uHalf: THREE.IUniform<number>;
+};
 
-const LEVELS = [
-  { size: 256, step: 2 },
-  { size: 512, step: 4 },
-  { size: 1024, step: 8 },
-  { size: 2048, step: 16 },
-  { size: 4096, step: 32 },
-  { size: 8192, step: 64 },
-];
+/** 環の設定: n = 一辺のセル数（4 の倍数、n/2 が偶数）。size = n × step */
+function levelDefs(q: QualitySettings): { n: number; step: number }[] {
+  const n = q.tier === "high" || q.tier === "ultra" ? 96 : 64;
+  return [2, 4, 8, 16, 32, 64, 128].map((step) => ({ n, step }));
+}
 
 /** 環（穴あき格子）。ox/oz は穴のずれ（セル単位 0/1）。level0 は穴なし。 */
-function buildRing(size: number, step: number, hole: boolean, ox: number, oz: number): THREE.BufferGeometry {
-  const n = size / step; // セル数
+function buildRing(n: number, step: number, hole: boolean, ox: number, oz: number): THREE.BufferGeometry {
+  const size = n * step;
   const verts = (n + 1) * (n + 1);
   const pos = new Float32Array(verts * 3);
-  const edge = new Float32Array(verts * 2);
-  const uv = new Float32Array(verts * 2);
   for (let j = 0; j <= n; j++) {
     for (let i = 0; i <= n; i++) {
       const k = j * (n + 1) + i;
       pos[k * 3] = i * step - size / 2;
       pos[k * 3 + 1] = 0;
       pos[k * 3 + 2] = j * step - size / 2;
-      uv[k * 2] = i / n;
-      uv[k * 2 + 1] = j / n;
-      const onEdgeX = i === 0 || i === n;
-      const onEdgeZ = j === 0 || j === n;
-      if (onEdgeX && (j & 1) === 1 && !onEdgeZ) {
-        edge[k * 2] = 0;
-        edge[k * 2 + 1] = 1;
-      } else if (onEdgeZ && (i & 1) === 1 && !onEdgeX) {
-        edge[k * 2] = 1;
-        edge[k * 2 + 1] = 0;
-      }
     }
   }
   const idx: number[] = [];
@@ -51,15 +55,13 @@ function buildRing(size: number, step: number, hole: boolean, ox: number, oz: nu
     for (let i = 0; i < n; i++) {
       if (hole && i >= h0 && i < h1 && j >= g0 && j < g1) continue;
       const a = j * (n + 1) + i, b = a + 1, c = a + n + 1, d = c + 1;
-      // 対角を交互に（クロスの目立ちを減らす）
+      // 対角を交互に。頂点シェーダの LOD モーフはこの規則（(i+j) の偶奇）を前提にしている
       if (((i + j) & 1) === 0) idx.push(a, c, b, b, c, d);
       else idx.push(a, d, b, a, c, d);
     }
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-  geo.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
-  geo.setAttribute("aEdge", new THREE.BufferAttribute(edge, 2));
   geo.setIndex(idx);
   // バウンディングは高さ分を足して手で持つ（フラスタムカリング用）
   geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 300, 0), size * 0.75 + 900);
@@ -69,165 +71,129 @@ function buildRing(size: number, step: number, hole: boolean, ox: number, oz: nu
 export class Terrain {
   group = new THREE.Group();
   material: THREE.MeshStandardMaterial;
+  depthMaterial: THREE.MeshDepthMaterial;
+  bake: TerrainBake | null = null;
   private levels: Level[] = [];
+  private uDetail: THREE.IUniform<number>;
+  private uDebug: THREE.IUniform<number>;
+  private baking = false;
 
   constructor(public scene: THREE.Scene, public env: Env, public lighting: Lighting, public q: QualitySettings) {
+    env.uniforms.uHeightParts.value = env.heightmap.parts;
+    this.uDetail = { value: q.tier === "ultra" || q.tier === "high" ? 1 : q.tier === "mid" ? 0.55 : 0.25 };
+    // 調査用 ?tdbg=1..6（1 太陽の見え方 2 AO 3 法線 4 cavity 5 地平角 6 山の影なし）
+    const dbg = typeof location !== "undefined" ? Number(new URLSearchParams(location.search).get("tdbg") ?? 0) : 0;
+    this.uDebug = { value: Number.isFinite(dbg) ? dbg : 0 };
     this.material = this.buildMaterial();
-    for (let L = 0; L < LEVELS.length; L++) {
-      const { size, step } = LEVELS[L];
+    this.depthMaterial = this.buildDepthMaterial();
+    const defs = levelDefs(q);
+    for (let L = 0; L < defs.length; L++) {
+      const { n, step } = defs[L];
+      const size = n * step;
       const uStep = { value: step };
+      const uHalf = { value: size / 2 };
       const meshes: THREE.Mesh[] = [];
       const variants = L === 0 ? 1 : 4;
       for (let v = 0; v < variants; v++) {
-        const geo = buildRing(size, step, L > 0, v & 1, v >> 1);
-        // レベルごとに uStep を変えたいので材質を複製（プログラムは共有される）
-        const mat = this.material.clone();
-        mat.onBeforeCompile = this.material.onBeforeCompile;
-        mat.customProgramCacheKey = this.material.customProgramCacheKey;
-        const prevHook = mat.onBeforeCompile;
-        mat.onBeforeCompile = (shader, r) => {
-          prevHook(shader, r);
-          shader.uniforms.uStep = uStep;
-        };
-        const mesh = new THREE.Mesh(geo, mat);
+        const geo = buildRing(n, step, L > 0, v & 1, v >> 1);
+        const mesh = new THREE.Mesh(geo, this.cloneWithLevel(this.material, uStep, uHalf));
+        mesh.customDepthMaterial = this.cloneWithLevel(this.depthMaterial, uStep, uHalf);
         mesh.receiveShadow = true;
         mesh.castShadow = L <= 2;
         mesh.visible = v === 0;
         mesh.frustumCulled = true;
+        mesh.onBeforeRender = (renderer) => this.ensureBaked(renderer);
         meshes.push(mesh);
         this.group.add(mesh);
       }
-      this.levels.push({ size, step, meshes, uStep });
+      this.levels.push({ size, step, meshes, uStep, uHalf });
     }
     scene.add(this.group);
   }
 
+  /** レベルごとに uStep / uHalf を変えたいので材質を複製する（プログラムはキーで共有される）。 */
+  private cloneWithLevel<M extends THREE.Material>(src: M, uStep: THREE.IUniform<number>, uHalf: THREE.IUniform<number>): M {
+    const m = src.clone() as M;
+    // Material.clone() は defines を写さない。CSM の setupMaterial が付けた USE_CSM / CSM_CASCADES / CSM_FADE を
+    // 落とすと影の経路がコンパイルされず、太陽が「影なしの平行光」の経路に回ってしまう
+    m.defines = { ...(src.defines ?? {}) };
+    const prev = src.onBeforeCompile;
+    m.onBeforeCompile = (shader, r) => {
+      prev.call(src, shader, r);
+      shader.uniforms.uStep = uStep;
+      shader.uniforms.uHalf = uHalf;
+    };
+    m.customProgramCacheKey = src.customProgramCacheKey;
+    m.needsUpdate = true;
+    return m;
+  }
+
+  /** 最初の描画の直前に補助テクスチャを焼く（renderer はここでしか手に入らない）。 */
+  private ensureBaked(renderer: THREE.WebGLRenderer) {
+    if (this.bake || this.baking) return;
+    this.baking = true;
+    const res = this.env.heightmap.res;
+    const mobile = this.q.tier === "low" || this.q.tier === "mid";
+    const b = bakeTerrainAux(renderer, this.env, res, 1024, mobile ? 28 : 40, mobile ? 1.27 : 1.18);
+    this.bake = b;
+    const u = this.env.uniforms;
+    u.uTerrainAux.value = b.aux.texture;
+    u.uTerrainHorizonA.value = b.horizonA.texture;
+    u.uTerrainHorizonB.value = b.horizonB.texture;
+    this.baking = false;
+  }
+
   private buildMaterial() {
-    const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.95, metalness: 0 });
+    const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0 });
     patchMaterial(
       mat,
       this.env,
       (shader) => {
         shader.uniforms.uStep = { value: 2 };
-        shader.vertexShader = replaceOnce(
-          shader.vertexShader,
-          "#include <common>",
-          `#include <common>
-          #include <flip_height>
-          uniform float uStep;
-          attribute vec2 aEdge;
-          varying vec3 vFlipWorld;`,
-          "terrain vs common",
+        shader.uniforms.uHalf = { value: 96 };
+        shader.uniforms.uDetail = this.uDetail;
+        shader.uniforms.uTerrainDebug = this.uDebug;
+        let vs = shader.vertexShader;
+        vs = replaceOnce(vs, "#include <common>", `#include <common>\n${TERRAIN_VERT_PARS}`, "terrain vs common");
+        vs = replaceOnce(vs, "#include <begin_vertex>", TERRAIN_VERT_HEIGHT, "terrain vs begin_vertex");
+        vs = replaceOnce(vs, "#include <beginnormal_vertex>", TERRAIN_VERT_NORMAL, "terrain vs normal");
+        shader.vertexShader = vs;
+        let fs = shader.fragmentShader;
+        fs = replaceOnce(fs, "#include <common>", `#include <common>\n${TERRAIN_FRAG_PARS}`, "terrain fs common");
+        fs = replaceOnce(fs, "#include <clipping_planes_fragment>", `#include <clipping_planes_fragment>\n${TERRAIN_FRAG_MATERIAL}`, "terrain fs material");
+        fs = replaceOnce(fs, "#include <map_fragment>", "diffuseColor.rgb *= tCol;", "terrain fs map");
+        fs = replaceOnce(fs, "#include <roughnessmap_fragment>", "float roughnessFactor = tRough;", "terrain fs roughness");
+        fs = replaceOnce(fs, "#include <normal_fragment_begin>", TERRAIN_FRAG_NORMAL, "terrain fs normal");
+        fs = replaceOnce(
+          fs,
+          "#include <lights_fragment_begin>",
+          injectTerrainShadow((THREE.ShaderChunk as unknown as Record<string, string>).lights_fragment_begin),
+          "terrain fs lights",
         );
-        shader.vertexShader = replaceOnce(
-          shader.vertexShader,
-          "#include <begin_vertex>",
-          `vec2 wxz = (modelMatrix * vec4(position, 1.0)).xz;
-          float h = flip_height(wxz);
-          if (aEdge.x != 0.0 || aEdge.y != 0.0) {
-            h = 0.5 * (flip_height(wxz - aEdge * uStep) + flip_height(wxz + aEdge * uStep));
-          }
-          vec3 transformed = vec3(position.x, h, position.z);
-          vFlipWorld = vec3(wxz.x, h, wxz.y);`,
-          "terrain vs begin_vertex",
-        );
-        shader.vertexShader = replaceOnce(
-          shader.vertexShader,
-          "#include <beginnormal_vertex>",
-          `vec3 objectNormal = flip_terrainNormal((modelMatrix * vec4(position, 1.0)).xz, max(uStep, 2.0));`,
-          "terrain vs normal",
-        );
-        shader.fragmentShader = replaceOnce(
-          shader.fragmentShader,
-          "#include <common>",
-          `#include <common>
-          #include <flip_noise>
-          #include <flip_height>
-          #include <flip_atmosphere>
-          #include <flip_flip>
-          uniform float uWetness;
-          varying vec3 vFlipWorld;`,
-          "terrain fs common",
-        );
-        // 法線: ハイトマップから画素ごとに。近くはディテールノイズを足す（map_fragment より前で計算しておく）
-        shader.fragmentShader = replaceOnce(
-          shader.fragmentShader,
-          "#include <clipping_planes_fragment>",
-          `#include <clipping_planes_fragment>
-          float camDist = distance(vFlipWorld, uCamPos);
-          vec3 wN = flip_terrainNormal(vFlipWorld.xz, 1.0 + camDist * 0.004);
-          {
-            float detailAmt = (1.0 - smoothstep(20.0, 160.0, camDist)) * 0.35;
-            vec2 dxz = vFlipWorld.xz * 0.9;
-            float e = 0.05;
-            float d0 = flip_fbm(dxz, 3), dx = flip_fbm(dxz + vec2(e, 0.0), 3), dz = flip_fbm(dxz + vec2(0.0, e), 3);
-            vec3 detail = normalize(vec3((d0 - dx) / e, 1.0, (d0 - dz) / e) * vec3(0.4, 1.0, 0.4));
-            wN = normalize(mix(wN, normalize(wN + detail * 0.6), detailAmt));
-          }`,
-          "terrain fs clipping",
-        );
-        shader.fragmentShader = replaceOnce(
-          shader.fragmentShader,
-          "#include <normal_fragment_begin>",
-          `float faceDirection = gl_FrontFacing ? 1.0 : -1.0;
-          vec3 normal = normalize((viewMatrix * vec4(wN, 0.0)).xyz);
-          vec3 nonPerturbedNormal = normal;`,
-          "terrain fs normal",
-        );
-        // 塗り分け
-        shader.fragmentShader = replaceOnce(
-          shader.fragmentShader,
-          "#include <map_fragment>",
-          `{
-            float slope = 1.0 - wN.y; // 0 = 平ら
-            float hgt = vFlipWorld.y;
-            float nz = flip_fbm(vFlipWorld.xz * 0.02, 3);
-            float nz2 = flip_fbm(vFlipWorld.xz * 0.35 + 7.0, 3);
-            vec3 grass = mix(vec3(0.16, 0.27, 0.08), vec3(0.32, 0.40, 0.12), nz2 * 0.5 + 0.5);
-            vec3 dryGrass = vec3(0.40, 0.36, 0.16);
-            vec3 rock = mix(vec3(0.30, 0.28, 0.26), vec3(0.42, 0.38, 0.33), nz2 * 0.5 + 0.5);
-            vec3 dirt = vec3(0.28, 0.21, 0.14);
-            vec3 snow = vec3(0.90, 0.92, 0.96);
-            vec3 sand = vec3(0.52, 0.47, 0.36);
-            vec3 col = mix(grass, dryGrass, smoothstep(0.2, 0.7, nz * 0.5 + 0.5) * 0.6);
-            col = mix(col, dirt, smoothstep(0.12, 0.3, slope));
-            col = mix(col, rock, smoothstep(0.28, 0.5, slope));
-            col = mix(col, sand, 1.0 - smoothstep(0.4, 3.5, hgt));
-            float snowLine = 430.0 + 60.0 * nz;
-            col = mix(col, snow, smoothstep(snowLine, snowLine + 60.0, hgt) * (1.0 - smoothstep(0.35, 0.7, slope)));
-            col = mix(col, col * 0.55, uWetness * 0.8);
-            diffuseColor.rgb *= col;
-          }`,
-          "terrain fs map",
-        );
-        shader.fragmentShader = replaceOnce(
-          shader.fragmentShader,
-          "#include <roughnessmap_fragment>",
-          `#include <roughnessmap_fragment>
-          roughnessFactor = mix(roughnessFactor, 0.45, uWetness * 0.8);`,
-          "terrain fs roughness",
-        );
-        // 空気遠近＋裏返し
-        shader.fragmentShader = replaceOnce(
-          shader.fragmentShader,
-          "#include <fog_fragment>",
-          `gl_FragColor.rgb = flip_applyAerial(gl_FragColor.rgb, vFlipWorld);
-          {
-            float fm = flip_mask(vFlipWorld);
-            if (fm > 0.0) {
-              vec3 fc = FLIP_BG;
-              float contour = flip_line(vFlipWorld.y / 5.0, 0.035) * 0.7 + flip_line(vFlipWorld.y / 25.0, 0.06);
-              fc += FLIP_LINE * contour * 0.9;
-              fc += FLIP_LINE * 0.18 * flip_grid(vFlipWorld.xz, 10.0);
-              fc += FLIP_ACCENT * flip_edgeGlow(vFlipWorld) * 1.5;
-              fc = flip_applyAerial(fc, vFlipWorld) * 0.7 + fc * 0.3;
-              gl_FragColor.rgb = mix(gl_FragColor.rgb, fc, fm);
-            }
-          }`,
-          "terrain fs fog",
-        );
+        fs = replaceOnce(fs, "#include <aomap_fragment>", TERRAIN_FRAG_AO, "terrain fs ao");
+        fs = replaceOnce(fs, "#include <fog_fragment>", TERRAIN_FRAG_FOG, "terrain fs fog");
+        shader.fragmentShader = fs;
       },
-      { csm: this.lighting, key: "flip_terrain_v0" },
+      { csm: this.lighting, key: "flip_terrain_v1" },
+    );
+    return mat;
+  }
+
+  /** 影のキャスター用: 同じ変位（モーフ込み）を入れた深度材質。 */
+  private buildDepthMaterial() {
+    const mat = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
+    patchMaterial(
+      mat,
+      this.env,
+      (shader) => {
+        shader.uniforms.uStep = { value: 2 };
+        shader.uniforms.uHalf = { value: 96 };
+        let vs = shader.vertexShader;
+        vs = replaceOnce(vs, "#include <common>", `#include <common>\n${TERRAIN_VERT_PARS}`, "terrain depth vs common");
+        vs = replaceOnce(vs, "#include <begin_vertex>", TERRAIN_VERT_HEIGHT, "terrain depth vs begin_vertex");
+        shader.vertexShader = vs;
+      },
+      { key: "flip_terrain_depth_v1" },
     );
     return mat;
   }
@@ -254,6 +220,13 @@ export class Terrain {
         m.visible = v === variant;
         m.position.set(sx, 0, sz);
       }
+    }
+    // 影の normalBias: カスケードごとの texel 幅に比例させる（近くは薄く、遠くは厚く）。アクネとピーターパンの折り合い
+    for (const light of this.lighting.csm.lights) {
+      const sh = light.shadow;
+      const c = sh.camera as THREE.OrthographicCamera;
+      const texel = (c.right - c.left) / sh.mapSize.x;
+      sh.normalBias = 0.02 + texel * 1.6;
     }
   }
 }

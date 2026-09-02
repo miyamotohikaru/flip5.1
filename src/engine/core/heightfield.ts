@@ -166,8 +166,8 @@ const PEAK_DIR_X = Math.cos(-Math.PI / 2 - 0.3), PEAK_DIR_Z = Math.sin(-Math.PI 
 const VALLEY_DIR_X = Math.cos(-Math.PI / 2 + 0.24), VALLEY_DIR_Z = Math.sin(-Math.PI / 2 + 0.24);
 const VALLEY2_DIR_X = Math.cos(Math.PI - 0.5), VALLEY2_DIR_Z = Math.sin(Math.PI - 0.5);
 
-/** 直近の heightAt() の3成分（bakeHeightmap が読む。毎回の配列生成を避ける） */
-let partBase = 0, partMtn = 0, partFine = 0;
+/** 直近の heightAt() の3成分と岸線からの距離（bakeHeightmap が読む。毎回の配列生成を避ける） */
+let partBase = 0, partMtn = 0, partFine = 0, partShore = 0;
 
 /**
  * 地形の高さ（m）。決定的・連続・どこでも呼べる。
@@ -180,6 +180,7 @@ export function heightAt(x: number, z: number): number {
   angIndex(x, z);
   const shoreR = angGet(angShore);
   const sd = d - shoreR; // 岸線からの符号付き距離（負が湖）
+  partShore = sd;
   const northness = 0.5 - 0.5 * sa; // 1 = 北（山脈が近く高い）, 0 = 南（低い丘）
 
   // ---- base: 湖底 ----
@@ -287,8 +288,8 @@ export type Heightmap = {
   min: number;
   max: number;
   /**
-   * 高さの3成分（RGBA8）。r = 山脈/800, g = (土台+40)/320, b = (細部+6)/12。
-   * 裏返しの「数式の足し算」表示に使う。texel の対応は texture と同じ。
+   * 高さの3成分（RGBA16F、m）。r = 山脈, g = 土台（湖底・土手・上り・丘・沢筋）, b = 細部, a = 岸線からの距離（±500 で飽和）。
+   * r + g + b = 高さ。裏返しの「数式の足し算」表示に使う。texel の対応は texture と同じ。
    */
   parts: THREE.DataTexture;
 };
@@ -300,7 +301,8 @@ export type Heightmap = {
  */
 export function bakeHeightmap(res: number, onProgress?: (p: number) => void): Heightmap {
   const data = new Float32Array(res * res);
-  const parts = new Uint8Array(res * res * 4);
+  const parts = new Uint16Array(res * res * 4);
+  const half = THREE.DataUtils.toHalfFloat;
   let min = Infinity, max = -Infinity;
   for (let j = 0; j < res; j++) {
     const z = (j / res - 0.5) * WORLD.size;
@@ -311,25 +313,26 @@ export function bakeHeightmap(res: number, onProgress?: (p: number) => void): He
       data[k] = h;
       if (h < min) min = h;
       if (h > max) max = h;
-      parts[k * 4] = Math.max(0, Math.min(255, (partMtn / 800) * 255));
-      parts[k * 4 + 1] = Math.max(0, Math.min(255, ((partBase + 40) / 320) * 255));
-      parts[k * 4 + 2] = Math.max(0, Math.min(255, ((partFine + 6) / 12) * 255));
-      parts[k * 4 + 3] = 255;
+      parts[k * 4] = half(partMtn);
+      parts[k * 4 + 1] = half(partBase);
+      parts[k * 4 + 2] = half(partFine);
+      parts[k * 4 + 3] = half(partShore < -500 ? -500 : partShore > 500 ? 500 : partShore);
     }
     if (onProgress && (j & 63) === 0) onProgress(j / res);
   }
   const texture = new THREE.DataTexture(data, res, res, THREE.RedFormat, THREE.FloatType);
   texture.magFilter = THREE.LinearFilter;
   texture.minFilter = THREE.LinearFilter;
-  texture.wrapS = THREE.ClampToEdgeWrapping;
-  texture.wrapT = THREE.ClampToEdgeWrapping;
+  // 端の外は鏡像で続ける（遠景の霧の中に「もう一つ向こうの山脈」が見える。端に台地の壁ができない）
+  texture.wrapS = THREE.MirroredRepeatWrapping;
+  texture.wrapT = THREE.MirroredRepeatWrapping;
   texture.generateMipmaps = false;
   texture.needsUpdate = true;
-  const partsTex = new THREE.DataTexture(parts, res, res, THREE.RGBAFormat, THREE.UnsignedByteType);
+  const partsTex = new THREE.DataTexture(parts, res, res, THREE.RGBAFormat, THREE.HalfFloatType);
   partsTex.magFilter = THREE.LinearFilter;
   partsTex.minFilter = THREE.LinearFilter;
-  partsTex.wrapS = THREE.ClampToEdgeWrapping;
-  partsTex.wrapT = THREE.ClampToEdgeWrapping;
+  partsTex.wrapS = THREE.MirroredRepeatWrapping;
+  partsTex.wrapT = THREE.MirroredRepeatWrapping;
   partsTex.generateMipmaps = false;
   partsTex.needsUpdate = true;
   return { res, data, texture, min, max, parts: partsTex };
