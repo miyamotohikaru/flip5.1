@@ -2,7 +2,7 @@
 import * as THREE from "three";
 import { Env, type WeatherPresetName } from "./core/env";
 import { registerChunks } from "./core/chunks";
-import { bakeHeightmap, heightAt, startPosition } from "./core/heightfield";
+import { heightAt, startPosition } from "./core/heightfield";
 import { detectTier, isMobileDevice, QUALITY, type QualitySettings } from "./core/quality";
 import { parseParams, type Params } from "./core/params";
 import { Pipeline } from "./core/pipeline";
@@ -15,11 +15,27 @@ import { Weather } from "./weather";
 import { Post } from "./post";
 import { Audio } from "./audio";
 import { Controls } from "./controls";
+import { Runtime } from "./controls/runtime";
+import { bakeHeightmapAsync, type BakeMode } from "./controls/bake";
 
-export type WorldEvent = "ready" | "progress" | "frame" | "enter" | "exit" | "flip";
+export type WorldEvent = "ready" | "progress" | "frame" | "enter" | "exit" | "flip" | "photo" | "contextlost" | "contextrestored" | "tier";
 type Listener = (payload?: unknown) => void;
 
-export type Stats = { fps: number; frameMs: number; tier: string; drawCalls: number; triangles: number; width: number; height: number };
+export type Stats = {
+  /** 実効 fps（rAF の間隔、1 秒の移動平均） */
+  fps: number;
+  /** CPU 側のフレーム時間（ms、直近 60 フレームの平均） */
+  frameMs: number;
+  tier: string;
+  drawCalls: number;
+  triangles: number;
+  width: number;
+  height: number;
+  /** 動的解像度の倍率（0.5〜1.0） */
+  renderScale: number;
+  /** 実測で決めた「次回起動時の段階」（今回は変わらない）。null なら据え置き */
+  tierNext: string | null;
+};
 
 export class World {
   renderer: THREE.WebGLRenderer;
@@ -37,22 +53,24 @@ export class World {
   post!: Post;
   audio: Audio;
   controls!: Controls;
+  /** 操作・性能監視・堅牢性の配線（controls/runtime.ts） */
+  runtime!: Runtime;
+  /** 動的解像度の倍率（controls/performance が変える）。resize() で pixelRatio に掛かる */
+  renderScale = 1;
+  /** ハイトマップの焼き方と所要時間（起動時間の確認用） */
+  bakeInfo: { mode: BakeMode; ms: number; workers: number } = { mode: "sync", ms: 0, workers: 0 };
   ready = false;
   running = false;
   private listeners = new Map<WorldEvent, Set<Listener>>();
   private lastT = 0;
   private raf = 0;
   private frameTimes: number[] = [];
-  stats: Stats = { fps: 0, frameMs: 0, tier: "high", drawCalls: 0, triangles: 0, width: 0, height: 0 };
+  stats: Stats = { fps: 0, frameMs: 0, tier: "high", drawCalls: 0, triangles: 0, width: 0, height: 0, renderScale: 1, tierNext: null };
 
   constructor(public canvas: HTMLCanvasElement) {
     registerChunks();
     this.params = parseParams(typeof location !== "undefined" ? location.search : "");
     this.env.isMobile = isMobileDevice();
-    const tier = this.params.tier ?? detectTier();
-    this.env.tier = tier;
-    this.q = QUALITY[tier];
-    this.stats.tier = tier;
     this.renderer = new THREE.WebGLRenderer({
       canvas,
       antialias: false,
@@ -62,6 +80,11 @@ export class World {
       depth: true,
       preserveDrawingBuffer: false,
     });
+    // 段階の判定は描画用のコンテキストで行う（判定用にもう 1 つ作らない。iOS は上限が小さい）
+    const tier = this.params.tier ?? detectTier(this.renderer.getContext());
+    this.env.tier = tier;
+    this.q = QUALITY[tier];
+    this.stats.tier = tier;
     this.renderer.toneMapping = THREE.AgXToneMapping;
     this.renderer.toneMappingExposure = 1.0;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -87,7 +110,7 @@ export class World {
     this.listeners.get(ev)!.add(fn);
     return () => this.listeners.get(ev)?.delete(fn);
   }
-  private emit(ev: WorldEvent, payload?: unknown) {
+  emit(ev: WorldEvent, payload?: unknown) {
     this.listeners.get(ev)?.forEach((fn) => fn(payload));
   }
 
@@ -95,8 +118,12 @@ export class World {
   async build() {
     const env = this.env;
     this.emit("progress", { step: "地形の数式を計算しています", p: 0 });
-    await new Promise((r) => setTimeout(r, 30));
-    const hm = bakeHeightmap(this.q.heightmapRes);
+    // Web Worker で焼く（メインスレッドを止めない）。p は 0..0.5、step に行数の % を添える
+    const baked = await bakeHeightmapAsync(this.q.heightmapRes, (p) =>
+      this.emit("progress", { step: `地形の数式を計算しています ${Math.round(p * 100)}%`, p: p * 0.5 }),
+    );
+    const hm = baked.heightmap;
+    this.bakeInfo = { mode: baked.mode, ms: baked.ms, workers: baked.workers };
     env.heightmap = hm;
     env.uniforms.uHeightmap.value = hm.texture;
     env.uniforms.uHeightmapInfo.value.set(4096, 1 / 4096, hm.res, 800);
@@ -112,6 +139,7 @@ export class World {
     this.weather = new Weather(this.scene, env, this.lighting, this.q);
     this.post = new Post(env, this.q);
     this.controls = new Controls(env, this.canvas, this.audio);
+    this.runtime = new Runtime(this);
 
     const start = startPosition();
     const p = this.params;
@@ -134,7 +162,7 @@ export class World {
   resize = () => {
     const w = this.canvas.clientWidth || window.innerWidth;
     const h = this.canvas.clientHeight || window.innerHeight;
-    const pr = Math.min(window.devicePixelRatio || 1, this.q.maxPixelRatio) * this.q.renderScale;
+    const pr = Math.min(window.devicePixelRatio || 1, this.q.maxPixelRatio) * this.q.renderScale * this.renderScale;
     this.renderer.setPixelRatio(pr);
     this.renderer.setSize(w, h, false);
     const pw = Math.floor(w * pr), ph = Math.floor(h * pr);
@@ -235,6 +263,7 @@ export class World {
     this.stats.fps = dt > 0 ? 1 / dt : 0;
     this.stats.drawCalls = r.info.render.calls;
     this.stats.triangles = r.info.render.triangles;
+    this.runtime.frame(t0, ms); // 実効 fps・動的解像度（stats.fps / renderScale / tierNext を書く）
     this.emit("frame", this.stats);
   }
 
@@ -245,6 +274,7 @@ export class World {
   dispose() {
     this.stop();
     window.removeEventListener("resize", this.resize);
+    this.runtime?.dispose();
     this.controls.dispose();
     this.pipeline.dispose();
     this.renderer.dispose();
