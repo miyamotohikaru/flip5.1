@@ -37,12 +37,12 @@ uniform vec4 uSkyParams;
 void flip_atmoMedium(float h, out vec3 sR, out vec3 sM, out vec3 sE){
   float hr = max(h, 0.0);
   float dR = exp(-hr / 8.0);
-  float dM = exp(-hr / 1.2);
-  float dH = uSkyParams.z * exp(-max(h - uSkyParams.w, 0.0) / 0.7);
+  float dM = exp(-hr / 2.5);
+  float dH = uSkyParams.z * exp(-max(h - uSkyParams.w, 0.0) / 1.0);
   float dO = max(0.0, 1.0 - abs(hr - 25.0) / 15.0);
   sR = vec3(5.802, 13.558, 33.1) * 1e-3 * dR;
-  float mS = 3.996e-3 * dM + dH * 0.9;
-  float mA = 0.444e-3 * dM + dH * 0.1;
+  float mS = 3.2e-3 * dM + dH * 0.9;
+  float mA = 0.35e-3 * dM + dH * 0.1;
   sM = vec3(mS);
   sE = sR + vec3(mS + mA) + vec3(0.65, 1.881, 0.085) * 1e-3 * dO;
 }
@@ -169,7 +169,9 @@ float flip_fogPatch(vec2 xz){
 }
 // 霧に入ってくる光（等方の空の光＋太陽・月の前方散乱）
 vec3 flip_fogLight(vec3 dir){
-  vec3 l = uSkyFogLight;
+  // 等方の空の光と、視線の先（地平線寄り）の空の色を半々に（前方散乱で「向こうの空」の色が乗る）
+  vec3 hz = normalize(vec3(dir.x, max(dir.y, 0.04), dir.z));
+  vec3 l = uSkyFogLight * 0.55 + flip_skyColor(hz) * 0.45;
   l += uSunColor * flip_phaseHG(dot(dir, uSunDir), 0.6) * 0.9;
   l += uMoonColor * 4.0 * flip_phaseHG(dot(dir, uMoonDir), 0.6) * 0.9;
   return l;

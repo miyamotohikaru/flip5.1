@@ -53,6 +53,8 @@ export class Sky {
   enabled = true;
   /** 地形が flip_cloudShadow を使うようになったら false にする（太陽を雲量で一律に弱める代わりに、影マップで局所的に暗くなる） */
   globalCloudDim = true;
+  /** 露出の倍率（調整・検証用） */
+  exposureBias = 1;
   timings: Record<string, number> = {};
 
   private renderer: THREE.WebGLRenderer | null = null;
@@ -93,7 +95,7 @@ export class Sky {
   private probePending = false;
   private probeValid = false;
   private probeAsyncFailed = false;
-  private probe = { skyIrr: new THREE.Color(), groundIrr: new THREE.Color(), mean: new THREE.Color(), zenith: new THREE.Color() };
+  private probe = { skyIrr: new THREE.Color(), groundIrr: new THREE.Color(), mean: new THREE.Color(), sunside: new THREE.Color() };
   private viewProj = new THREE.Matrix4();
   private prevViewProj = new THREE.Matrix4();
   private historyValid = 0;
@@ -107,6 +109,14 @@ export class Sky {
   private cloudMoonT = new THREE.Color();
   private tmpC = new THREE.Color();
   private tmpC2 = new THREE.Color();
+  private sunGround = new THREE.Color();
+  private moonGround = new THREE.Color();
+  private sunCloudE = new THREE.Color();
+  private moonCloudE = new THREE.Color();
+  private ambTop = new THREE.Color();
+  private ambBottom = new THREE.Color();
+  private skyEff = new THREE.Color();
+  private meanEff = new THREE.Color();
   private e1 = new THREE.Vector3();
   private e2 = new THREE.Vector3();
   private e3 = new THREE.Vector3();
@@ -126,7 +136,7 @@ export class Sky {
 
     // ---- RT ----
     this.transRT = rt2(256, 64);
-    this.msRT = rt2(32, 32);
+    this.msRT = rt2(64, 32);
     this.skyViewRT = rt2(256, 128, { wrapS: THREE.RepeatWrapping });
     this.probeRT = rt2(4, 1, { type: THREE.FloatType, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
     this.shadowRT = rt2(SHADOW_RES, SHADOW_RES, { type: THREE.UnsignedByteType });
@@ -153,7 +163,7 @@ export class Sky {
     eu.uSkyViewLut.value = this.skyViewRT.texture;
     eu.uAerialLut.value = this.aerialRT.texture;
     eu.uCloudShadowMap.value = this.shadowRT.texture;
-    eu.uSkyParams.value.set(SHADOW_EXTENT, AERIAL_MAX, 0.03, GROUND_ALT_KM);
+    eu.uSkyParams.value.set(SHADOW_EXTENT, AERIAL_MAX, 0.01, GROUND_ALT_KM);
 
     // ---- LUT のマテリアル ----
     const lutMat = (frag: string, uniforms: U = {}) => {
@@ -268,7 +278,7 @@ export class Sky {
 
     // ---- 大気: 靄（uFog）と地表の霧 ----
     const fogK = clamp((w.fog - 0.15) / 0.85, 0, 1);
-    const hazeKm = 0.03 + 0.30 * Math.pow(fogK, 1.5);
+    const hazeKm = 0.008 + 0.10 * Math.pow(fogK, 1.3);
     eu.uSkyParams.value.set(SHADOW_EXTENT, AERIAL_MAX, hazeKm, GROUND_ALT_KM);
     const mist = 4.5e-3 * smoothstep(0.55, 1.0, w.fog) + 2.5e-4 * w.rain;
     const t = env.time;
@@ -279,7 +289,7 @@ export class Sky {
     const rCam = ATMO.RG + GROUND_ALT_KM + Math.max(camY, -60) / 1000;
     transmittance(rCam, env.sunDir.y, hazeKm, GROUND_ALT_KM, this.sunT);
     const sunMax = Math.max(this.sunT.r, this.sunT.g, this.sunT.b, 1e-6);
-    const cloudDim = this.globalCloudDim ? (1 - 0.62 * Math.pow(w.cloud, 1.4)) * (1 - 0.35 * w.storm) : 1;
+    const cloudDim = this.globalCloudDim ? (1 - 0.9 * Math.pow(w.cloud, 1.4)) * (1 - 0.9 * w.storm) : 1;
     env.sunColor.copy(this.sunT).multiplyScalar(1 / sunMax);
     env.sunIntensity = ATMO.sunE0 * sunMax * cloudDim;
 
@@ -293,10 +303,10 @@ export class Sky {
     env.moonIntensity = moonIrr > 1e-6 ? 1 : 0;
 
     // ---- 雲の層 ----
-    const cov = 0.10 + 0.98 * Math.pow(w.cloud, 0.9);
-    const base = 1900 - 900 * w.storm - 250 * w.rain;
+    const cov = 0.16 + 1.0 * Math.pow(w.cloud, 1.05);
+    const base = 1900 - 700 * w.storm - 250 * w.rain;
     const top = base + 1500 + 800 * w.cloud + 500 * w.storm;
-    const sigma = 0.025 + 0.02 * w.storm;
+    const sigma = 0.03 + 0.025 * w.storm;
     const layer = this.cloudU.uCloudLayer.value as THREE.Vector4;
     layer.set(base, top, cov, sigma);
     const shape = this.cloudU.uCloudShape.value as THREE.Vector4;
@@ -315,8 +325,8 @@ export class Sky {
     const rCloud = ATMO.RG + GROUND_ALT_KM + (base + top) * 0.5e-3;
     transmittance(rCloud, env.sunDir.y, hazeKm, GROUND_ALT_KM, this.cloudSunT);
     transmittance(rCloud, env.moonDir.y, hazeKm, GROUND_ALT_KM, this.cloudMoonT);
-    const sunCloudE = this.tmpC.copy(this.cloudSunT).multiplyScalar(ATMO.sunE0);
-    const moonCloudE = this.tmpC2.copy(this.cloudMoonT).multiply(ATMO.moonTint).multiplyScalar(ATMO.sunE0 * ATMO.moonRatio * moonUp);
+    const sunCloudE = this.sunCloudE.copy(this.cloudSunT).multiplyScalar(ATMO.sunE0);
+    const moonCloudE = this.moonCloudE.copy(this.cloudMoonT).multiply(ATMO.moonTint).multiplyScalar(ATMO.sunE0 * ATMO.moonRatio * moonUp);
     const useSun = luminance(sunCloudE) >= luminance(moonCloudE);
     (this.cloudU.uLightDir.value as THREE.Vector3).copy(useSun ? env.sunDir : env.moonDir);
     const lightE = useSun ? sunCloudE : moonCloudE;
@@ -328,28 +338,36 @@ export class Sky {
       const day = smoothstep(-0.1, 0.3, env.sunDir.y);
       p.skyIrr.setRGB(0.5, 0.7, 1.0).multiplyScalar(0.9 * day + 0.004).multiplyScalar(1 - 0.5 * w.cloud);
       p.mean.copy(p.skyIrr).multiplyScalar(0.5 / Math.PI);
-      p.zenith.copy(p.mean);
+      p.sunside.copy(p.mean).multiplyScalar(1.5);
     }
-    const sunGround = this.tmpC.copy(this.sunT).multiplyScalar(ATMO.sunE0 * cloudDim * Math.max(env.sunDir.y, 0));
-    const moonGround = this.tmpC2.copy(env.moonColor).multiplyScalar(4 * Math.max(env.moonDir.y, 0));
-    p.groundIrr.setRGB(0.28, 0.27, 0.22).multiply(this.tmpC.add(p.skyIrr).add(moonGround));
-    env.skyAmbient.copy(p.skyIrr).multiplyScalar(0.5);
+    const sunGround = this.sunGround.copy(this.sunT).multiplyScalar(ATMO.sunE0 * cloudDim * Math.max(env.sunDir.y, 0));
+    const moonGround = this.moonGround.copy(env.moonColor).multiplyScalar(4 * Math.max(env.moonDir.y, 0));
+    // 曇りの下では、空の光は「雲を透けた灰色の光」に置き換わる（晴れの青空の照度 → 全天の照度 × 雲の透過率）
+    const coverG = smoothstep(0.25, 1.0, w.cloud);
+    const cloudT = 0.38 - 0.28 * w.storm;
+    const sunClear = this.tmpC2.copy(this.sunT).multiplyScalar(ATMO.sunE0 * Math.max(env.sunDir.y, 0));
+    const overcast = this.tmpC.copy(sunClear).add(p.skyIrr).multiplyScalar(cloudT).multiply(this.tmpC2.setRGB(0.92, 0.94, 1.0));
+    const skyEff = this.skyEff.copy(p.skyIrr).lerp(overcast, coverG);
+    const meanEff = this.meanEff.copy(p.mean).lerp(this.tmpC.copy(overcast).multiplyScalar(0.5 / Math.PI), coverG);
+    p.groundIrr.setRGB(0.28, 0.27, 0.22).multiply(this.tmpC.copy(sunGround).add(skyEff).add(moonGround));
+    env.skyAmbient.copy(skyEff).multiplyScalar(0.5);
     env.groundAmbient.copy(p.groundIrr).multiplyScalar(0.5);
-    eu.uSkyFogLight.value.copy(p.mean).multiplyScalar(1.0);
-    const stormDark = 1 - 0.55 * w.storm;
-    const ambTop = this.tmpC.copy(p.skyIrr).multiplyScalar((1.15 / Math.PI) * stormDark);
+    eu.uSkyFogLight.value.copy(meanEff);
+    const stormDark = 1 - 0.65 * w.storm;
+    const ambTop = this.ambTop.copy(p.skyIrr).multiplyScalar((1.05 / Math.PI) * stormDark);
     (this.cloudU.uAmbTop.value as THREE.Vector3).set(ambTop.r, ambTop.g, ambTop.b);
-    const ambBottom = this.tmpC.copy(p.skyIrr).multiplyScalar(0.28 / Math.PI).add(this.tmpC2.copy(p.groundIrr).multiplyScalar(0.55 / Math.PI)).multiplyScalar(stormDark);
+    const ambBottom = this.ambBottom.copy(skyEff).multiplyScalar(0.22 / Math.PI).add(this.tmpC2.copy(p.groundIrr).multiplyScalar(0.40 / Math.PI)).multiplyScalar(stormDark);
     (this.cloudU.uAmbBottom.value as THREE.Vector3).set(ambBottom.r, ambBottom.g, ambBottom.b);
     const cheap = this.tmpC.copy(sunCloudE).multiplyScalar(0.10).add(this.tmpC2.copy(ambTop).multiplyScalar(0.8));
     for (const m of [this.material, this.envMat]) (m.uniforms.uCheapCloudColor.value as THREE.Vector3).set(cheap.r, cheap.g, cheap.b);
 
-    // ---- 露出（物理量から。夜は上げきらずに暗いまま） ----
-    const keyL = luminance(sunGround) * 0.06 + luminance(p.skyIrr) * 0.2 + luminance(moonGround) * 0.06 + 2e-5;
-    const target = clamp(0.9 * Math.pow(0.52 / keyL, 0.46), 0.55, 14);
+    // ---- 露出（物理量から。目の順応のように暗いほど上げるが、上げきらない＝夜は暗いまま） ----
+    // 目安 = 地面の平均輝度 ＋ 太陽側の地平線の帯の輝度（夕焼けの明るい帯で露出が決まるように）
+    const keyL = 0.064 * (luminance(sunGround) + luminance(skyEff) + 2.0 * luminance(moonGround)) + 0.1 * luminance(p.sunside) * (1 - 0.7 * coverG) + 1e-5;
+    const target = clamp(0.8 * Math.pow(0.33 / keyL, 0.65), 0.5, 30);
     if (this.exposure < 0) this.exposure = target;
     else this.exposure += (target - this.exposure) * (1 - Math.exp(-dt * 2.0));
-    env.exposure = this.exposure;
+    env.exposure = this.exposure * this.exposureBias;
 
     // ---- 星の座標系（北へ 45° 傾いた極の周りを 15°/h で回る） ----
     const e3 = this.e3.set(0, Math.SQRT1_2, -Math.SQRT1_2);
@@ -365,11 +383,15 @@ export class Sky {
     }
 
     // ---- LUT 用のカメラ・太陽・月 ----
+    // 空気遠近の LUT だけは、曇りの下では光が弱い（雲の透過率ぶん）
+    const aerialScale = 1 - coverG * (1 - cloudT * 1.3);
     for (const m of [this.skyViewMat, this.aerialMat]) {
+      const k = m === this.aerialMat ? aerialScale : 1;
       m.uniforms.uCamR.value = rCam;
       (m.uniforms.uSunDirK.value as THREE.Vector3).copy(env.sunDir);
       (m.uniforms.uMoonDirK.value as THREE.Vector3).copy(env.moonDir);
-      (m.uniforms.uMoonE.value as THREE.Vector3).set(ATMO.moonTint.r, ATMO.moonTint.g, ATMO.moonTint.b).multiplyScalar(ATMO.sunE0 * ATMO.moonRatio * moonUp);
+      (m.uniforms.uSunE.value as THREE.Vector3).setScalar(ATMO.sunE0 * k);
+      (m.uniforms.uMoonE.value as THREE.Vector3).set(ATMO.moonTint.r, ATMO.moonTint.g, ATMO.moonTint.b).multiplyScalar(ATMO.sunE0 * ATMO.moonRatio * moonUp * k);
     }
     (this.probeMat.uniforms.uSunDirK.value as THREE.Vector3).copy(env.sunDir);
 
@@ -466,7 +488,7 @@ export class Sky {
       p.skyIrr.setRGB(b[0], b[1], b[2]);
       p.groundIrr.setRGB(b[4], b[5], b[6]);
       p.mean.setRGB(b[8], b[9], b[10]);
-      p.zenith.setRGB(b[12], b[13], b[14]);
+      p.sunside.setRGB(b[12], b[13], b[14]);
       this.probeValid = true;
     };
     if (!this.probeValid || this.probeAsyncFailed) {
@@ -478,6 +500,9 @@ export class Sky {
     if (this.probePending) return;
     this.probePending = true;
     renderer.readRenderTargetPixelsAsync(this.probeRT, 0, 0, 4, 1, this.probeBuf).then(() => { apply(); this.probePending = false; }).catch(() => { this.probeAsyncFailed = true; this.probePending = false; });
+    // three.js は待っている間 PIXEL_PACK_BUFFER を束縛したままにする（他の readPixels が失敗する）ので外しておく
+    const gl = renderer.getContext() as WebGL2RenderingContext;
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
   }
 
   private updateEnvMap(renderer: THREE.WebGLRenderer) {

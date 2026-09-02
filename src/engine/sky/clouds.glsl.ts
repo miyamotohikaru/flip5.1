@@ -15,7 +15,7 @@ uniform vec4 uCloudShape;    // x = 型の偏り(嵐で層雲へ), y = 上端の
 uniform vec3 uWindOffset;    // 3D ノイズのずれ (m)
 float cl_remap(float v, float l0, float h0, float l1, float h1){ return l1 + (v - l0) * (h1 - l1) / (h0 - l0); }
 vec4 cl_weather(vec2 xz){ return texture2D(uWeatherMap, xz * uWeatherParams.x + uWeatherParams.yz); }
-float cl_coverage(vec4 w){ return clamp(cl_remap(w.r, 1.0 - uCloudLayer.z, 1.0, 0.0, 1.0), 0.0, 1.0); }
+float cl_coverage(vec4 w){ return clamp((w.r - (1.0 - uCloudLayer.z)) / 0.5, 0.0, 1.0); }
 // 層の中の高さ hf (0..1) と型 (0 = 層雲: 低く平ら, 1 = 積雲: 高い) による密度の重み
 float cl_heightGrad(float hf, float type){
   type = clamp(type + uCloudShape.x, 0.0, 1.0);
@@ -33,7 +33,7 @@ float cl_density(vec3 p, float hf, vec4 w, bool detail){
   float base = cl_remap(s.r, lf - 1.0, 1.0, 0.0, 1.0) * hg;
   float d = clamp(cl_remap(base, 1.0 - cov, 1.0, 0.0, 1.0), 0.0, 1.0) * cov;
   if (detail && d > 0.0){
-    vec3 dn = texture(uNoiseDetail, (p + uWindOffset * 1.3) * (1.0 / 380.0)).rgb;
+    vec3 dn = texture(uNoiseDetail, (p + uWindOffset * 1.3) * (1.0 / 300.0)).rgb;
     float hfbm = dn.r * 0.625 + dn.g * 0.25 + dn.b * 0.125;
     float m = mix(hfbm, 1.0 - hfbm, clamp(hf * 8.0, 0.0, 1.0));
     d = clamp(cl_remap(d, m * 0.28 * uWeatherParams.w, 1.0, 0.0, 1.0), 0.0, 1.0);
@@ -168,7 +168,7 @@ float cl_scatter(float od, float cosT){
     r += a * exp(-b * od) * ph;
     a *= 0.5; b *= 0.45; g *= 0.55;
   }
-  return r * 3.6;
+  return r * 3.0;
 }
 void main(){
   vec2 ndc = vUv * 2.0 - 1.0;
@@ -204,7 +204,19 @@ void main(){
           if (firstHit < 0.0) firstHit = t;
           float odL = cl_lightMarch(p, uLightDir, base, top) * sigma;
           float sc = cl_scatter(odL, cosT);
-          vec3 amb = mix(uAmbBottom, uAmbTop, hf);
+          // 上からの空の光は、上に積もる雲の厚さで弱まる（薄いところ・端が明るい）
+          float odUp = 0.0;
+          {
+            float du = (top - base) * 0.16;
+            for (int k = 1; k <= 3; k++){
+              vec3 q = p + vec3(0.0, du * float(k), 0.0);
+              float hq = hf + du * float(k) / (top - base);
+              if (hq > 1.0) break;
+              odUp += cl_density(q, hq, w, false) * du;
+            }
+          }
+          float skyT = exp(-odUp * sigma * 0.03);
+          vec3 amb = mix(uAmbBottom, uAmbTop, hf) * (0.15 + 0.85 * skyT) * (1.0 - 0.45 * dens);
           vec3 S = uLightE * sc + amb;
           float stepT = exp(-dens * sigma * dt);
           L += T * S * (1.0 - stepT);
@@ -214,10 +226,11 @@ void main(){
       }
       t += dt;
     }
-    float alpha = 1.0 - T;
+    // 地平線ぎわは歩幅が粗く細い筋になるので消す（そこは空気遠近で霞む）
+    float alpha = (1.0 - T) * smoothstep(-0.02, 0.03, d.y);
     if (alpha > 0.0005){
       vec4 ap = flip_aerial(uCamPos + d * firstHit);
-      result = vec4(L * ap.a + ap.rgb * alpha, alpha);
+      result = vec4((L * ap.a + ap.rgb * (1.0 - T)) * (alpha / (1.0 - T)), alpha);
     }
   }
   // 時間方向の再利用（前フレームを「方向」で再投影。雲は遠いので視差は無視できる）

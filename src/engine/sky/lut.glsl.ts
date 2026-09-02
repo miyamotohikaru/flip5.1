@@ -40,8 +40,9 @@ export const MS_FRAG = /* glsl */ `
 ${ATMO_COMMON}
 varying vec2 vUv;
 void main(){
-  vec2 uv = (gl_FragCoord.xy - 0.5) / 31.0;
-  float sunCos = uv.x * 2.0 - 1.0;
+  vec2 uv = (gl_FragCoord.xy - 0.5) / vec2(63.0, 31.0);
+  float sx = uv.x * 2.0 - 1.0;
+  float sunCos = sign(sx) * sx * sx;
   float r = FLIP_RG + uv.y * (FLIP_RT - FLIP_RG) + 0.001;
   vec3 sunDir = vec3(sqrt(max(0.0, 1.0 - sunCos * sunCos)), sunCos, 0.0);
   vec3 o = vec3(0.0, r, 0.0);
@@ -97,16 +98,17 @@ uniform vec3 uMoonDirK;
 uniform vec3 uSunE;
 uniform vec3 uMoonE;
 vec3 flip_msLookup(float r, float muS){
-  vec2 uv = vec2(muS * 0.5 + 0.5, (r - FLIP_RG) / (FLIP_RT - FLIP_RG));
-  uv = flip_subUv(clamp(uv, 0.0, 1.0), vec2(32.0));
+  float sx = sign(muS) * sqrt(abs(muS));
+  vec2 uv = vec2(sx * 0.5 + 0.5, (r - FLIP_RG) / (FLIP_RT - FLIP_RG));
+  uv = flip_subUv(clamp(uv, 0.0, 1.0), vec2(64.0, 32.0));
   return texture2D(uMsLut, uv).rgb;
 }
 // o から d へ [0, tMax] を N 歩（二次で手前が細かい）で積分。L = 散乱光, T = 透過率
 void flip_scatterMarch(vec3 o, vec3 d, float tMax, int N, out vec3 L, out vec3 T){
   T = vec3(1.0); L = vec3(0.0);
   float cS = dot(d, uSunDirK), cM = dot(d, uMoonDirK);
-  float phRs = flip_phaseR(cS), phMs = flip_phaseMie(cS, 0.8);
-  float phRm = flip_phaseR(cM), phMm = flip_phaseMie(cM, 0.8);
+  float phRs = flip_phaseR(cS), phMs = flip_phaseMie(cS, 0.76);
+  float phRm = flip_phaseR(cM), phMm = flip_phaseMie(cM, 0.76);
   float tPrev = 0.0;
   for (int i = 0; i < 48; i++){
     if (i >= N) break;
@@ -238,7 +240,16 @@ void main(){
       }
     }
   } else {
-    acc = skyAt(vec3(0.0, 1.0, 0.0));
+    // 太陽側の地平線の帯（方位 ±35°, 仰角 0.5〜9°）の平均: 露出の「明るいところ」の目安
+    float sunAz = atan(uSunDirK.z, uSunDirK.x);
+    for (int j = 0; j < 6; j++){
+      float el = radians(0.5 + 8.5 * (float(j) + 0.5) / 6.0);
+      for (int i = 0; i < 12; i++){
+        float az = sunAz + radians(-35.0 + 70.0 * (float(i) + 0.5) / 12.0);
+        vec3 d = vec3(cos(el) * cos(az), sin(el), cos(el) * sin(az));
+        acc += skyAt(d) / 72.0;
+      }
+    }
   }
   gl_FragColor = vec4(acc, 1.0);
 }
