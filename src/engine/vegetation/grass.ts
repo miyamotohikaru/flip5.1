@@ -141,6 +141,10 @@ void veg_grass(out vec3 p, out vec3 n){
   float rnd2 = flip_hash11(rnd * 91.7 + 3.0);
   float H = uBlade.x * (0.55 + 0.8 * rnd) * (0.65 + 0.35 * density) * scale;
   float W = uBlade.y * (0.75 + 0.5 * rnd2) * (0.5 + 0.5 * scale);
+  #ifdef VEG_SHADOW_PASS
+  // 影用: 葉身が影テクセル（8cm）より細いと影が消えるので、株の影の塊として太らせる
+  W *= 3.0;
+  #endif
   float yaw = rnd2 * 6.2832 + k * 2.1;
   vec3 side = vec3(cos(yaw), 0.0, sin(yaw));
   vec3 bendDir = vec3(-side.z, 0.0, side.x);
@@ -275,7 +279,7 @@ export class Grass {
           shader.fragmentShader,
           "#include <lights_fragment_begin>",
           `float vegTrans = 0.3 + 0.7 * vGrass.x;
-          float vegAO = 0.3 + 0.7 * vGrass.x;
+          float vegAO = 0.45 + 0.55 * vGrass.x;
           ${VEG_LIGHTS_FRAGMENT}`,
           "grass fs lights",
         );
@@ -298,6 +302,7 @@ export class Grass {
 
   private buildDepthMaterial(uRing: THREE.IUniform, uBlade: THREE.IUniform) {
     const mat = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, side: THREE.DoubleSide });
+    mat.defines = { VEG_SHADOW_PASS: 1 };
     patchMaterial(
       mat,
       this.env,

@@ -4,6 +4,7 @@
 import { hash2, smoothstep, clamp } from "../core/noise";
 import { WORLD, sampleHeightmap, type Heightmap } from "../core/heightfield";
 import { forestDensity, sampleVegMap, type VegMap } from "./vegmap";
+import { SHOTS } from "../core/params";
 
 export type Scatter = {
   count: number;
@@ -80,6 +81,13 @@ export function scatterTrees(hm: Heightmap, vm: VegMap, cell: number, variants: 
       const ny = groundNy(hm, x, z);
       const p = forestDensity(x, z, h, ny);
       if (h1 > p) continue;
+      // 定点撮影の立ち位置の中に幹が来ないように
+      let blocked = false;
+      for (const sh of SHOTS) {
+        const ddx = sh.pos[0] - x, ddz = sh.pos[1] - z;
+        if (ddx * ddx + ddz * ddz < 3.5 * 3.5) blocked = true;
+      }
+      if (blocked) continue;
       const seed = hash2(i, j, 104);
       const fd = sampleVegMap(vm, x, z, 1);
       // 大きさ: 小さめに偏らせる。密な林ほど高い。森林限界の近くは低い

@@ -75,12 +75,14 @@ export class ImpostorAtlas {
       scene.add(m);
       return m;
     });
-    renderer.setClearColor(0x000000, 0);
     renderer.autoClear = false;
+    // 透明画素の色は「縁ににじんでも目立たない色」で埋める（黒い縁取りを防ぐ）
+    const clears: THREE.Color[] = [new THREE.Color(0.045, 0.085, 0.04), new THREE.Color(0.5, 0.5, 1.0), new THREE.Color(1, 1, 1)];
     const targets: [THREE.WebGLRenderTarget, number][] = [[this.albedo, 0], [this.normal, 1], [this.skeleton, 2]];
     for (const [rt, mode] of targets) {
       renderer.setRenderTarget(rt);
       renderer.setScissorTest(false);
+      renderer.setClearColor(clears[mode], 0);
       renderer.clear(true, true, false);
       mat.uniforms.uMode.value = mode;
       mat.uniforms.uForceFlip.value = mode === 2 ? 1 : 0;
@@ -172,7 +174,7 @@ function makeBakeMaterial(needle: THREE.Texture): THREE.ShaderMaterial {
         vec4 c = veg_treeAlbedo(relief);
         if (c.a < 0.45) discard;
         if (uMode == 0) {
-          gl_FragColor = vec4(c.rgb * veg_treeAO(), 1.0);
+          gl_FragColor = vec4(c.rgb * (0.7 + 0.3 * veg_treeAO()), 1.0);
         } else {
           vec3 nn = vBakeN * (gl_FrontFacing ? 1.0 : -1.0);
           vec3 n = vTree.z > 0.5 ? normalize(mix(nn, vConeN, 0.6)) : nn;
@@ -220,12 +222,17 @@ export function makeImpostorMaterial(env: Env, lighting: Lighting, atlas: Impost
       shader.vertexShader = replaceOnce(
         shader.vertexShader,
         "#include <beginnormal_vertex>",
-        `mat4 im = instanceMatrix;
-        vec3 root = im[3].xyz;
-        float scl = max(length(im[1].xyz), 1e-4);
-        float yaw = atan(im[0].z, im[0].x);
+        `mat4 imp = instanceMatrix;
+        vec3 root = imp[3].xyz;
+        float scl = max(length(imp[1].xyz), 1e-4);
+        float yaw = atan(imp[0].z, imp[0].x);
         float dist = distance(root.xz, uCamPos.xz);
         float fade = smoothstep(uImp.x - uImp.y, uImp.x, dist) * (1.0 - smoothstep(uImp.z - uImp.w, uImp.z, dist));
+        float seed = flip_hash12(floor(root.xz * 3.7 + 0.5));
+        // 遠く（視程の 45% から）は半分に間引き、残りを少し大きくして密度を保つ
+        float thin = smoothstep(uImp.z * 0.4, uImp.z * 0.55, dist);
+        if (seed > 0.55) fade *= 1.0 - thin;
+        else scl *= 1.0 + 0.3 * thin;
         int vi = int(aVar + 0.5);
         vec4 fr = uFrames[vi];
         vec2 toCam2 = cameraPosition.xz - root.xz;
@@ -243,7 +250,6 @@ export function makeImpostorMaterial(env: Env, lighting: Lighting, atlas: Impost
         float el = atan(cameraPosition.y - (root.y + 0.5 * Hh), dc);
         float rowBlend = smoothstep(0.17, 0.42, el);
         float fm = veg_flipMask(root);
-        float seed = flip_hash12(floor(root.xz * 3.7 + 0.5));
         float flipped = step(flip_hash11(seed * 13.0 + 0.5), fm) * step(0.001, fm);
         vImp = vec4(c0, cellF - c0, rowBlend, fade);
         vImp2 = vec4(position.x + 0.5, position.y, aVar, flipped);
@@ -332,7 +338,7 @@ export function makeImpostorMaterial(env: Env, lighting: Lighting, atlas: Impost
       shader.fragmentShader = replaceOnce(
         shader.fragmentShader,
         "#include <lights_fragment_begin>",
-        `float vegTrans = 0.12;
+        `float vegTrans = 0.25;
         float vegAO = 1.0;
         ${VEG_LIGHTS_FRAGMENT}`,
         "imp fs lights",

@@ -13,11 +13,13 @@ import type { QualitySettings } from "../core/quality";
 import { heightAt } from "../core/heightfield";
 import { bakeVegMap, type VegMap } from "./vegmap";
 import { Grass } from "./grass";
+import { Trees } from "./trees";
 
 export class Vegetation {
   group = new THREE.Group();
   vegmap: VegMap;
   grass: Grass | null = null;
+  trees: Trees | null = null;
 
   constructor(public scene: THREE.Scene, public env: Env, public lighting: Lighting, public q: QualitySettings) {
     scene.add(this.group);
@@ -26,8 +28,10 @@ export class Vegetation {
     const t0 = performance.now();
     this.vegmap = bakeVegMap(env.heightmap, q.tier === "low" ? 384 : 512);
     const t1 = performance.now();
+    if (!off("notrees")) this.trees = new Trees(this.group, env, lighting, q, this.vegmap);
+    const t2 = performance.now();
     if (!off("nograss")) this.grass = new Grass(this.group, env, lighting, q, this.vegmap);
-    if (dbg.includes("vegtime")) console.info(`[vegetation] vegmap ${(t1 - t0).toFixed(0)}ms`);
+    if (dbg.includes("vegtime")) console.info(`[vegetation] vegmap ${(t1 - t0).toFixed(0)}ms trees ${(t2 - t1).toFixed(0)}ms (${this.trees?.stats.trees ?? 0} trees)`);
     if (dbg.includes("shadowtest")) {
       // 影の動作確認用の柱（調査用）
       const box = new THREE.Mesh(new THREE.BoxGeometry(1.5, 8, 1.5), new THREE.MeshStandardMaterial({ color: 0x884422 }));
@@ -39,6 +43,7 @@ export class Vegetation {
   }
 
   update(_dt: number) {
+    this.trees?.update();
     this.grass?.update();
   }
 }

@@ -21,16 +21,16 @@ export type TreeVariant = {
   lmax: number;
   whorls: number;
   perWhorl: number;
-  /** 横向きカードを付ける枝の割合 */
+  /** 上から見た扇カードも付ける枝の割合（横向きの垂れカードは全枝に付く） */
   sideRatio: number;
   seed: number;
 };
 
 export const TREE_VARIANTS: TreeVariant[] = [
-  { H: 15, crownBase: 0.2, lmax: 0.115, whorls: 15, perWhorl: 5, sideRatio: 0.45, seed: 1 },
-  { H: 12.5, crownBase: 0.05, lmax: 0.15, whorls: 14, perWhorl: 6, sideRatio: 0.5, seed: 2 },
-  { H: 17, crownBase: 0.13, lmax: 0.125, whorls: 16, perWhorl: 5, sideRatio: 0.4, seed: 3 },
-  { H: 10, crownBase: 0.03, lmax: 0.17, whorls: 12, perWhorl: 6, sideRatio: 0.55, seed: 4 },
+  { H: 15, crownBase: 0.2, lmax: 0.14, whorls: 17, perWhorl: 6, sideRatio: 0.55, seed: 1 },
+  { H: 12.5, crownBase: 0.05, lmax: 0.185, whorls: 16, perWhorl: 7, sideRatio: 0.55, seed: 2 },
+  { H: 17, crownBase: 0.13, lmax: 0.15, whorls: 18, perWhorl: 6, sideRatio: 0.5, seed: 3 },
+  { H: 10, crownBase: 0.03, lmax: 0.2, whorls: 14, perWhorl: 7, sideRatio: 0.6, seed: 4 },
 ];
 
 export type TreeGeo = { geometry: THREE.BufferGeometry; H: number; radius: number; tris: number };
@@ -51,7 +51,7 @@ export function buildConifer(v: TreeVariant, lod: 0 | 1): TreeGeo {
 
   // ---- 幹
   const segs = lod === 0 ? 8 : 6;
-  const rings = lod === 0 ? [0, 0.04, 0.12, 0.25, 0.42, 0.6, 0.78, 0.9, 1.0] : [0, 0.08, 0.3, 0.6, 1.0];
+  const rings = lod === 0 ? [0, 0.04, 0.12, 0.25, 0.42, 0.6, 0.78, 0.9, 1.0] : [0, 0.12, 0.5, 1.0];
   const base0 = 0;
   for (let ri = 0; ri < rings.length; ri++) {
     const t = rings[ri];
@@ -120,18 +120,18 @@ export function buildConifer(v: TreeVariant, lod: 0 | 1): TreeGeo {
       const d = new THREE.Vector3(Math.cos(az) * cd, -sd, Math.sin(az) * cd).normalize();
       const bx = a0.x + Math.cos(az) * rt * 0.6, by = a0.y, bz = a0.z + Math.sin(az) * rt * 0.6;
       const w0 = new THREE.Vector3().crossVectors(d, up).normalize();
-      const roll = (rnd() - 0.5) * 0.8;
+      const roll = (rnd() - 0.5) * 1.2;
       const w = w0.clone().applyAxisAngle(d, roll);
       const flex = 0.45 + 0.55 * t;
       const phase = rnd() * 6.2832;
       const cellTop = rnd() < 0.5 ? 0 : 3;
-      addCard(bx, by, bz, d, w, Lb, -0.3 * Lb, 0.3 * Lb, cellTop, 0.2, 0.8, flex, phase, false);
-      if (lod === 0 && rnd() < v.sideRatio) {
-        // 横向きカード（垂れる小枝）。幅方向は「下」
-        let dn = new THREE.Vector3().crossVectors(w0, d).normalize();
-        if (dn.y > 0) dn = dn.negate();
-        addCard(bx, by, bz, d, dn, Lb * 0.95, -0.14 * Lb, 0.36 * Lb, 1, 0.36, 0.86, flex, phase + 1.0, false);
-      }
+      // 横向きカード（垂れる小枝）: 全部の枝に。幅方向は「下」。少し捻る
+      let dn = new THREE.Vector3().crossVectors(w0, d).normalize();
+      if (dn.y > 0) dn = dn.negate();
+      dn.applyAxisAngle(d, (rnd() - 0.5) * 0.7);
+      addCard(bx, by, bz, d, dn, Lb, -0.14 * Lb, 0.42 * Lb, 1, 0.34, 0.9, flex, phase + 1.0, false);
+      // 上から見た扇カード: 近景の一部の枝に（上・斜め上から見たときの厚み）
+      if (lod === 0 && rnd() < v.sideRatio) addCard(bx, by, bz, d, w, Lb * 0.95, -0.34 * Lb, 0.34 * Lb, cellTop, 0.14, 0.86, flex, phase, false);
     }
   }
   // 梢: 交差する縦カード
@@ -236,8 +236,8 @@ vec3 veg_bark(vec3 lp, float seed, out float relief){
   float streak2 = flip_vnoise(vec3(lp.x * 30.0, lp.y * 2.2 + seed * 3.0, lp.z * 30.0));
   float plates = flip_vnoise(vec3(lp.x * 6.0, lp.y * 1.6, lp.z * 6.0) + seed * 10.0);
   relief = streak * 0.65 + streak2 * 0.35;
-  vec3 dark = vec3(0.085, 0.062, 0.045);
-  vec3 light = vec3(0.30, 0.225, 0.16);
+  vec3 dark = vec3(0.10, 0.078, 0.062);
+  vec3 light = vec3(0.34, 0.27, 0.21);
   vec3 c = mix(dark, light, smoothstep(0.3, 0.8, relief) * 0.75 + 0.25 * plates);
   c = mix(c, vec3(0.36, 0.33, 0.20), 0.3 * smoothstep(0.62, 0.9, plates));
   return c;

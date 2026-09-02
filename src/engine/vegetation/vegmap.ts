@@ -22,7 +22,7 @@ export function forestDensity(x: number, z: number, h: number, ny: number): numb
   const elev = smoothstep(2.5, 9.0, h) * (1 - smoothstep(330, 400, h));
   if (elev <= 0) return 0;
   // 斜度 35° 未満
-  const slope = 1 - smoothstep(0.78, 0.86, ny);
+  const slope = smoothstep(0.78, 0.86, ny);
   if (slope <= 0) return 0;
   // 群落: 大きなうねり（~900m）＋ 中くらいの斑（~200m）
   const big = fbm2(x * 0.00105 + 5.3, z * 0.00105 + 9.1, 3);

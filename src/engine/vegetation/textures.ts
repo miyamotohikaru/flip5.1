@@ -25,19 +25,20 @@ function drawTwig(ctx: Ctx, r: () => number, x0: number, y0: number, ang: number
   ctx.lineTo(x0 + dx * len, y0 + dy * len);
   ctx.stroke();
   // 針: 芯の両側に、先端ほど短く、少し前へ倒れる
-  const n = Math.floor(len / 2.2);
+  const n = Math.floor(len / 1.4);
   for (let i = 0; i < n; i++) {
     const t = (i + 0.5) / n;
+    if (r() < 0.3) continue; // 隙間（向こうが透ける）
     const px = x0 + dx * len * t, py = y0 + dy * len * t;
     for (const s of [-1, 1]) {
       const a = ang + s * (0.95 + 0.35 * (r() - 0.5)) - 0.25 * t;
-      const l = needleLen * (0.6 + 0.6 * r()) * (1.0 - 0.45 * t);
-      const shade = dark * (0.55 + 0.45 * t) * (0.85 + 0.3 * r());
-      const g = Math.round(70 + 95 * shade);
-      const rr = Math.round(28 + 60 * shade * hue);
-      const b = Math.round(18 + 30 * shade * (1.2 - hue));
+      const l = needleLen * (0.55 + 0.7 * r()) * (1.0 - 0.4 * t);
+      const shade = dark * (0.5 + 0.5 * t) * (0.8 + 0.4 * r());
+      const g = Math.round(48 + 58 * shade);
+      const rr = Math.round(30 + 46 * shade * (0.6 + 0.8 * hue));
+      const b = Math.round(26 + 30 * shade * (1.4 - hue));
       ctx.strokeStyle = `rgb(${rr}, ${g}, ${b})`;
-      ctx.lineWidth = 1.1 + 0.9 * r();
+      ctx.lineWidth = 0.8 + 0.6 * r();
       ctx.beginPath();
       ctx.moveTo(px, py);
       ctx.lineTo(px + Math.cos(a) * l, py + Math.sin(a) * l);
@@ -78,22 +79,25 @@ function drawSpray(ctx: Ctx, seed: number, size: number, kind: "top" | "side" | 
   ctx.moveTo(cx0, cy0);
   ctx.lineTo(cx0 + len, cy0 + (kind === "side" ? size * 0.05 : 0));
   ctx.stroke();
-  const n = kind === "top" ? 13 : 12;
+  const n = kind === "top" ? 14 : 11;
   for (let i = 0; i < n; i++) {
     const t = (i + 0.3) / n;
     const x = cx0 + len * t;
     const y = cy0 + (kind === "side" ? size * 0.05 * t : 0);
     const dark = 0.35 + 0.65 * t; // 幹側ほど暗い
     if (kind === "top") {
-      const l = size * (0.34 - 0.22 * t) * (0.85 + 0.3 * r());
-      const spread = 0.75 + 0.25 * r();
-      drawTwig(ctx, r, x, y, -spread - 0.2 * (1 - t), l, size * 0.05, dark, 0.5 + 0.3 * (r() - 0.5));
-      drawTwig(ctx, r, x, y, spread + 0.2 * (1 - t), l, size * 0.05, dark, 0.5 + 0.3 * (r() - 0.5));
+      const l = size * (0.4 - 0.26 * t) * (0.85 + 0.3 * r());
+      const spread = 0.7 + 0.3 * r();
+      drawTwig(ctx, r, x, y, -spread - 0.2 * (1 - t), l, size * 0.045, dark, 0.5 + 0.3 * (r() - 0.5));
+      drawTwig(ctx, r, x, y, spread + 0.2 * (1 - t), l, size * 0.045, dark, 0.5 + 0.3 * (r() - 0.5));
+      if (i % 3 === 0) drawTwig(ctx, r, x, y, (r() - 0.5) * 0.5, l * 0.4, size * 0.04, dark, 0.5);
     } else {
-      // 垂れ下がる小枝（上側は短く、下側は長く）
-      const l = size * (0.36 - 0.2 * t) * (0.85 + 0.3 * r());
-      drawTwig(ctx, r, x, y, 1.15 + 0.35 * r(), l, size * 0.05, dark, 0.5);
-      drawTwig(ctx, r, x, y, -0.9 - 0.3 * r(), l * 0.45, size * 0.04, dark, 0.5);
+      // 垂れ下がる小枝（横から見た枝: 下へ長く、上へ短く。先端ほど短い）
+      const l = size * (0.4 - 0.24 * t) * (0.75 + 0.5 * r());
+      drawTwig(ctx, r, x, y, 1.2 + 0.25 * r(), l, size * 0.042, dark, 0.5);
+      drawTwig(ctx, r, x, y, 1.75 + 0.25 * r(), l * 0.85, size * 0.042, dark, 0.5);
+      drawTwig(ctx, r, x, y, 0.45 + 0.3 * r(), l * 0.6, size * 0.04, dark, 0.5);
+      drawTwig(ctx, r, x, y, -0.6 - 0.3 * r(), l * 0.35, size * 0.035, dark, 0.5);
     }
   }
   // 先端の小枝
