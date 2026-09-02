@@ -143,8 +143,15 @@ export class World {
 
     const start = startPosition();
     const p = this.params;
-    if (p.pos) this.controls.setPose(p.pos[0], p.pos[1], p.pos[2], p.look?.[0] ?? 0, p.look?.[1] ?? 0);
-    else this.controls.setPose(start.x, start.z, undefined, start.yaw, 3);
+    // ?pos だけ・?look だけでも効くようにする（撮影で片方だけ指定することが多い）
+    if (p.pos || p.look) {
+      const x = p.pos ? p.pos[0] : start.x;
+      const z = p.pos ? p.pos[1] : start.z;
+      const y = p.pos ? p.pos[2] : undefined;
+      this.controls.setPose(x, z, y, p.look?.[0] ?? start.yaw, p.look?.[1] ?? 3);
+    } else {
+      this.controls.setPose(start.x, start.z, undefined, start.yaw, 3);
+    }
     if (p.flipRadius !== undefined) env.flipRadius = p.flipRadius;
     env.flipCenter.copy(this.controls.position);
 
@@ -269,7 +276,7 @@ export class World {
     if (!dbg.includes("noref")) this.water.renderReflection(this.pipeline, cam);
     if (!dbg.includes("nocopy")) this.pipeline.copyScene(cam);
     if (!dbg.includes("notrans")) this.pipeline.renderTransparent(cam);
-    if (!dbg.includes("nopost")) this.post.render(this.pipeline, null);
+    this.post.render(this.pipeline, null); // ?dbg=nopost は post 側で「そのままトーンマップ」に切り替わる
     r.setRenderTarget(null);
 
     const ms = performance.now() - t0;

@@ -90,7 +90,7 @@ export function terrainTerms(x: number, z: number): TerrainTerms {
 // ---------------------------------------------------------------------------
 const RAYLEIGH: [number, number, number] = [5.802e-3, 13.558e-3, 33.1e-3];
 const OZONE: [number, number, number] = [0.65e-3 * 0.75, 1.881e-3 * 0.75, 0.085e-3 * 0.75];
-const MIE_G = 0.76;
+const MIE_G = 0.82;
 
 /** 海抜 h(km) の消散係数（RGB、1/km）と散乱係数。groundAlt は world y=0 の海抜(km) */
 function medium(h: number, haze: number, groundAlt: number): { ext: [number, number, number]; mieS: number } {
@@ -99,7 +99,7 @@ function medium(h: number, haze: number, groundAlt: number): { ext: [number, num
   const dM = Math.exp(-hr / 2.5);
   const dH = haze * Math.exp(-Math.max(h - groundAlt, 0) / 1.0);
   const dO = Math.max(0, 1 - Math.abs(hr - 25) / 15);
-  const mS = 3.2e-3 * dM + dH * 0.9;
+  const mS = 8.0e-3 * dM + dH * 0.9;
   const mA = 0.35e-3 * dM + dH * 0.1;
   const ext: [number, number, number] = [
     RAYLEIGH[0] * dR + mS + mA + OZONE[0] * dO,
