@@ -211,9 +211,12 @@ button { font-family: inherit; }
 /* ── 携帯（620px 以下） ───────────────────────── */
 @media screen and (max-width: 620px) {
   :root { --gutter: 14px; }
-  .btn { height: 34px; padding: 0 12px; font-size: 13px; }
-  .btn.icon { width: 34px; }
+  /* 指で押す前提のあたり判定（Apple の推奨 44pt 以上）。小さいと外して「押せない」になる */
+  .btn { height: 44px; padding: 0 16px; font-size: 14px; }
+  .btn.icon { width: 44px; }
   .btn.flip { min-width: 0; }
+  .hud-tr .row { gap: 8px; }
+  .seg { padding: 3px; }
   .landing { padding: calc(16px + var(--safe-t)) calc(20px + var(--safe-r)) calc(16px + var(--safe-b)) calc(20px + var(--safe-l)); }
   .landing-head { font-size: 12px; }
   .landing-body { padding-bottom: 2vh; }
@@ -229,10 +232,11 @@ button { font-family: inherit; }
   .hud-count { font-size: 13px; line-height: 1.55; }
   .hud-count span { display: block; }
   .hud-count .sep { display: none; }
-  .seg button { height: 28px; padding: 0 9px; font-size: 13px; }
+  .seg button { height: 38px; padding: 0 12px; font-size: 14px; }
   .time .clock { font-size: 13px; }
   .time.dragging .clock { font-size: 20px; }
-  .time input[type="range"] { width: 130px; }
+  .time { height: 44px; }
+  .time input[type="range"] { width: 130px; height: 44px; }
   .time input[type="range"]::-webkit-slider-thumb { width: 14px; height: 14px; margin-top: -6px; }
   .time.dragging input[type="range"]::-webkit-slider-thumb { width: 22px; height: 22px; margin-top: -9px; }
   .hud-hint { bottom: calc(72px + var(--safe-b)); font-size: 13px; }
@@ -300,3 +304,23 @@ html:has(.log), body:has(.log) { overflow: auto; }
 /* 見回し: ドラッグ中は掴んだ形に（マウス固定中はカーソルが消える） */
 .world canvas { cursor: grab; }
 .world canvas.grabbing { cursor: grabbing; }
+
+/* 携帯の主ボタン: 裏返すを親指の届く下中央に。上のボタン列は補助として残す */
+.flip-thumb { display: none; }
+@media screen and (max-width: 620px) {
+  .flip-thumb {
+    display: flex; align-items: center; justify-content: center;
+    position: fixed; z-index: 13; left: 50%; transform: translateX(-50%);
+    bottom: calc(18px + var(--safe-b));
+    height: 52px; min-width: 148px; padding: 0 26px; border-radius: 999px;
+    border: 1px solid var(--accent); background: rgba(6, 10, 24, 0.5);
+    color: var(--accent); font: inherit; font-size: 16px; font-weight: 600; letter-spacing: 0.12em;
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    pointer-events: auto; -webkit-tap-highlight-color: transparent;
+  }
+  .flip-thumb.on { background: var(--accent); color: #1a1000; }
+  .flip-thumb:active { transform: translateX(-50%) scale(0.97); }
+  .hud-tr .row .btn.flip { display: none; }  /* 下の主ボタンと重複させない */
+  .hud-br { bottom: calc(84px + var(--safe-b)); }   /* 主ボタンと重ならない高さへ */
+  .hud-hint { bottom: calc(136px + var(--safe-b)); }
+}
