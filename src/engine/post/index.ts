@@ -1,49 +1,349 @@
-// ポスト処理。土台版: 露出→トーンマップ(AgX)→ビネット の1パス。
-// ポスト担当が ブルーム／ゴッドレイ／SMAA／AO／被写界深度／色調／粒子ノイズ／写真モードの高解像度書き出し を作る。
+// ポスト処理。HDR の sceneRT を受け取り、画面（または写真用 RT）へ出す。
+//
+//   sceneRT(HDR, MSAA 解決済み)
+//     ├─ bloom      … 6 段のダウン/アップサンプル（bloom.ts）
+//     ├─ godrays    … 1/4 解像度の放射ブラー（godrays.ts）      [q.postFx.godrays]
+//     ├─ ao         … 半分解像度の GTAO ＋ バイラテラル（ao.ts） [q.postFx.ao]
+//     ├─ exposure   … 1×1 の平均輝度と焦点距離の追従（exposure.ts）
+//     ├─ dof        … 近くを見たとき／写真モードだけ（dof.ts）   [q.postFx.dof]
+//     ▼
+//   grade（合成・レンズ・裏返し・露出・AgX・色調・ビネット → LDR sRGB、alpha = 裏返しマスク）
+//     ▼
+//   SMAA（high/ultra）／ FXAA（mid）／ なし（low）
+//     ▼
+//   final（シャープ・色収差・粒子・ディザ）→ 画面
+//
 // 契約:
-//   - 入力は pipeline.sceneRT（HDR 線形）。出力は画面（null）または指定 RT
-//   - トーンマップは renderer.toneMapping（AgX）と #include <tonemapping_fragment> で掛かる。線形の RT へ描くときは掛からない
-//   - renderToTarget(target) で写真モード用に任意解像度へ出せること
+//   - 入力は pipeline.sceneRT（HDR 線形）と sceneRT.depthTexture。出力は画面（null）または指定 RT
+//   - GLSL は three の既定記法。トーンマップは自前の AgX（three と同じ式）。renderer.toneMapping は最終パスでは使わない
+//   - takePhoto() は world から渡された hooks で 2 倍解像度に描き直して PNG を返す
 import * as THREE from "three";
 import type { Env } from "../core/env";
-import { FS_VERT, type Pipeline } from "../core/pipeline";
+import type { Pipeline } from "../core/pipeline";
 import type { QualitySettings } from "../core/quality";
+import { bindEnvUniforms } from "../core/patch";
+import { smoothstep, clamp } from "../core/noise";
+import { fsMaterial, makeRT, GpuTimer } from "./pass";
+import { Bloom } from "./bloom";
+import { GodRays } from "./godrays";
+import { AO } from "./ao";
+import { DoF } from "./dof";
+import { Exposure } from "./exposure";
+import { GRADE_FRAG, gradeUniforms } from "./grade";
+import { SMAA } from "./smaa";
+import { FXAA } from "./fxaa";
+import { Final } from "./final";
+import { photoSize, renderTargetToPng } from "./photo";
+
+export type PostRenderOptions = {
+  /** 写真モード（露出の追従を止め、被写界深度を必ず掛ける） */
+  photo?: boolean;
+};
+
+export type PhotoHooks = {
+  /** 今の描画バッファの大きさ（px） */
+  width: number;
+  height: number;
+  /** pipeline / water / post をこの大きさにする */
+  resize: (w: number, h: number) => void;
+  /** 1 フレームぶん描いて post.render(pipeline, target, { photo: true }) まで済ませる */
+  render: (target: THREE.WebGLRenderTarget) => void;
+};
+
+export type AAMode = "smaa" | "fxaa" | "none";
+
+export type PostStats = {
+  /** ポスト全体の GPU 時間（ms）。タイマー拡張が無いと NaN */
+  ms: number;
+  passes: Record<string, number>;
+  avgLum: number;
+  focus: number;
+  aa: AAMode;
+  dof: boolean;
+};
+
+const V3 = new THREE.Vector3();
+const V4 = new THREE.Vector4();
 
 export class Post {
-  final: THREE.ShaderMaterial;
+  bloom: Bloom;
+  godrays: GodRays | null;
+  ao: AO | null;
+  dof: DoF | null;
+  smaa: SMAA | null;
+  fxaa: FXAA | null;
+  final: Final;
+  grade: THREE.ShaderMaterial;
+  exposure: Exposure | null = null;
+  timer: GpuTimer | null = null;
+  ldrA: THREE.WebGLRenderTarget;
+  ldrB: THREE.WebGLRenderTarget;
+  width = 1;
+  height = 1;
+  aaMode: AAMode;
+  /** 一人称でも被写界深度を許す焦点距離（m）。これより近くを見たときだけ掛かる */
+  dofNearFocus = 4.0;
+  stats: PostStats;
+  private renderer: THREE.WebGLRenderer | null = null;
+  private lastTime = 0;
+  private photoMode = false;
+  private dofActive = false;
+  private lens = new THREE.Vector4();
+
   constructor(public env: Env, public q: QualitySettings) {
-    this.final = new THREE.ShaderMaterial({
-      uniforms: {
-        tDiffuse: { value: null },
-        uExposure: { value: 1 },
-        uVignette: { value: 0.35 },
-        uFlip: { value: 0 },
-      },
-      vertexShader: FS_VERT,
-      fragmentShader: /* glsl */ `
-        uniform sampler2D tDiffuse; uniform float uExposure; uniform float uVignette; uniform float uFlip;
-        varying vec2 vUv;
-        void main(){
-          vec3 c = texture2D(tDiffuse, vUv).rgb * uExposure;
-          vec2 d = vUv - 0.5;
-          float v = 1.0 - uVignette * smoothstep(0.25, 0.95, dot(d, d) * 2.2);
-          c *= v;
-          gl_FragColor = vec4(c, 1.0);
-          #include <tonemapping_fragment>
-          #include <colorspace_fragment>
-        }`,
-      depthTest: false,
-      depthWrite: false,
-      toneMapped: true,
-    });
+    const fx = q.postFx;
+    this.aaMode = fx.smaa ? (q.tier === "high" || q.tier === "ultra" ? "smaa" : "fxaa") : "none";
+    this.bloom = new Bloom(6);
+    this.godrays = fx.godrays ? new GodRays() : null;
+    this.ao = fx.ao ? new AO() : null;
+    this.dof = fx.dof ? new DoF() : null;
+    this.smaa = this.aaMode === "smaa" ? new SMAA(0.08) : null;
+    this.fxaa = this.aaMode === "fxaa" ? new FXAA() : null;
+    this.final = new Final();
+    const uniforms = gradeUniforms();
+    bindEnvUniforms(uniforms, env);
+    this.grade = fsMaterial("post_grade", uniforms, GRADE_FRAG);
+    this.ldrA = makeRT(1, 1, { type: THREE.UnsignedByteType });
+    this.ldrB = makeRT(1, 1, { type: THREE.UnsignedByteType });
+    this.stats = { ms: NaN, passes: {}, avgLum: 0.18, focus: 5, aa: this.aaMode, dof: false };
   }
 
-  render(pipeline: Pipeline, target: THREE.WebGLRenderTarget | null = null) {
-    this.final.uniforms.tDiffuse.value = pipeline.sceneRT.texture;
-    this.final.uniforms.uExposure.value = this.env.exposure;
-    this.final.uniforms.uFlip.value = this.env.flip;
-    pipeline.blit(this.final, target);
+  private init(pipeline: Pipeline) {
+    if (this.renderer) return;
+    this.renderer = pipeline.renderer;
+    this.exposure = new Exposure(this.renderer, pipeline.floatDepth);
+    this.timer = new GpuTimer(this.renderer, true);
+    this.lastTime = performance.now();
   }
 
-  resize(_w: number, _h: number) {}
+  resize(w: number, h: number) {
+    this.width = Math.max(1, Math.floor(w));
+    this.height = Math.max(1, Math.floor(h));
+    this.bloom.resize(this.width, this.height);
+    this.godrays?.resize(this.width, this.height);
+    this.ao?.resize(this.width, this.height);
+    this.dof?.resize(this.width, this.height);
+    this.smaa?.resize(this.width, this.height);
+    this.ldrA.setSize(this.width, this.height);
+    this.ldrB.setSize(this.width, this.height);
+    this.exposure?.snap();
+  }
+
+  /** 時刻・天気から「ルック」を決める（毎フレーム） */
+  private updateLook(photo: boolean) {
+    const env = this.env;
+    const u = this.grade.uniforms;
+    const s = env.sunDir.y;
+    const golden = smoothstep(-0.06, 0.02, s) * (1 - smoothstep(0.08, 0.32, s));
+    const night = 1 - smoothstep(-0.16, -0.03, s);
+    const sunUp = smoothstep(-0.04, 0.06, s);
+    const w = env.weather;
+    const storm = w.storm, cloud = w.cloud, rain = w.rain;
+    const warmth = 0.55 * golden - 0.6 * night - 0.25 * storm - 0.08 * cloud * (1 - storm);
+    u.uWarmth.value = clamp(warmth, -1, 1);
+    u.uSaturation.value = 0.97 - 0.1 * night - 0.22 * storm - 0.05 * cloud * (1 - storm);
+    u.uContrast.value = 1.04 + 0.05 * golden - 0.1 * night - 0.04 * storm;
+    (u.uSplit.value as THREE.Vector2).set(0.35 + 0.3 * night + 0.1 * storm, 0.35 + 0.35 * golden - 0.3 * night);
+    u.uVignette.value = 0.28 + 0.12 * storm + 0.06 * night + 0.08 * rain;
+    u.uBloomStrength.value = 0.055 + 0.02 * golden + 0.02 * night + 0.02 * rain;
+    u.uRain.value = rain;
+    u.uExposure.value = env.exposure;
+    u.uAoStrength.value = this.ao ? 1.0 : 0.0;
+    const underwater = smoothstep(0, 0.3, env.uniforms.uLakeLevel.value - env.cameraPos.y);
+    u.uUnderwater.value = underwater;
+    // 太陽の画面位置
+    const cam = env.camera;
+    V3.copy(env.sunDir).transformDirection(cam.matrixWorldInverse);
+    const front = -V3.z;
+    let sunFront = 0;
+    let offFade = 0;
+    if (front > 1e-3) {
+      V4.set(V3.x, V3.y, V3.z, 0).applyMatrix4(cam.projectionMatrix);
+      const sx = (V4.x / V4.w) * 0.5 + 0.5, sy = (V4.y / V4.w) * 0.5 + 0.5;
+      (u.uSunScreen.value as THREE.Vector2).set(sx, sy);
+      sunFront = smoothstep(0.05, 0.3, front);
+      const ox = Math.max(0, Math.abs(sx - 0.5) - 0.5), oy = Math.max(0, Math.abs(sy - 0.5) - 0.5);
+      offFade = 1 - smoothstep(0, 0.45, Math.hypot(ox, oy));
+    } else {
+      (u.uSunScreen.value as THREE.Vector2).set(-10, -10);
+    }
+    u.uSunFront.value = sunFront;
+    (u.uSunDir.value as THREE.Vector3).copy(env.sunDir);
+    const sc = env.sunColor;
+    const m = Math.max(sc.r, sc.g, sc.b, 1e-3);
+    (u.uSunColorN.value as THREE.Vector3).set(sc.r / m, sc.g / m, sc.b / m);
+    u.uGodStrength.value = this.godrays ? (0.16 + 0.7 * golden) * (1 - 0.45 * cloud) * (1 - 0.5 * storm) * sunUp * offFade : 0;
+    u.uFlareStrength.value = 0.22 * sunUp * (1 - 0.7 * cloud) * (1 - storm);
+    // 最終パス
+    const f = this.final.mat.uniforms;
+    f.uGrain.value = (0.022 + 0.014 * night + 0.01 * storm) * (photo ? 0.8 : 1);
+    f.uGrainSeed.value = Math.floor(env.time * 24) * 7.31;
+    f.uCA.value = 0.8;
+    f.uSharpen.value = 0.3;
+    f.uSharpenFlip.value = 0.4;
+    // レンズ（被写界深度）。x = 焦点距離 m, y = 有効口径 m, z = センサ高 m, w = 出力の高さ px
+    const focal = 0.024;
+    const fnum = photo ? 2.0 : 2.8;
+    this.lens.set(focal, focal / fnum, 0.024, this.height);
+  }
+
+  /** 一人称で被写界深度を掛けるか（近くを見ているときだけ） */
+  private dofWanted(photo: boolean): boolean {
+    if (!this.dof) return false;
+    if (photo) return true;
+    const focus = this.exposure?.focus ?? 100;
+    return focus < this.dofNearFocus;
+  }
+
+  render(pipeline: Pipeline, target: THREE.WebGLRenderTarget | null = null, opts: PostRenderOptions = {}) {
+    this.init(pipeline);
+    const photo = !!opts.photo || this.photoMode;
+    const env = this.env;
+    const cam = env.camera;
+    const w = pipeline.width, h = pipeline.height;
+    if (w !== this.width || h !== this.height) this.resize(w, h);
+    const now = performance.now();
+    const dt = photo ? 0 : Math.min((now - this.lastTime) / 1000, 0.1);
+    this.lastTime = now;
+    const timer = this.timer!;
+    const scene = pipeline.sceneRT.texture;
+    const depth = pipeline.sceneRT.depthTexture as THREE.Texture;
+    const u = this.grade.uniforms;
+    this.updateLook(photo);
+
+    // ブルーム
+    timer.begin("bloom");
+    this.bloom.render(pipeline, scene, w, h);
+    timer.end();
+
+    // 逆ビュー射影（世界座標の復元）
+    const invVP = u.uInvViewProj.value as THREE.Matrix4;
+    invVP.multiplyMatrices(cam.matrixWorld, cam.projectionMatrixInverse);
+    (u.uCamPos.value as THREE.Vector3).copy(cam.position);
+
+    // ゴッドレイ
+    if (this.godrays) {
+      timer.begin("godrays");
+      this.godrays.render(pipeline, scene, depth, invVP, cam.position, env.sunDir, u.uSunScreen.value as THREE.Vector2);
+      timer.end();
+      u.tGod.value = this.godrays.texture;
+      u.tGodMask.value = this.godrays.mask.texture;
+    }
+
+    // AO
+    if (this.ao) {
+      timer.begin("ao");
+      this.ao.render(pipeline, depth, w, h, cam);
+      timer.end();
+      u.tAO.value = this.ao.texture;
+      (u.uHalfRes.value as THREE.Vector2).set(this.ao.rt.width, this.ao.rt.height);
+    }
+
+    // 露出・焦点
+    const ex = this.exposure!;
+    if (!photo) {
+      timer.begin("exposure");
+      const sm = this.bloom.smallest;
+      ex.render(pipeline, sm.texture, sm.width, sm.height, depth, w, h, cam, dt);
+      timer.end();
+    }
+    u.tAdapt.value = ex.texture;
+
+    // 被写界深度
+    const dofOn = this.dofWanted(photo);
+    this.dofActive = dofOn;
+    if (dofOn && this.dof) {
+      // 一人称では近づくほど滑らかに開く
+      const k = photo ? 1 : smoothstep(this.dofNearFocus, this.dofNearFocus * 0.4, ex.focus);
+      const lens = this.lens.clone();
+      lens.y *= k;
+      const focus = photo ? ex.focus : Math.max(ex.focus, 0.3);
+      timer.begin("dof");
+      this.dof.cocMax = photo ? 12 : 9;
+      this.dof.render(pipeline, scene, depth, w, h, cam, lens, focus);
+      timer.end();
+      u.tDof.value = this.dof.texture;
+      (u.uDof.value as THREE.Vector4).copy(lens);
+      u.uFocus.value = focus;
+      u.uCocMax.value = this.dof.cocMax;
+    }
+    u.uDofOn.value = dofOn ? 1 : 0;
+
+    // 合成・色調 → LDR
+    u.tScene.value = scene;
+    u.tDepth.value = depth;
+    u.tBloom.value = this.bloom.texture;
+    u.tBloomFine.value = this.bloom.down[0].texture;
+    u.uBloomNorm.value = 1 / this.bloom.weightSum;
+    (u.uRes.value as THREE.Vector2).set(w, h);
+    (u.uTexel.value as THREE.Vector2).set(1 / w, 1 / h);
+    u.uNear.value = cam.near;
+    u.uFar.value = cam.far;
+    u.uAspect.value = w / h;
+    timer.begin("grade");
+    pipeline.blit(this.grade, this.ldrA);
+    timer.end();
+
+    // AA
+    let src: THREE.Texture = this.ldrA.texture;
+    if (this.smaa) {
+      timer.begin("smaa");
+      this.smaa.render(pipeline, src, w, h, this.ldrB);
+      timer.end();
+      src = this.ldrB.texture;
+    } else if (this.fxaa) {
+      timer.begin("fxaa");
+      this.fxaa.render(pipeline, src, w, h, this.ldrB);
+      timer.end();
+      src = this.ldrB.texture;
+    }
+
+    // 最終
+    timer.begin("final");
+    const grainPx = Math.max(1, Math.round(w / 1700));
+    this.final.render(pipeline, src, w, h, grainPx, target);
+    timer.end();
+    timer.poll();
+    this.stats.ms = timer.total;
+    this.stats.passes = timer.ms;
+    this.stats.avgLum = ex.avgLum;
+    this.stats.focus = ex.focus;
+    this.stats.dof = dofOn;
+  }
+
+  /** 写真モード: 2 倍解像度（上限 4096）で描き直して PNG にする。画面には触らない */
+  async takePhoto(hooks: PhotoHooks): Promise<Blob | null> {
+    const r = this.renderer;
+    if (!r) return null;
+    const { w, h } = photoSize(hooks.width, hooks.height, this.env.isMobile);
+    const rt = makeRT(w, h, { type: THREE.UnsignedByteType });
+    this.photoMode = true;
+    try {
+      hooks.resize(w, h);
+      hooks.render(rt);
+    } finally {
+      this.photoMode = false;
+      hooks.resize(hooks.width, hooks.height);
+      r.setRenderTarget(null);
+    }
+    try {
+      return await renderTargetToPng(r, rt);
+    } finally {
+      rt.dispose();
+    }
+  }
+
+  dispose() {
+    this.bloom.dispose();
+    this.godrays?.dispose();
+    this.ao?.dispose();
+    this.dof?.dispose();
+    this.smaa?.dispose();
+    this.fxaa?.dispose();
+    this.final.dispose();
+    this.exposure?.dispose();
+    this.grade.dispose();
+    this.ldrA.dispose();
+    this.ldrB.dispose();
+  }
 }
