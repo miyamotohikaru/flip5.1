@@ -383,7 +383,7 @@ void main(){
       float ew = max(0.05, 3.0 * fwidth(vertEdge));
       float edgeA = smoothstep(0.0, 0.12, vDepthA);
       float edgeD = smoothstep(0.0, ew, vertEdge) * smoothstep(0.0, 0.15, along);
-      float edge = edgeA * mix(1.0, edgeD, smoothstep(0.6, 1.6, vDepthA));
+      float edge = edgeA * mix(1.0, edgeD, smoothstep(1.5, 3.0, vDepthA));   // 浅い所は地形メッシュの LOD 誤差で点が出るので解析のみ
       col = mix(texture2D(tSceneColor, suv).rgb, col, edge);
     }
   } else {
