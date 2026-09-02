@@ -47,8 +47,8 @@ export class Controls {
   /** 押してから最高速までの秒数／離してから止まるまでの秒数 */
   accelTime = 0.15;
   decelTime = 0.25;
-  /** マウス感度（rad／カウント）。DPI・画面倍率に依存しない */
-  sensitivity = 0.0016;
+  /** マウス感度（rad／カウント。0.06°）。画面倍率に依存しない。800dpi で 1 回転 ≈ 7.5 インチ */
+  sensitivity = 0.00105;
   /** タッチの見回し感度（rad／CSS px） */
   touchSensitivity = 0.0045;
   /** ゲームパッド右スティックの回転速度（rad/s、水平／垂直） */

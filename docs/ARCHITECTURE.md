@@ -39,7 +39,15 @@ node tools/shoot.mjs <名前> --all                 # 全定点
 node tools/shoot.mjs <名前> --url "/?t=6&w=mist&pos=0,400&look=20,5"
 node tools/shoot.mjs <名前> --shot golden --mobile  # iPhone 相当
 FLIP_URL=http://localhost:3052 node tools/shoot.mjs ...   # 別ポートのサーバーを撮る
+node tools/perf.mjs                               # 負荷計測: high で 10 秒歩き回り、frameMs／実効 fps／calls／tris／メモリの表
+node tools/perf.mjs --q mid                       # 段階を指定（mid = iPhone の負荷値の代用）
+node tools/perf.mjs --mobile                      # iPhone 相当（390×844 @3、UA も iPhone）
+node tools/perf.mjs --seconds 20 --flip --url "/?t=12&w=rain"   # 秒数／途中で裏返す／任意 URL。--json で JSON も
 ```
+
+`tools/perf.mjs` は「rAF の間隔」で実効 fps を出す（CPU 側の frameMs は GPU の待ちを含まないので、
+重さは rAF 間隔の方を見る）。`window.__flip.controls` にキー状態を注入して W → 旋回 → 走り → 後退 → 横歩きを行う。
+統合後の負荷確認はこれで行い、high の rAF 間隔 95% が 16.7ms、mid が 33ms を超えないことを目安にする。
 
 worktree で作業するときは `npx next dev --turbopack --port 30XX` で自分専用のポートを使い、
 `FLIP_URL` でそのポートを撮る。`node_modules` は本体から symlink する
