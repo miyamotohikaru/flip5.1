@@ -379,7 +379,9 @@ export class Sky {
     // 雲底を下から照らす薄明の地平線の帯。雲より下にあるので雲では遮られない（stormDark を掛けない）。
     // 日没前後の雷雲の底が橙になるのはこれ。曇りの照度 skyEff は「下から見た雲そのもの」なので雲底の光源にならず、
     // これが無いと嵐の雲底が真っ黒になり、画に見えているのは空気遠近だけ＝無地の灰色の壁になる
-    const horizonLit = 0.30 * (1 - smoothstep(0.02, 0.22, env.sunDir.y));
+    // 厚い雲の下では地平線の帯が雲底まで届くのは端の方だけ。coverG で絞らないと
+    // 雲底一面がピンクになる（批評R6「火星の砂嵐の色」）
+    const horizonLit = 0.30 * (1 - smoothstep(0.02, 0.22, env.sunDir.y)) * (1 - 0.65 * coverG);
     if (horizonLit > 0.001) ambBottom.add(this.tmpC2.copy(p.sunside).multiplyScalar(horizonLit));
     (this.cloudU.uAmbBottom.value as THREE.Vector3).set(ambBottom.r, ambBottom.g, ambBottom.b);
     const cheap = this.tmpC.copy(sunCloudE).multiplyScalar(0.10).add(this.tmpC2.copy(ambTop).multiplyScalar(0.8));

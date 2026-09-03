@@ -55,10 +55,16 @@ void flip_atmoMedium(float h, out vec3 sR, out vec3 sM, out vec3 sE){
   // uLabSky = 実験室のつまみ（既定は全部 1 ＝ 何も変わらない）
   sR = vec3(5.802, 13.558, 33.1) * 1e-3 * dR * uLabSky.y;
   // ミー（エアロゾル）。黄昏に「橙の帯」が出る量。cpu.ts の extinction() と同じ値にすること
+  // 靄が濃い＝湿った空気ほど粒子は水を含んで膨らみ、吸収が弱く散乱が強くなる（吸湿成長）。
+  // 単一散乱アルベドが 0.75 → 0.95 に上がる。ここを一定にしていたため、
+  // 靄の濃い嵐で緑だけが余計に食われ（オゾンの緑吸収と重なる）、空が藤色に寄っていた
+  float absK = mix(0.75, 0.22, smoothstep(0.025, 0.075, uSkyParams.z));
   float mS = (1.0e-2 * dM + dH * 0.70) * uLabSky.x;
-  float mA = (4.0e-3 * dM + dH * 0.75) * uLabSky.x;
+  float mA = (4.0e-3 * dM + dH * absK) * uLabSky.x;
   sM = FLIP_MIE_S * mS;
-  sE = sR + FLIP_MIE_S * mS + FLIP_MIE_A * mA + vec3(0.65, 1.881, 0.085) * 1.0e-3 * dO * uLabSky.z;
+  // オゾン（Chappuis 帯）は緑を最も強く食う。ここが強いと薄明の空が藤色に寄る。
+  // この大気はエアロゾルが多い設定なので、Hillaire の基準値の 0.78 倍で釣り合わせる
+  sE = sR + FLIP_MIE_S * mS + FLIP_MIE_A * mA + vec3(0.65, 1.881, 0.085) * 0.78e-3 * dO * uLabSky.z;
 }
 float flip_phaseR(float c){ return 0.0596831 * (1.0 + c * c); }
 // Cornette-Shanks
@@ -220,7 +226,9 @@ vec4 flip_aerial(vec3 worldPos){
 
 vec3 flip_applyAerial(vec3 color, vec3 worldPos){
   vec4 a = flip_aerial(worldPos);
-  return color * a.a + a.rgb;
+  // 透過率に下限 0.02 を残す。最遠でも「その場所の色」が 2% 残るので、
+  // 3km の山が空と同じ値になって輪郭だけの幽霊になることがない（批評R6 上位10）
+  return color * max(a.a, 0.02) + a.rgb;
 }
 
 // 雲の影（0 = 影, 1 = 日なた）。マップは原点中心・一辺 uSkyParams.x m

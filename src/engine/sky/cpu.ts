@@ -1,6 +1,7 @@
 // CPU 側の大気（GLSL の flip_atmoMedium と同じ式）。太陽・月の地上での色と強さ、月の軌道、露出。
 import * as THREE from "three";
 import { Env } from "../core/env";
+import { smoothstep } from "../core/noise";
 
 export const ATMO = {
   RG: 6360,
@@ -20,11 +21,13 @@ function extinction(h: number, haze: number, groundAlt: number) {
   const dO = Math.max(0, 1 - Math.abs(hr - 25) / 15);
   // ミー（散乱＋吸収）。atmosphere.glsl.ts の flip_atmoMedium と同じ値にすること
   // 散乱は Angstrom 0.8（0.86/1.0/1.16）、吸収は AAE 4（0.43/1.0/2.44）
+  // 吸湿成長: 靄が濃いほど吸収が弱い（GLSL の absK と同じ式）
+  const absK = 0.75 + (0.22 - 0.75) * smoothstep(0.025, 0.075, haze);
   const mS = 1.0e-2 * dM + dH * 0.70;
-  const mA = 4.0e-3 * dM + dH * 0.75;
-  tmpE[0] = 5.802e-3 * dR + mS * 0.86 + mA * 0.43 + 0.65e-3 * dO;
-  tmpE[1] = 13.558e-3 * dR + mS * 1.0 + mA * 1.0 + 1.881e-3 * dO;
-  tmpE[2] = 33.1e-3 * dR + mS * 1.16 + mA * 2.44 + 0.085e-3 * dO;
+  const mA = 4.0e-3 * dM + dH * absK;
+  tmpE[0] = 5.802e-3 * dR + mS * 0.86 + mA * 0.43 + 0.65e-3 * 0.78 * dO;
+  tmpE[1] = 13.558e-3 * dR + mS * 1.0 + mA * 1.0 + 1.881e-3 * 0.78 * dO;
+  tmpE[2] = 33.1e-3 * dR + mS * 1.16 + mA * 2.44 + 0.085e-3 * 0.78 * dO;
   return tmpE;
 }
 
