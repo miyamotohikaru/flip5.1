@@ -18,11 +18,13 @@ type Props = {
   active: boolean;
   /** 携帯の版面（短い式にする） */
   compact: boolean;
+  /** 同時に出すふだの上限（0 で無制限）。携帯は 1 枚（批評R4「文字とUIが画面の 69%」） */
+  maxLabels?: number;
 };
 
 const _v = new THREE.Vector3();
 
-export default function WorldLabels({ world, active, compact }: Props) {
+export default function WorldLabels({ world, active, compact, maxLabels = 0 }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [labels, setLabels] = useState<WorldLabel[]>([]);
   const built = useRef(false);
@@ -163,7 +165,11 @@ export default function WorldLabels({ world, active, compact }: Props) {
         }
         vis[i] = ok;
         if (ok) placed.push(i);
+        // 携帯は画面が狭い。ふだは同時に 1 枚だけ（批評R4「文字とUIが画面の 69%」）
+        if (maxLabels > 0 && placed.length >= maxLabels) break;
       }
+      // 上限で打ち切ったとき、1 周目で true のままの分が残るので落とす
+      for (let i = 0; i < n; i++) if (!placed.includes(i)) vis[i] = false;
       // 3 周目: DOM へ
       for (let i = 0; i < n; i++) {
         const el = root.children[i] as HTMLElement | undefined;

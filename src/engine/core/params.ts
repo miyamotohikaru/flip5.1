@@ -76,7 +76,7 @@ export type Params = {
   lab: boolean;
   /** 描画の負荷計測を出す */
   stats: boolean;
-  /** デバッグ: 描画段階を飛ばす（noref / nocopy / notrans / nopost / noshadow） */
+  /** デバッグ: 描画段階を飛ばす（noref / nocopy / notrans / nopost / noshadow = CSM の落ち影 / nosunocc = 林が落とす帯） */
   dbg: string[];
 };
 
