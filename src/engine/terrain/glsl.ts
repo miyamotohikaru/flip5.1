@@ -55,7 +55,7 @@ uniform float uWetness;
 uniform vec3 uWind;
 uniform float uLakeLevel;
 uniform sampler2D uHeightParts;
-uniform sampler2D uTerrainField; // 焼いたノイズ場: r = マクロ, g = メソ, b = 林の密度, a = 岸線からの距離（(sd+20)/40）
+uniform sampler2D uTerrainField; // 焼いたノイズ場: r = マクロ(λ625m), g = メソ(λ36m), b = 斑(λ13m), a = 岸線からの距離（(sd+20)/40）
 uniform sampler2D uVegMap;       // 植生マップ（vegetation/vegmap.ts）: r = 草の密度, g = 林の密度, b = 乾き, a = 岩
 uniform float uDetail;
 uniform float uReflect;      // 1 = 映り込みカメラ（細部を省く）
@@ -129,9 +129,8 @@ float tH = tP.y;
 float tAbove = tH - uLakeLevel;
 float tMacro = tF.r * 2.0 - 1.0;   // 数百 m の色むら（タイル感消し）
 float tMeso = tF.g * 2.0 - 1.0;    // 36 m
-float forestDens = tF.b;           // 250 m 単位の林と草地（遠景の樹冠のざらつき用。木の位置とは別の乱数）
 float tShore = tF.a * 40.0 - 20.0; // 岸線からの距離（m、負が湖）
-float tPatch = flip_fbm(tXZ * 0.075 + 3.0, 2); // 13 m の斑（枯れ草・土）
+float tPatch = tF.b * 2.0 - 1.0;   // 13 m の斑（枯れ草・土）。焼いた場から読む（毎画素 fbm を引かない）
 // 細部は大きさごとに別の距離で消す（画素より細かくなった模様は迷彩・水玉に見える）。映り込みでは全部省く
 float detailOn = step(0.01, uDetail) * (1.0 - uReflect);
 float dNear0 = (1.0 - smoothstep(2.0, 6.0 + 6.0 * uDetail, tDist)) * detailOn;   // 2〜8cm: 葉の筋・粒
@@ -251,14 +250,14 @@ vec3 dirt = vec3(0.105, 0.078, 0.052) * (1.0 + 0.2 * tMacro + 0.28 * tMeso + 0.2
 // 斜面の土（批評R3 4位）: λ6m（振幅 0.35）と λ1.5m（振幅 0.2）の 2 段。
 // 一段だけだと「無地のエアブラシ」に見える。傾き 25°超には 0.6 倍の暗い縦筋（雨裂）
 vec2 dirtN = vec2(0.0);
-if (dirtM > 0.02 && tDist < 520.0) {
-  float dFade = 1.0 - smoothstep(260.0, 520.0, tDist);
+if (dirtM > 0.05 && tDist < 380.0) {
+  float dFade = 1.0 - smoothstep(200.0, 380.0, tDist);
   float d6 = flip_gnoise(tXZ * 0.17 + 29.0);
   vec3 d15 = tn_gnoised(tXZ * 0.66 + 41.0);
   dirt *= 1.0 + (0.35 * d6 + 0.20 * d15.x) * dFade;
   dirtN = d15.yz * (0.66 * 0.13) * dFade;
-  float steepD = smoothstep(0.09, 0.22, tSlope);
-  if (steepD > 0.01) {
+  float steepD = smoothstep(0.09, 0.22, tSlope) * (1.0 - smoothstep(120.0, 240.0, tDist));
+  if (steepD > 0.02) {
     float rill = 1.0 - abs(flip_gnoise(vec2(dot(tXZ, vec2(0.83, -0.55)) * 0.42, tH * 0.045) + 3.0));
     dirt *= 1.0 - 0.40 * rill * rill * rill * steepD * dFade;
   }
