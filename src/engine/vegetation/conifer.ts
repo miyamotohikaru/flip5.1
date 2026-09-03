@@ -40,6 +40,48 @@ export const TREE_VARIANTS: TreeVariant[] = [
 
 export type TreeGeo = { geometry: THREE.BufferGeometry; H: number; radius: number; tris: number };
 
+/**
+ * 影だけの遠景プロキシ（幹の四角柱 ＋ 樹冠の円錐 = 16 三角形）。
+ * 100〜300m の木にも落ち影を出したいが、LOD1（88 三角形）を影のパスで何千本も描くと
+ * 予算を超える。この距離では影の輪郭しか読めないので、solid な円錐で足りる。
+ */
+export function buildShadowProxy(v: TreeVariant, radius: number): THREE.BufferGeometry {
+  const H = v.H;
+  const pos: number[] = [];
+  const idx: number[] = [];
+  const seg = 6;
+  // 幹（四角柱）
+  const r0 = 0.014 * H + 0.05;
+  const base = 0;
+  for (let ring = 0; ring < 2; ring++) {
+    const y = ring === 0 ? -0.3 : H * 0.98;
+    const rr = ring === 0 ? r0 : r0 * 0.35;
+    for (let k = 0; k < 4; k++) {
+      const a = (k / 4) * Math.PI * 2;
+      pos.push(Math.cos(a) * rr, y, Math.sin(a) * rr);
+    }
+  }
+  for (let k = 0; k < 4; k++) {
+    const a = base + k, b = base + ((k + 1) % 4), c = base + 4 + k, d = base + 4 + ((k + 1) % 4);
+    idx.push(a, c, b, b, c, d);
+  }
+  // 樹冠（円錐）: 枝の届く半径の 8 割
+  const cb = pos.length / 3;
+  const rc = radius * 0.8;
+  const yb = v.crownBase * H;
+  pos.push(0, H * 1.0, 0);
+  for (let k = 0; k < seg; k++) {
+    const a = (k / seg) * Math.PI * 2;
+    pos.push(Math.cos(a) * rc, yb, Math.sin(a) * rc);
+  }
+  for (let k = 0; k < seg; k++) idx.push(cb, cb + 1 + ((k + 1) % seg), cb + 1 + k);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  geo.setIndex(idx);
+  geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, H * 0.5, 0), Math.hypot(H * 0.55, rc));
+  return geo;
+}
+
 const CELL = 0.5; // 針葉アトラスは 2×2
 
 export function buildConifer(v: TreeVariant, lod: 0 | 1): TreeGeo {

@@ -55,9 +55,9 @@ type Ring = {
 };
 
 // 葉身の実寸（m）。本物のイネ科は 3〜8mm。環が遠いほど少しだけ太くする（画素より細いと消えるため）
-const RING_W = [0.010, 0.016, 0.030, 0.042];
+const RING_W = [0.010, 0.020, 0.036, 0.050];
 // 葉の長さの基準（m）。個体は 0.4〜1.4 倍
-const RING_H = [0.34, 0.33, 0.30, 0.27];
+const RING_H = [0.34, 0.34, 0.32, 0.29];
 // 株の広がり（m）
 const RING_SPREAD = [0.10, 0.16, 0.26, 0.40];
 // 環の外径（m）。いちばん外は q.grassRadius
@@ -70,8 +70,8 @@ function ringDensity(tier: string): number[] {
   switch (tier) {
     case "low": return [110, 26, 8, 1.0];
     case "mid": return [140, 34, 11, 1.2];
-    case "ultra": return [340, 105, 42, 4.4];
-    default: return [270, 80, 30, 3.2];
+    case "ultra": return [340, 105, 42, 3.0];
+    default: return [270, 80, 27, 2.2];
   }
 }
 
@@ -211,7 +211,9 @@ void veg_grass(out vec3 p, out vec3 n){
   // これが無いと森の地面が「ぼやけた緑一色」になる
   float floorD = smoothstep(0.22, 0.48, vm.g) * vm.g * 0.95 * uFloor.x;
   float onFloor = step(vm.r * 0.8 + 0.03, floorD);
-  float density = max(vm.r, floorD);
+  // 植生マップの草地は 0.5 前後。そのまま確率に使うと草原でも半分しか生えず「刈った芝」に見える。
+  // 生える／生えないの境目だけ残して、草地の中では満杯にする
+  float density = max(smoothstep(0.03, 0.52, vm.r), floorD);
   density *= 1.0 - smoothstep(0.42, 0.72, 1.0 - tn.y);
   density *= smoothstep(uLakeLevel + 0.30, uLakeLevel + 0.75, h);
   density *= 1.0 - smoothstep(380.0, 420.0, h);
