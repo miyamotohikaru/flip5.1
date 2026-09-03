@@ -243,11 +243,8 @@ export class Post {
     // 閃光の瞬間は雷光（青白い）が照明なのでマゼンタは出ない。掛けると逆に緑に転ぶので外す
     const flash = clamp(env.lightning.flash, 0, 1);
     const sN = this.dbg.has("nograde") ? 0 : smoothstep(0.35, 0.9, storm) * (1 - smoothstep(0.10, 0.45, flash));
-    (u.uNeutral.value as THREE.Vector3).set(
-      THREE.MathUtils.lerp(1, 0.867, sN),
-      THREE.MathUtils.lerp(1, 1.050, sN),
-      THREE.MathUtils.lerp(1, 0.988, sN),
-    );
+    u.uTintFix.value = 0.9 * sN;
+    (u.uNeutral.value as THREE.Vector3).set(THREE.MathUtils.lerp(1, 0.97, sN), 1, 1);
     // AgX の白側の脱色を戻す。露出を上げるほど色が抜けるので、黄昏と嵐で多めに
     u.uChromaBack.value = this.dbg.has("nograde") ? 0 : clamp(0.55 + 0.3 * golden + 0.3 * storm + 0.35 * rain * (1 - storm), 0, 0.9);
     if (dbg.has("nobloom")) u.uBloomStrength.value = 0;

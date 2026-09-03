@@ -45,6 +45,7 @@ uniform vec2 uAutoRange;
 uniform float uWarmth;
 uniform float uSaturation;
 uniform vec3 uNeutral;
+uniform float uTintFix;
 uniform float uContrast;
 uniform float uPivot;
 uniform float uLift;
@@ -182,10 +183,19 @@ vec3 gradeColor(vec3 c){
   // 彩度
   l = post_luma(c);
   c = mix(vec3(l), c, uSaturation);
-  // 天気ごとの白バランス（いまは嵐だけ）。嵐の空は雨のカーテンの散乱と
-  // 大気の緑の吸収でマゼンタに転ぶ。輝度を変えずに中性へ寄せる。
-  // 他の天気では uNeutral = (1,1,1) なので 1 画素も動かない
-  c *= uNeutral;
+  // 天気ごとの色みの補正（いまは嵐だけ）。嵐の空は雨のカーテンの散乱と
+  // 大気の緑の吸収でマゼンタ（＝緑の欠け）に転ぶ。
+  // ① 緑–マゼンタ軸だけを取る: G を R と B の中点へ寄せる。転びの量に比例するので、
+  //    転びの弱いフレームを行き過ぎて緑にすることがない（固定ゲインだとそれが起きる）
+  // ② そのうえで白バランスの微調整。他の天気では uTintFix=0・uNeutral=(1,1,1) で無変換
+  if (uTintFix > 0.0) {
+    float lBefore = post_luma(c);
+    c.g = mix(c.g, 0.5 * (c.r + c.b), uTintFix);
+    c *= uNeutral;
+    // 色みだけを動かし、明るさは 1 も変えない（他の担当が明るさの変化を追わずに済むように）
+    float lAfter = post_luma(c);
+    c *= lAfter > 1e-5 ? lBefore / lAfter : 1.0;
+  }
   return c;
 }
 
@@ -401,6 +411,8 @@ export function gradeUniforms(): Record<string, THREE.IUniform> {
     uSaturation: { value: 0.96 },
     /** 天気ごとの白バランス（嵐のマゼンタを中性へ）。既定は無変換 */
     uNeutral: { value: new THREE.Vector3(1, 1, 1) },
+    /** 緑–マゼンタ軸の補正（G を R と B の中点へ寄せる割合）。既定は無変換 */
+    uTintFix: { value: 0 },
     uContrast: { value: 1.04 },
     /** コントラストの軸（ガンマ空間）。屋外の中間調 */
     uPivot: { value: 0.42 },
