@@ -473,3 +473,8 @@ html:has(.log), body:has(.log) { overflow: auto; }
   .lab { animation-duration: 0.01ms; }
   .lab-formula em, .lab-bake i, .seedfin-bake i { transition-duration: 0.01ms; }
 }
+
+/* 携帯で裏返している間は、天気と時刻の列を隠して風景を見せる（批評R4: 文字とUIが画面の69%） */
+@media screen and (max-width: 620px) {
+  .hud .row.hide-on-flip { display: none; }
+}

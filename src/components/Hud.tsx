@@ -85,7 +85,7 @@ export default function Hud(p: HudProps) {
           </button>
         </div>
 
-        <div className="row">
+        <div className={`row ${p.isMobile && p.flip ? "hide-on-flip" : ""}`}>
           <div className="seg" role="radiogroup" aria-label="天気">
             {WEATHERS.map((w) => (
               <button key={w.key} role="radio" aria-checked={p.weather === w.key} onClick={() => p.onWeather(w.key)}>
@@ -95,7 +95,7 @@ export default function Hud(p: HudProps) {
           </div>
         </div>
 
-        <div className={`row time ${dragging ? "dragging" : ""}`}>
+        <div className={`row time ${dragging ? "dragging" : ""} ${p.isMobile && p.flip ? "hide-on-flip" : ""}`}>
           <span className="clock" aria-hidden>
             {clock}
           </span>
