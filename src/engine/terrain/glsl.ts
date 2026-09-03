@@ -191,7 +191,7 @@ float fFloor = smoothstep(0.34, 0.94, forest + 0.14 * tPatch + 0.10 * tMeso);
 // ---- 色（線形）----
 // 枯れ草の斑: 13m の斑は数百 m のゾーン（tMacro）の中でだけ強く出す（中景が迷彩に見えないように）
 float dryZone = smoothstep(-0.2, 0.5, tMacro);
-vec3 grass = mix(vec3(0.050, 0.115, 0.025), vec3(0.19, 0.165, 0.065), smoothstep(-0.25, 0.45, tPatch + 0.3 * tMeso) * (0.25 + 0.5 * dryZone));
+vec3 grass = mix(vec3(0.050, 0.115, 0.025), vec3(0.19, 0.165, 0.065), smoothstep(-0.25, 0.45, tPatch + 0.3 * tMeso) * (0.25 + 0.5 * dryZone) * (1.0 - 0.8 * forest)); // 林とその空地は湿っていて枯れない
 grass *= 1.0 + 0.30 * tMacro + 0.13 * tMeso; // 数百m と 36m のむら。一色の斜面は「ゴルフ場」に見える
 grass = mix(grass, vec3(0.19, 0.165, 0.06), smoothstep(250.0, 420.0, tH)); // 高山草地は黄ばむ
 // 林帯（10〜400m、緩斜面）: 木の下の暗い床。遠景では樹冠のざらつき
@@ -219,7 +219,7 @@ if (fFloor > 0.0005) {
   if (tNear < 0.99) grass *= 1.0 - 0.24 * fFloor * fLitter * (1.0 - tNear);
   // 木漏れ日: 林が濃いほど直達光が届かない。CSM の落ち影は 200m ほどで尽きるので、
   // それより遠い林床が「日なたの砂」になっていた。斑（2.4m）で木漏れ日にする
-  tCanopy = 1.0 - 0.55 * fFloor * smoothstep(0.90, 0.20, fLitter + 0.45 * tPatch);
+  tCanopy = 1.0 - 0.78 * fFloor * smoothstep(0.95, 0.15, fLitter + 0.45 * tPatch);
 }
 // 中景（10〜60m）: 丈の高い草の群れ（2m）のやわらかい明暗
 if (tDist < 160.0 && uReflect < 0.5) grass *= 1.0 + 0.16 * flip_fbm(tXZ * 0.55 + 8.0, 2) * (1.0 - smoothstep(60.0, 160.0, tDist));
@@ -417,6 +417,9 @@ float cavD = smoothstep(0.62, 0.16, tCav);           // 0 = 尾根・平ら, 1 =
 tCol *= 1.0 - 0.42 * cavD;
 // 焼いた AO は空の照度にだけ掛かる。谷で効かせつつ 0.28 を下限に（影の中が真っ黒にならない）
 tAO = 0.28 + 0.72 * tAO * tAO * (1.0 - 0.45 * cavD);
+// 樹冠は太陽だけでなく空も隠す。林床の明るさの大半は半球光なので、ここを落とさないと
+// いくら直達光を遮っても「日なたの砂」のままだった
+tAO *= 1.0 - 0.60 * fFloor;
 // 山の影（地平角マップ）: 太陽と、夜だけ月
 float tSunVis = flip_terrainSunVis(tXZ, uSunDir) * tCanopy;
 float tMoonVis = ((uMoonColor.r + uMoonColor.g + uMoonColor.b > 0.0005) ? flip_terrainSunVis(tXZ, uMoonDir) : 1.0) * tCanopy;
