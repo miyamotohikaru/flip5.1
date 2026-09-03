@@ -231,6 +231,9 @@ button { font-family: inherit; }
   .landing-foot { font-size: 13px; line-height: 1.7; flex-direction: column; align-items: flex-start; gap: 2px; }
   .landing-credit { color: var(--ink-faint); }
   .hud { font-size: 13px; }
+  /* 携帯では題字が右上のボタン列（写真・音・いじる・?）にぶつかるので、左上の塊ごと 1 段下げる。
+     幅を詰めて逃げると 360px の端末でまたぶつかるし、当たり判定 44px を割る。数式の札は 172px なので下は空いている */
+  .hud-tl { top: calc(68px + var(--safe-t)); }
   .hud-title { font-size: 14px; }
   .hud-count { font-size: 13px; line-height: 1.55; }
   .hud-count span { display: block; }
