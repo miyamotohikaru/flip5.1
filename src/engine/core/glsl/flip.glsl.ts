@@ -17,18 +17,31 @@ uniform float uTime;
 const vec3 FLIP_BG = vec3(0.012, 0.020, 0.048);
 const vec3 FLIP_LINE = vec3(0.55, 0.85, 1.0);
 const vec3 FLIP_ACCENT = vec3(1.0, 0.72, 0.28);
+// 波の縁の半径。真円だと、中にいる者からは**画面を横切る 1 本の直線**にしか見えない（批評R7）。
+// 角度でうねらせて「広がっていく波」に見せる。周波数は整数なので ±π の継ぎ目は出ない。
+// 振幅は半径に比例（遠くの縁ほど大きくうねる）。uFlipRadius は一様なので分岐は全画素同じ道を通る。
+float flip_edgeR(vec3 worldPos){
+  if (uFlipRadius < 0.001) return uFlipRadius;
+  vec2 v = worldPos.xz - uFlipCenter.xz;
+  float a = atan(v.y, v.x);
+  float w = sin(a * 3.0 + uTime * 0.35) * 0.5
+          + sin(a * 7.0 - uTime * 0.6) * 0.32
+          + sin(a * 13.0 + uTime * 0.9) * 0.18;
+  return uFlipRadius * (1.0 + 0.05 * w);
+}
 // 0 = 普通の見た目, 1 = 数式ビュー。中心から広がる波の縁がやわらかい
 float flip_mask(vec3 worldPos){
   float d = distance(worldPos, uFlipCenter);
+  float r = flip_edgeR(worldPos);
   float edge = 12.0;
-  float wave = 1.0 - smoothstep(uFlipRadius - edge, uFlipRadius + edge, d);
+  float wave = 1.0 - smoothstep(r - edge, r + edge, d);
   return clamp(wave * step(0.001, uFlipRadius), 0.0, 1.0);
 }
 // 縁の光り（波の先端）: 幅 8〜15m の帯＋先行するリップル 3 本＋火花
 float flip_edgeGlow(vec3 worldPos){
   float d = distance(worldPos, uFlipCenter);
   float on = step(0.001, uFlipRadius) * (1.0 - step(5990.0, uFlipRadius));
-  float x = d - uFlipRadius; // 負: 通過済み, 正: これから
+  float x = d - flip_edgeR(worldPos); // 負: 通過済み, 正: これから
   float band = exp(-abs(x) / 6.0);
   float ripple = 0.0;
   for (int i = 1; i <= 3; i++) {
