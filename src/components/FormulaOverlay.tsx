@@ -19,7 +19,9 @@ export default function FormulaOverlay({ world, active, compact }: Props) {
   const [panel, setPanel] = useState<FormulaPanel | null>(null);
   const [show, setShow] = useState(false);
   // 携帯では背景（風景）を隠しすぎないよう、たたんで見出しだけにできる
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(compact);
+  // compact は媒体クエリで後から決まるので、決まった時点でたたむ（携帯は既定でたたむ）
+  useEffect(() => setCollapsed(compact), [compact]);
   const lastKey = useRef("");
   const showRef = useRef(false);
 
