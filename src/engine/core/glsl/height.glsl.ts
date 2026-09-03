@@ -72,7 +72,7 @@ float flip_heightPoint(vec2 xz){
 }
 
 /** 針葉樹の天蓋のおおよその高さ（m）。林の密度 1 のところの木の高さ */
-#define FLIP_CANOPY 16.0
+#define FLIP_CANOPY 18.0
 
 /**
  * 遠景の太陽の遮蔽（0 = 影, 1 = 日なた）。CSM のシャドウマップが届かない外側を埋める。
@@ -102,13 +102,14 @@ float flip_sunOcclusion(vec3 wp, vec3 sunDir, float camDist){
     float d = reach * t;
     vec2 sxz = wp.xz + dir * d;
     float g = texture2D(uSunVeg, sxz * uHeightmapInfo.y + 0.5).g;
-    float cov = smoothstep(0.02, 0.26, g); // 林らしさ（疎林でも木の丈は同じ）
+    float cov = smoothstep(0.02, 0.20, g); // 林らしさ（疎林でも木の丈は同じ）
     float canopy = flip_heightPoint(sxz) + FLIP_CANOPY * cov;
     float ray = wp.y + d * tanE;
-    // 天蓋が光線より上にある分だけ効く（縁は 3m でぼかす）
-    occ = max(occ, cov * smoothstep(-3.0, 3.0, canopy - ray));
+    // 天蓋が光線より上にある分だけ効く（縁は 3m でぼかす）。
+    // 影の先端ほど薄い（本物の長い影も、遠い遮蔽物ほど半影が広くて淡い）
+    occ = max(occ, cov * smoothstep(-3.0, 3.0, canopy - ray) * (1.0 - 0.35 * t));
   }
-  return vis * (1.0 - 0.78 * occ * smoothstep(70.0, 220.0, camDist));
+  return vis * (1.0 - 0.88 * occ * smoothstep(70.0, 220.0, camDist));
 }
 #endif
 `;
