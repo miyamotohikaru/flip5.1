@@ -384,7 +384,10 @@ export class Sky {
     // 目安 = 地面の平均輝度 ＋ 太陽側の地平線の帯の輝度（夕焼けの明るい帯で露出が決まるように）
     const keyL = 0.064 * (luminance(sunGround) + luminance(skyEff) + 2.0 * luminance(moonGround)) + 0.1 * luminance(p.sunside) * (1 - 0.7 * coverG) + 1e-5;
     // 露出の上限。夜（太陽が −11° より下）は 6 で止める＝これ以上開くと月明かりの地面が
-    // 昼と同じ明るさになる（「青い昼」）。薄明（−11°〜−2°）は実際に夜の 10 倍以上明るいので 13 まで開く
+    // 昼と同じ明るさになる（「青い昼」）。この 6 のとき ?dbg=noauto の夜の地面は表示輝度 0.024〜0.04 で、
+    // 批評R2 の目標（0.02〜0.04）ちょうど。実際の画が明るいのは post の夜の自動露出
+    // （uAutoRef = 0.036, strength 1.0）が上から ×8 掛けているためで、ここを下げても打ち消される。
+    // 薄明（−11°〜−2°）は実際に夜の 10 倍以上明るいので 13 まで開く
     const nightCap = 6 + 7 * smoothstep(-0.20, -0.03, env.sunDir.y);
     const target = clamp(0.8 * Math.pow(0.30 / keyL, 0.65), 0.5, nightCap);
     if (this.exposure < 0) this.exposure = target;
