@@ -42,6 +42,7 @@ uniform float uExposure;
 uniform float uAutoStrength;
 uniform float uAutoRef;
 uniform vec2 uAutoRange;
+uniform float uGroundCap;
 uniform float uWarmth;
 uniform float uSaturation;
 uniform vec3 uNeutral;
@@ -321,10 +322,17 @@ void main(){
   c += lensFlare(uv, sunVis);
 
   // 自動露出（env.exposure を基準に ±）。露出後の平均輝度が uAutoRef から離れた分だけ、部分的に寄せる
-  float logAvg = texture2D(tAdapt, vec2(0.5)).r;
-  float L = exp2(logAvg) * uExposure;
+  vec2 adapt = texture2D(tAdapt, vec2(0.5)).rb;   // r = 全体の log 平均, b = 地面側の log 平均
+  float L = exp2(adapt.x) * uExposure;
   float autoScale = pow(uAutoRef / max(L, 1e-5), uAutoStrength * (1.0 - uFlip * 0.8));
   autoScale = clamp(autoScale, uAutoRange.x, uAutoRange.y);
+  // 近景の頭打ち: 地面（近景の草）の露出後の明るさが uGroundCap を超えないところまで露出を下げる。
+  // 下げる方向にしか働かないので、暗い定点（dawn / night / storm / forest）は 1 も動かない。
+  // 「日なたの草は表示線形 0.13〜0.20」（docs/CRITIC.md）の上側だけに効かせるための仕掛け
+  if (uGroundCap > 0.0) {
+    float lg = exp2(adapt.y) * uExposure;
+    autoScale = min(autoScale, uGroundCap / max(lg, 1e-5));
+  }
   // 数式ビューの色（FLIP_BG / FLIP_LINE）は「紙とインク」なので、露出を掛けない。
   // 掛けると夜（露出 30）で青黒い紙が水色に飛ぶ。裏返った画素だけ露出 1 に寄せる
   float totalExp = mix(uExposure * autoScale, 1.0, fm);
@@ -407,6 +415,8 @@ export function gradeUniforms(): Record<string, THREE.IUniform> {
     uAutoStrength: { value: 0.45 },
     uAutoRef: { value: 0.5 },
     uAutoRange: { value: new THREE.Vector2(0.7, 1.45) },
+    /** 近景（地面側）の露出後の明るさの上限。0 で無効 */
+    uGroundCap: { value: 0 },
     uWarmth: { value: 0 },
     uSaturation: { value: 0.96 },
     /** 天気ごとの白バランス（嵐のマゼンタを中性へ）。既定は無変換 */

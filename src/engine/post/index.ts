@@ -237,14 +237,25 @@ export class Post {
     // 暗部の持ち上げ（影に空の環境光を残す）。夜だけは持ち上げない（空が乳白色になる）
     u.uLift.value = this.dbg.has("nograde") ? 0 : THREE.MathUtils.lerp(0.024, 0.004, night);
     u.uPivot.value = 0.42;
+    // 近景（日なたの草）の頭打ち。docs/CRITIC.md の「日なたの草は表示線形 0.13〜0.20」の
+    // 上側だけに効かせる。下げる方向にしか働かないので、暗い定点は 1 も動かない。
+    // 数式ビューは白い線が地面を埋めるので掛けない
+    u.uGroundCap.value = env.flip > 0.5 || this.dbg.has("nograde") ? 0 : this.groundCap;
     // 嵐だけ白バランスで中性に寄せる（批評R6: 非閃光フレームの空の R−G を ±4 へ）。
     // 空担当がオゾンを落とすと晴天の薄明の青紫まで失うため、post 側で嵐だけ補正する。
     // smoothstep で立ち上げるので、rain プリセット（storm 0.15）はほぼ素通し
     // 閃光の瞬間は雷光（青白い）が照明なのでマゼンタは出ない。掛けると逆に緑に転ぶので外す
     const flash = clamp(env.lightning.flash, 0, 1);
-    const sN = this.dbg.has("nograde") ? 0 : smoothstep(0.35, 0.9, storm) * (1 - smoothstep(0.10, 0.45, flash));
+    const sN = this.dbg.has("nograde") ? 0 : smoothstep(0.35, 0.9, storm) * (1 - smoothstep(0.02, 0.22, flash));
     u.uTintFix.value = 0.9 * sN;
-    (u.uNeutral.value as THREE.Vector3).set(THREE.MathUtils.lerp(1, 0.97, sN), 1, 1);
+    // 雷雨の空は青灰色〜緑灰色が自然（G が最小にならず、B が最も高いか 3 つが近い）。
+    // ポスト前の場面は R/G 1.59・B/G 0.97 の「橙」で、そこに嵐の寒色（uWarmth 負）が
+    // 乗ってマゼンタになっていた。R を下げ B を上げて青灰色側へ置く
+    (u.uNeutral.value as THREE.Vector3).set(
+      THREE.MathUtils.lerp(1, 0.945, sN),
+      1,
+      THREE.MathUtils.lerp(1, 1.045, sN),
+    );
     // AgX の白側の脱色を戻す。露出を上げるほど色が抜けるので、黄昏と嵐で多めに
     u.uChromaBack.value = this.dbg.has("nograde") ? 0 : clamp(0.55 + 0.3 * golden + 0.3 * storm + 0.35 * rain * (1 - storm), 0, 0.9);
     if (dbg.has("nobloom")) u.uBloomStrength.value = 0;
@@ -262,6 +273,12 @@ export class Post {
     const fnum = photo ? 2.0 : 2.8;
     this.lens.set(focal, focal / fnum, 0.024, this.height);
   }
+
+  /**
+   * 近景（地面側）の露出後の明るさの上限。0 で無効。
+   * `?gcap=` で上書きできる（較正用）
+   */
+  groundCap = 0.257;
 
   /** 一人称で被写界深度を掛けるか（近くを見ているときだけ） */
   private dofWanted(photo: boolean): boolean {
