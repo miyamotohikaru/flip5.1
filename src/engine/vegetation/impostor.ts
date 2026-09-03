@@ -49,7 +49,10 @@ export class ImpostorAtlas {
     this.skeleton = mk(true);
     // 枠は「実際に置いた頂点」から決める。カードの伸ばし方を変えると枠からはみ出して、
     // 遠景の木が上と横を切られた矩形になる
-    for (const g of geos) this.frames.push({ W: g.radius * 2.12, Hf: g.topY + g.H * 0.06, below: g.H * 0.04 });
+    // コマの中に**透明の余白**を残す（横 8%・上 8%）。余白が無いと、ミップの段で
+    // となりのコマ（別の方位・上の段の根元＝不透明な幹）がにじみ、
+    // 木の真ん中に幹色のひし形が出たり、ビルボードの上端に横線の点線が出る（批評 R6 の 2 位・新規 3 番）
+    for (const g of geos) this.frames.push({ W: g.radius * 2.32, Hf: g.topY + g.H * 0.085, below: g.H * 0.04 });
   }
 
   /** アルファの穴を 1px 膨張で塞ぐ（元の RT に書き戻すので、テクスチャ参照は変わらない）。 */
@@ -76,9 +79,11 @@ export class ImpostorAtlas {
     const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     renderer.setScissorTest(false);
     renderer.setViewport(0, 0, w / renderer.getPixelRatio(), h / renderer.getPixelRatio());
-    // 2 往復＝ 2px 膨張。1px では 2〜3px の隙間が残る
+    // 1 往復＝ 1px 膨張。2 往復（2px）だと 3x3 の最大値フィルタが 2 回かかって、
+    // 孤立した針が 5x5 の四角いブロックに育ち、150m の木が「緑のマインクラフト」になる
+    // （批評 R6 の 2 位）。樹冠の内側は焼き込み時の殻が埋めるので、もう太らせる必要はない
     for (const rt of targets) {
-      for (let it = 0; it < 2; it++) {
+      for (let it = 0; it < 1; it++) {
         mat.uniforms.uTex.value = rt.texture;
         renderer.setRenderTarget(tmp);
         renderer.render(sc, cam);
@@ -126,7 +131,10 @@ export class ImpostorAtlas {
     });
     renderer.autoClear = false;
     // 透明画素の色は「縁ににじんでも目立たない色」で埋める（黒い縁取りを防ぐ）
-    const clears: THREE.Color[] = [new THREE.Color(0.045, 0.085, 0.04), new THREE.Color(0.5, 0.5, 1.0), new THREE.Color(1, 1, 1)];
+    // 法線の透明画素は「上向き」で埋める。(0,0,1)＝カメラ正面で埋めると、
+    // 輪郭のにじんだ画素だけ太陽が当たらず、樹冠の縁に真っ黒な四角い塊が並ぶ
+    // （批評 R6 の 2 位「十字形のブロックの塊」）
+    const clears: THREE.Color[] = [new THREE.Color(0.045, 0.085, 0.04), new THREE.Color(0.5, 1.0, 0.5), new THREE.Color(1, 1, 1)];
     const targets: [THREE.WebGLRenderTarget, number][] = [[this.albedo, 0], [this.normal, 1], [this.skeleton, 2]];
     for (const [rt, mode] of targets) {
       renderer.setRenderTarget(rt);
@@ -263,7 +271,13 @@ function makeBakeMaterial(needle: THREE.Texture): THREE.ShaderMaterial {
           gl_FragColor = vec4(c.rgb * (0.7 + 0.3 * veg_treeAO()), 1.0);
         } else {
           vec3 nn = vBakeN * (gl_FrontFacing ? 1.0 : -1.0);
-          vec3 n = vTree.z > 0.5 ? normalize(mix(nn, vConeN, 0.6)) : nn;
+          // 葉のカードは裏から見ても法線を下に向けない。裏面で反すと真上の太陽が当たらず、
+          // 焼いたコマの樹冠に**真っ黒な四角いカード**が点々と並ぶ（批評 R6 の 2 位）。
+          // 本物の針葉は薄くて光を透かすので、裏から見ても「上から照らされた」明るさになる
+          if (vTree.z > 0.5 && vTree.z < 1.5) nn.y = abs(nn.y);
+          // 焼き込みの法線は**円錐の法線を強く**混ぜる（0.6 → 0.85）。カードごとの法線を残すと、
+          // 太陽と反対を向いたカードだけが空の色だけで照らされ、樹冠に灰青の四角い塊が並ぶ
+          vec3 n = vTree.z > 0.5 ? normalize(mix(nn, vConeN, 0.85)) : nn;
           gl_FragColor = vec4(n * 0.5 + 0.5, 1.0);
         }
       }`,
@@ -274,10 +288,13 @@ export type ImpostorOpts = { r1: number; band: number; far: number; farBand: num
 
 /** ビルボードの材質。instanceMatrix から位置・大きさ・向きを取り、aVar で種類を選ぶ。 */
 export function makeImpostorMaterial(env: Env, lighting: Lighting, atlas: ImpostorAtlas, o: ImpostorOpts, msaa: boolean): THREE.MeshStandardMaterial {
-  const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0, side: THREE.DoubleSide, alphaTest: 0.5 });
-  // 遠景のビルボードでカバレッジ・ディザを使うと「網戸」になる
-  mat.alphaToCoverage = false;
-  void msaa;
+  // 遠景のしきい値は 0.5 ではなく 0.34。1〜2px の隙間が「白い点」として残らない
+  const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0, side: THREE.DoubleSide, alphaTest: 0.34 });
+  // 2km の木は 6px しかない。アルファテストだけだと「描く／描かない」の 2 値なので、
+  // 樹冠の被覆 3 割の板がまるごと不透明な矩形になり、空にうっすらした膜と点線ができる
+  // （批評 R6 の「1〜3km は胡椒」「空を横切る 1px の点線」の正体）。
+  // 4x MSAA のカバレッジに落とすと、被覆 3 割は 1/4 の被覆として空と混ざる
+  mat.alphaToCoverage = msaa;
   const frames = atlas.frames.map((f) => new THREE.Vector4(f.W, f.Hf, f.below, 0));
   while (frames.length < 4) frames.push(new THREE.Vector4(1, 1, 0, 0));
   patchMaterial(
@@ -306,6 +323,7 @@ export function makeImpostorMaterial(env: Env, lighting: Lighting, atlas: Impost
         varying vec3 vRight;
         varying vec3 vFace;
         varying float vSeed;
+        varying float vImpFar;
 `,
         "imp vs common",
       );
@@ -324,14 +342,20 @@ export function makeImpostorMaterial(env: Env, lighting: Lighting, atlas: Impost
         float fade = step(uImp.x - uImp.y * lodJit, dist) * step(dist, uImp.z - uImp.w * flip_hash11(seed * 17.0 + 2.0));
         // 間引きは CPU 側（チャンクごとの count）でやる。ここでは減った分だけ少し大きくして密度を保つ
         float thin = smoothstep(uImp.z * 0.12, uImp.z * 0.75, dist);
-        scl *= 1.0 + 0.55 * thin;
+        scl *= 1.0 + 0.30 * thin;
+        // 遠景の度合い。0 = 近景（r0 のすぐ外）/ 1 = 視程の端
+        vImpFar = smoothstep(uImp.z * 0.22, uImp.z * 0.85, dist);
         int vi = int(aVar + 0.5);
         vec4 fr = uFrames[vi];
         vec2 toCam2 = cameraPosition.xz - root.xz;
         float dc = max(length(toCam2), 1e-3);
         vec2 tc = toCam2 / dc;
         vec3 right = vec3(-tc.y, 0.0, tc.x);
-        float W = fr.x * scl, Hh = fr.y * scl;
+        // 幅だけ木ごとに ±22% 振る。同じ輪郭が等間隔に並ぶと「胡椒の粒」に見える
+        float W = fr.x * scl * (0.78 + 0.44 * flip_hash11(seed * 23.0 + 9.0));
+        float Hh = fr.y * scl;
+        // 遠いほど横に広げて、隣の木と輪郭がつながった「林の塊」にする（1 本ずつ立てない）
+        W *= 1.0 + 0.55 * vImpFar;
         vec2 wd = veg_windDir();
         float gust = veg_gust(root.xz);
         float sway = (0.004 + 0.010 * uWind.z) * gust * Hh * position.y * position.y;
@@ -383,9 +407,13 @@ export function makeImpostorMaterial(env: Env, lighting: Lighting, atlas: Impost
         varying vec3 vRight;
         varying vec3 vFace;
         varying float vSeed;
+        varying float vImpFar;
         vec2 veg_impUv(float c, float row){
           float col = vImp2.z * uAtlasN2.x + mod(c, uAtlasN2.x);
-          return vec2((col + vImp2.x) / (uAtlasN2.x * uAtlasN2.y), (row + vImp2.y) / ${IMP_ROWS}.0);
+          // コマの縁から 2% 内側までしか引かない（余白の中で止める）
+          float uu = clamp(vImp2.x, 0.020, 0.980);
+          float vv = clamp(vImp2.y, 0.004, 0.972);
+          return vec2((col + uu) / (uAtlasN2.x * uAtlasN2.y), (row + vv) / ${IMP_ROWS}.0);
         }
         // 4 コマを必ず引いて混ぜる。**条件分岐の中で texture2D を呼ばない**こと:
         // 分岐の中では導関数が未定義になり、GPU が最も粗いミップを選んで
@@ -394,11 +422,19 @@ export function makeImpostorMaterial(env: Env, lighting: Lighting, atlas: Impost
         // これをやらないと、縮小するほど木が太って最後はコマ全体が不透明な矩形になる
         float veg_impSharpen(float a){
           vec2 tx = fwidth(vImp2.xy) * uAtlasCell;
-          float L = clamp(log2(max(max(tx.x, tx.y), 1.0)), 0.0, 5.0);
+          // **上限は 2.5 段まで。** 5 段まで許すと、木がコマの 1/32 に縮んだとき
+          // しきい値 0.15・コントラスト 3.25 倍になり、被覆 3 割の板がまるごと不透明になる。
+          // それが 2km の林を「空にかかった膜と点線」に変えていた（批評 R6 の 2 位）
+          float L = clamp(log2(max(max(tx.x, tx.y), 1.0)), 0.0, 2.5);
           // 縮小するほどミップの平均でアルファが痩せ、枝の間に空が 1px 抜ける。
           // しきい値を LOD に応じて下げて被覆を戻す（原寸では 0.5 のまま＝輪郭は太らない）
-          float th = 0.5 - 0.07 * L;
-          return clamp((a - th) * (1.0 + 0.45 * L) + 0.5, 0.0, 1.0);
+          float th = 0.5 - 0.055 * L;
+          // **しきい値のまわりで smoothstep**。前は「0.5 へ寄せる」式だったので、
+          // ほぼ透明な画素（a=0.1）まで 0.37 に持ち上がってアルファテストを通り、
+          // 2km の林が空にうっすらした膜を張っていた（批評 R6 の「胡椒」の正体）。
+          // 遠いほど幅を広げて、縁を 4x MSAA のカバレッジに渡す
+          float w = 0.10 + 0.30 * vImpFar;
+          return smoothstep(th - w, th + w, a);
         }
         vec4 veg_impSample(sampler2D t){
           vec2 u00 = veg_impUv(vImp.x, 0.0);
@@ -431,7 +467,8 @@ export function makeImpostorMaterial(env: Env, lighting: Lighting, atlas: Impost
             alb.a = veg_impSharpen(alb.a);
             vec4 nrm = veg_impSample(uAtlasN);
             vec3 tint = mix(vec3(1.08, 1.0, 0.78), vec3(0.82, 1.0, 1.2), vSeed) * (0.8 + 0.4 * flip_hash11(vSeed * 3.0 + 0.2));
-            diffuseColor = vec4(alb.rgb * tint, alb.a);
+            // 遠景の林は「上から陽の当たる樹冠の塊」。1 本ずつの黒い点にしない
+            diffuseColor = vec4(alb.rgb * tint * (1.0 + 0.55 * vImpFar), alb.a);
             vec3 nl = nrm.xyz * 2.0 - 1.0;
             impN = normalize(vRight * nl.x + vec3(0.0, 1.0, 0.0) * nl.y + vFace * nl.z);
           }
@@ -449,7 +486,8 @@ export function makeImpostorMaterial(env: Env, lighting: Lighting, atlas: Impost
       shader.fragmentShader = replaceOnce(
         shader.fragmentShader,
         "#include <lights_fragment_begin>",
-        `float vegTrans = 0.20;
+        `// 遠景の樹冠は「上から照らされた塊」。透過を上げて日陰側が真っ黒にならないようにする
+        float vegTrans = 0.42;
         float vegAO = 1.0;
         float vegSpec = 0.0;
         float vegGloss = 18.0;

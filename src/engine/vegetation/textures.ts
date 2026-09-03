@@ -18,8 +18,8 @@ type Ctx = CanvasRenderingContext2D;
 function drawTwig(ctx: Ctx, r: () => number, x0: number, y0: number, ang: number, len: number, needleLen: number, dark: number, hue: number) {
   const dx = Math.cos(ang), dy = Math.sin(ang);
   // 芯
-  ctx.strokeStyle = `rgba(${Math.round(33 + dark * 9)}, ${Math.round(33 + dark * 10)}, ${28}, 1)`;
-  ctx.lineWidth = Math.max(1.2, len * 0.05);
+  ctx.strokeStyle = `rgba(${Math.round(26 + dark * 8)}, ${Math.round(27 + dark * 9)}, ${22}, 1)`;
+  ctx.lineWidth = Math.max(1.0, len * 0.04);
   ctx.beginPath();
   ctx.moveTo(x0, y0);
   ctx.lineTo(x0 + dx * len, y0 + dy * len);
@@ -57,8 +57,8 @@ function drawSpray(ctx: Ctx, seed: number, size: number, kind: "top" | "side" | 
   if (kind === "spire") {
     // 梢: 下から上へ。細く、小枝は短い
     const bx = size * 0.5, by = size * 0.98;
-    ctx.strokeStyle = "rgb(60, 45, 28)";
-    ctx.lineWidth = 3;
+    ctx.strokeStyle = "rgb(38, 30, 20)";
+    ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.moveTo(bx, by);
     ctx.lineTo(bx, size * 0.04);
@@ -75,8 +75,10 @@ function drawSpray(ctx: Ctx, seed: number, size: number, kind: "top" | "side" | 
     return;
   }
   // 主軸
-  ctx.strokeStyle = "rgb(58, 42, 26)";
-  ctx.lineWidth = size * 0.02;
+  // 主軸は暗く細く。ここが明るいと、どのカードにも同じ位置に明るい茶色の点が出て
+  // 「格子状のサーモンの点」に見える（批評 R6 の 5 位③）
+  ctx.strokeStyle = "rgb(36, 29, 19)";
+  ctx.lineWidth = size * 0.012;
   ctx.beginPath();
   ctx.moveTo(cx0, cy0);
   ctx.lineTo(cx0 + len, cy0 + (kind === "side" ? size * 0.05 : 0));

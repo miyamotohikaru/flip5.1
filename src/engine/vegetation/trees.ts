@@ -26,7 +26,9 @@ function tierSettings(q: QualitySettings): Tier {
     case "low":
       return { r0: 22, r1: 62, band: 5, capNear: 90, capMid: 260, cell: 10, impCell: 132, chunk: 512, shadowR: 160, capShadow: 700 };
     case "mid":
-      return { r0: 26, r1: 70, band: 6, capNear: 110, capMid: 260, cell: 10, impCell: 216, chunk: 768, shadowR: 180, capShadow: 320 };
+      // 携帯は 3m の木までインポスターに落ちていた（批評 R6 の携帯 forest）。
+      // high の 0.65 倍 → 0.85 倍へ。三角形は 39 万しか使っていないので余裕がある
+      return { r0: 29, r1: 76, band: 7, capNear: 120, capMid: 280, cell: 10, impCell: 216, chunk: 768, shadowR: 182, capShadow: 330 };
     case "ultra":
       return { r0: 65, r1: 170, band: 10, capNear: 320, capMid: 1100, cell: 7.5, impCell: 252, chunk: 1024, shadowR: 330, capShadow: 2400 };
     default:
@@ -358,7 +360,8 @@ export class Trees {
       }
       c.visible = true;
       const t = Math.min(1, Math.max(0, (d - far * 0.06) / (far * 0.55)));
-      const frac = 1 - 0.85 * t * t * (3 - 2 * t);
+      // 最遠でも 45% は残す。15% まで間引くと、林が「1 本ずつ離れて立つ黒い点」になる
+      const frac = 1 - 0.55 * t * t * (3 - 2 * t);
       c.count = Math.max(1, Math.ceil(info.full * frac));
     }
   }

@@ -55,9 +55,12 @@ type Ring = {
 };
 
 // 葉身の実寸（m）。本物のイネ科は 3〜8mm。環が遠いほど少しだけ太くする（画素より細いと消えるため）
-const RING_W = [0.010, 0.016, 0.029, 0.042];
+// 近景の被覆が足りないと「塗った地面に藁を刺した」画になる。本数だけで埋めると
+// 三角形が足りないので、葉幅も 1.0cm → 1.3cm に（本物のイネ科は 3〜8mm）
+const RING_W = [0.012, 0.020, 0.032, 0.045];
 // 葉の長さの基準（m）。個体は 0.4〜1.4 倍
-const RING_H = [0.34, 0.34, 0.32, 0.29];
+// 本数（＝三角形）を増やさずに被覆を上げるには、葉を長くするしかない
+const RING_H = [0.36, 0.40, 0.36, 0.30];
 // 株の広がり（m）
 const RING_SPREAD = [0.10, 0.16, 0.26, 0.40];
 // 環の外径（m）。いちばん外は q.grassRadius
@@ -69,9 +72,10 @@ const RING_BLADES = [5, 4, 3, 3];
 function ringDensity(tier: string): number[] {
   switch (tier) {
     case "low": return [110, 26, 8, 0.55];
-    case "mid": return [134, 26, 7, 0.36];
+    // 携帯は木の LOD を伸ばしたぶん、中景の環を薄くして三角形を戻す
+    case "mid": return [134, 26, 5, 0.26];
     case "ultra": return [320, 115, 38, 1.05];
-    default: return [244, 80, 19, 0.24];
+    default: return [244, 80, 17, 0.24];
   }
 }
 
@@ -216,12 +220,14 @@ void veg_grass(out vec3 p, out vec3 n){
   // 裸の土（岩でも雪でもない斜面）にも、短い草をまばらに生やす。
   // これが無いと傾いた土の面が「無地の絵の具」に見える（批評 R3 の 5 位）
   float slope = 1.0 - tn.y;
-  float dirtD = (1.0 - vm.a) * smoothstep(0.03, 0.16, slope) * 1.0 * uFloor.x;
+  // 平らな土にも 3 割は草を生やす。傾きだけを条件にすると、平らな裸地が
+  // 「砂利敷きの空き地」になる（批評 R6 の cloudy_side・近景の緑が 18.6%）
+  float dirtD = (1.0 - vm.a) * (0.30 + 0.70 * smoothstep(0.02, 0.14, slope)) * uFloor.x;
   float onFloor = step(vm.r * 0.8 + 0.03, floorD);
   float onDirt = step(max(vm.r * 0.9, floorD) + 0.02, dirtD);
   // 植生マップの草地は 0.5 前後。そのまま確率に使うと草原でも半分しか生えず「刈った芝」に見える。
   // 生える／生えないの境目だけ残して、草地の中では満杯にする
-  float density = max(max(smoothstep(0.03, 0.52, vm.r), floorD), dirtD);
+  float density = max(max(smoothstep(0.02, 0.30, vm.r), floorD), dirtD);
   density *= 1.0 - smoothstep(0.52, 0.82, slope);
   density *= smoothstep(uLakeLevel + 0.30, uLakeLevel + 0.75, h);
   density *= 1.0 - smoothstep(380.0, 420.0, h);
@@ -245,7 +251,8 @@ void veg_grass(out vec3 p, out vec3 n){
   // 株の種類: 4% は広葉の雑草、1.2% は花穂
   float kindR = flip_hash11(rc * 53.0 + 11.0);
   float broad = step(0.96, kindR) * (1.0 - onFloor);
-  float spike = step(0.92, kindR) * (1.0 - broad) * (1.0 - onFloor);
+  // 穂（種子頭）は 8%。いま 100% が葉だと草原が「同じ形の反復」に見える
+  float spike = step(0.88, kindR) * (1.0 - broad) * (1.0 - onFloor);
   // 床は 45% がシダ・コケの下草、55% が落ち葉（地面に寝た短い葉）
   float fern = onFloor * step(0.55, kindR);
   float litter = onFloor * (1.0 - step(0.55, kindR));
@@ -285,7 +292,7 @@ void veg_grass(out vec3 p, out vec3 n){
   float fm = veg_flipMask(root);
   float flipped = step(flip_hash12(cw * 0.53 + k * 3.19 + 2.0), fm) * step(0.001, fm);
   // 数式ビューでは 6 本に 1 本だけを線にする（白い針の塊にしない）
-  float lineKeep = step(flip_hash12(cw * 1.91 + k * 5.31 + 4.0), 0.10);
+  float lineKeep = step(flip_hash12(cw * 1.91 + k * 5.31 + 4.0), 0.165);
   vec3 up = vec3(0.0, 1.0, 0.0);
   if (flipped > 0.5) {
     if (lineKeep < 0.5) { p = root; n = up; vGrass = vec4(t, rnd, 0.0, 1.0); vBlade = vec4(0.0); vVegWorld = p; return; }
