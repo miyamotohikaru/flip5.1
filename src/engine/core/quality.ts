@@ -10,6 +10,7 @@ export type QualitySettings = {
   heightmapRes: number;
   shadowMapSize: number;
   shadowCascades: number;
+  /** 影の落ちる距離（m）。core/lighting.ts が 25m を起点に等比でカスケードを割る */
   shadowMaxFar: number;
   /** 草の本数（上限） */
   grassCount: number;
@@ -43,14 +44,14 @@ export const QUALITY: Record<QualityTier, QualitySettings> = {
   },
   high: {
     tier: "high", renderScale: 1, maxPixelRatio: 2, msaaSamples: 4, heightmapRes: 2048,
-    shadowMapSize: 2048, shadowCascades: 3, shadowMaxFar: 380, grassCount: 150000, grassRadius: 90,
+    shadowMapSize: 2048, shadowCascades: 3, shadowMaxFar: 600, grassCount: 150000, grassRadius: 90,
     treeDistance: 2600, cloudScale: 0.5, cloudSteps: 64, reflectionScale: 0.5,
     postFx: { bloom: true, godrays: true, ao: true, dof: true, smaa: true },
     targetFrameMs: 16.7,
   },
   ultra: {
     tier: "ultra", renderScale: 1, maxPixelRatio: 2, msaaSamples: 4, heightmapRes: 2048,
-    shadowMapSize: 4096, shadowCascades: 4, shadowMaxFar: 600, grassCount: 300000, grassRadius: 120,
+    shadowMapSize: 4096, shadowCascades: 4, shadowMaxFar: 900, grassCount: 300000, grassRadius: 120,
     treeDistance: 3500, cloudScale: 0.75, cloudSteps: 96, reflectionScale: 0.75,
     postFx: { bloom: true, godrays: true, ao: true, dof: true, smaa: true },
     targetFrameMs: 16.7,
