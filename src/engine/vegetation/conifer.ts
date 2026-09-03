@@ -202,9 +202,14 @@ void veg_tree(out vec3 p, out vec3 n){
   mat3 rotT = transpose(rot);
   float dist = distance(root.xz, uCamPos.xz);
   float seed = flip_hash12(floor(root.xz * 3.7 + 0.5));
+  // LOD の切り替え: 画素ごとのディザで溶かすと「網戸」に見えるので、木ごとに切り替え距離を
+  // ばらけさせて 1 本ずつパッと入れ替える。LOD0 と LOD1 の輪郭はほぼ同じなので飛びは目立たない
+  float lodJit = flip_hash11(seed * 31.0 + 5.0);
+  float sw0 = uLod.x - uLod.z * lodJit;
+  float sw1 = uLod.y - uLod.z * lodJit;
   float fade = 1.0;
-  if (uLod.w < 0.5) fade = 1.0 - smoothstep(uLod.x - uLod.z, uLod.x, dist);
-  else if (uLod.w < 1.5) fade = smoothstep(uLod.x - uLod.z, uLod.x, dist) * (1.0 - smoothstep(uLod.y - uLod.z, uLod.y, dist));
+  if (uLod.w < 0.5) fade = step(dist, sw0);
+  else if (uLod.w < 1.5) fade = step(sw0, dist) * step(dist, sw1);
   vec3 lp = position;
   float hN = clamp(lp.y / uTreeH, 0.0, 1.0);
   vec2 wd = veg_windDir();
@@ -272,8 +277,8 @@ vec4 veg_treeAlbedo(out float relief){
   // ミップで平均されたアルファを持ち上げる。持ち上げないと遠くの枝が
   // 半透明の膜になり、アルファ→カバレッジのディザが「網戸」として見える
   vec2 duv = fwidth(vTreeUv) * uNeedleSize;
-  float ndLod = max(0.0, log2(max(max(duv.x, duv.y), 1.0)));
-  tex.a = clamp(tex.a * (1.0 + 0.55 * ndLod), 0.0, 1.0);
+  float ndLod = clamp(log2(max(max(duv.x, duv.y), 1.0)) - 0.4, 0.0, 3.0);
+  tex.a = clamp(tex.a * (1.0 + 0.34 * ndLod), 0.0, 1.0);
   vec3 tint = mix(vec3(1.02, 1.0, 0.88), vec3(0.88, 1.0, 1.10), vTree.w) * (0.86 + 0.28 * flip_hash11(vTree.w * 3.0 + 0.2));
   tint = mix(vec3(1.0), tint, uTintMix);
   return vec4(tex.rgb * tint, tex.a);
@@ -437,8 +442,8 @@ export function makeTreeDepthMaterial(env: Env, needle: THREE.Texture, o: TreeMa
         #endif
         if (vTree.z > 0.5 && vTree.y < 0.5) {
           vec2 duv = fwidth(vTreeUv) * uNeedleSize;
-          float ndLod = max(0.0, log2(max(max(duv.x, duv.y), 1.0)));
-          diffuseColor.a = clamp(texture2D(uNeedle, vTreeUv).a * (1.0 + 0.55 * ndLod), 0.0, 1.0);
+          float ndLod = clamp(log2(max(max(duv.x, duv.y), 1.0)) - 0.4, 0.0, 3.0);
+          diffuseColor.a = clamp(texture2D(uNeedle, vTreeUv).a * (1.0 + 0.34 * ndLod), 0.0, 1.0);
         }`,
         "tree depth fs map",
       );

@@ -22,13 +22,13 @@ type Tier = { r0: number; r1: number; band: number; capNear: number; capMid: num
 function tierSettings(q: QualitySettings): Tier {
   switch (q.tier) {
     case "low":
-      return { r0: 22, r1: 62, band: 2.5, capNear: 90, capMid: 260, cell: 10, impCell: 128, chunk: 512 };
+      return { r0: 22, r1: 62, band: 5, capNear: 90, capMid: 260, cell: 10, impCell: 128, chunk: 512 };
     case "mid":
-      return { r0: 32, r1: 70, band: 3, capNear: 130, capMid: 300, cell: 9, impCell: 192, chunk: 512 };
+      return { r0: 32, r1: 70, band: 7, capNear: 130, capMid: 300, cell: 9, impCell: 224, chunk: 768 };
     case "ultra":
-      return { r0: 65, r1: 170, band: 4.5, capNear: 320, capMid: 1100, cell: 7.5, impCell: 256, chunk: 1024 };
+      return { r0: 65, r1: 170, band: 10, capNear: 320, capMid: 1100, cell: 7.5, impCell: 256, chunk: 1024 };
     default:
-      return { r0: 44, r1: 104, band: 4, capNear: 220, capMid: 640, cell: 8, impCell: 256, chunk: 1024 };
+      return { r0: 44, r1: 104, band: 9, capNear: 220, capMid: 640, cell: 8, impCell: 256, chunk: 1024 };
   }
 }
 
@@ -68,7 +68,7 @@ export class Trees {
     }
     for (let i = 0; i < lighting.csm.lights.length; i++) this.cascadeIndex.set(lighting.csm.lights[i].shadow.camera, i);
     const msaa = q.msaaSamples >= 4;
-    this.needle = makeNeedleAtlas(q.tier === "low" ? 192 : q.tier === "mid" ? 256 : 384);
+    this.needle = makeNeedleAtlas(q.tier === "low" ? 192 : q.tier === "mid" ? 320 : 384);
     // 形
     for (const v of TREE_VARIANTS) this.geos.push({ lod0: buildConifer(v, 0), lod1: buildConifer(v, 1) });
     this.stats.lod0Tris = this.geos[0].lod0.tris;

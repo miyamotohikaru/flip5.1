@@ -31,17 +31,16 @@ export class ImpostorAtlas {
       const rt = new THREE.WebGLRenderTarget(w, h, {
         format: THREE.RGBAFormat,
         type: THREE.UnsignedByteType,
-        // ミップは作らない。アルファテストのある葉はミップで平均されて太り、
-        // 粗いレベルではコマ全体が不透明になって「ぼやけた矩形」になる。
-        // 縮小のちらつきは異方性フィルタと、遠方の間引き（uImp.z）で抑える
-        generateMipmaps: false,
-        minFilter: THREE.LinearFilter,
+        // ミップは要る（400m 先の木は 10px。無いとチラつく）。
+        // ただしミップで平均されたアルファをそのままアルファテストに掛けると木が太って
+        // 「ぼやけた矩形」になるので、表示側で 0.5 の等値線を保つように鋭くする（下の uAtlasCell）
+        generateMipmaps: mips,
+        minFilter: mips ? THREE.LinearMipmapLinearFilter : THREE.LinearFilter,
         magFilter: THREE.LinearFilter,
         depthBuffer: true,
         stencilBuffer: false,
       });
-      void mips;
-      rt.texture.anisotropy = 8;
+      rt.texture.anisotropy = 4;
       rt.texture.colorSpace = THREE.NoColorSpace;
       return rt;
     };
@@ -194,7 +193,7 @@ export type ImpostorOpts = { r1: number; band: number; far: number; farBand: num
 
 /** ビルボードの材質。instanceMatrix から位置・大きさ・向きを取り、aVar で種類を選ぶ。 */
 export function makeImpostorMaterial(env: Env, lighting: Lighting, atlas: ImpostorAtlas, o: ImpostorOpts, msaa: boolean): THREE.MeshStandardMaterial {
-  const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0, side: THREE.DoubleSide, alphaTest: 0.35 });
+  const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0, side: THREE.DoubleSide, alphaTest: 0.5 });
   // 遠景のビルボードでカバレッジ・ディザを使うと「網戸」になる
   mat.alphaToCoverage = false;
   void msaa;
@@ -210,6 +209,7 @@ export function makeImpostorMaterial(env: Env, lighting: Lighting, atlas: Impost
       shader.uniforms.uFrames = { value: frames };
       shader.uniforms.uImp = { value: new THREE.Vector4(o.r1, o.band, o.far, o.farBand) };
       shader.uniforms.uAtlasN2 = { value: new THREE.Vector2(IMP_AZ, atlas.geos.length) };
+      shader.uniforms.uAtlasCell = { value: new THREE.Vector2(atlas.cellW, atlas.cellH) };
       shader.vertexShader = replaceOnce(
         shader.vertexShader,
         "#include <common>",
@@ -235,8 +235,10 @@ export function makeImpostorMaterial(env: Env, lighting: Lighting, atlas: Impost
         float scl = max(length(imp[1].xyz), 1e-4);
         float yaw = atan(imp[0].z, imp[0].x);
         float dist = distance(root.xz, uCamPos.xz);
-        float fade = smoothstep(uImp.x - uImp.y, uImp.x, dist) * (1.0 - smoothstep(uImp.z - uImp.w, uImp.z, dist));
         float seed = flip_hash12(floor(root.xz * 3.7 + 0.5));
+        // メッシュ側と同じ「木ごとにばらけた切り替え距離」。画素ごとのディザ（網戸）を使わない
+        float lodJit = flip_hash11(seed * 31.0 + 5.0);
+        float fade = step(uImp.x - uImp.y * lodJit, dist) * step(dist, uImp.z - uImp.w * flip_hash11(seed * 17.0 + 2.0));
         // 間引きは CPU 側（チャンクごとの count）でやる。ここでは減った分だけ少し大きくして密度を保つ
         float thin = smoothstep(uImp.z * 0.12, uImp.z * 0.75, dist);
         scl *= 1.0 + 0.55 * thin;
@@ -290,6 +292,7 @@ export function makeImpostorMaterial(env: Env, lighting: Lighting, atlas: Impost
         uniform sampler2D uAtlasN;
         uniform sampler2D uAtlasS;
         uniform vec2 uAtlasN2;
+        uniform vec2 uAtlasCell;
         varying vec4 vImp;
         varying vec4 vImp2;
         varying vec3 vVegWorld;
@@ -303,6 +306,13 @@ export function makeImpostorMaterial(env: Env, lighting: Lighting, atlas: Impost
         // 4 コマを必ず引いて混ぜる。**条件分岐の中で texture2D を呼ばない**こと:
         // 分岐の中では導関数が未定義になり、GPU が最も粗いミップを選んで
         // 木が「50×90px のぼやけた矩形」に化ける（批評 R2 の 4 位の原因）
+        // ミップで平均されたアルファを 0.5 の等値線まわりで鋭くする。
+        // これをやらないと、縮小するほど木が太って最後はコマ全体が不透明な矩形になる
+        float veg_impSharpen(float a){
+          vec2 tx = fwidth(vImp2.xy) * uAtlasCell;
+          float L = clamp(log2(max(max(tx.x, tx.y), 1.0)), 0.0, 5.0);
+          return clamp((a - 0.5) * (1.0 + 1.3 * L) + 0.5, 0.0, 1.0);
+        }
         vec4 veg_impSample(sampler2D t){
           vec2 u00 = veg_impUv(vImp.x, 0.0);
           vec2 u10 = veg_impUv(vImp.x + 1.0, 0.0);
@@ -328,9 +338,10 @@ export function makeImpostorMaterial(env: Env, lighting: Lighting, atlas: Impost
         `{
           if (vImp2.w > 0.5) {
             vec4 sk = veg_impSample(uAtlasS);
-            diffuseColor = vec4(FLIP_LINE * (0.35 + 0.65 * sk.a), sk.a);
+            diffuseColor = vec4(FLIP_LINE * (0.35 + 0.65 * sk.a), veg_impSharpen(sk.a));
           } else {
             vec4 alb = veg_impSample(uAtlasA);
+            alb.a = veg_impSharpen(alb.a);
             vec4 nrm = veg_impSample(uAtlasN);
             vec3 tint = mix(vec3(1.08, 1.0, 0.78), vec3(0.82, 1.0, 1.2), vSeed) * (0.8 + 0.4 * flip_hash11(vSeed * 3.0 + 0.2));
             diffuseColor = vec4(alb.rgb * tint, alb.a);
