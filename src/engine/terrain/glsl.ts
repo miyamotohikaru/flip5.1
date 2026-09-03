@@ -186,7 +186,7 @@ vec4 tVeg = texture2D(uVegMap, tUv);
 float forest = tVeg.g;
 // 林床の効き。まばらな林（0.3 前後）では草が残り、密な林（0.8 超）で完全に腐植の床になる。
 // 縁は 13m/36m の斑で崩すので境界が線に見えない
-float fFloor = smoothstep(0.12, 0.78, forest + 0.14 * tPatch + 0.10 * tMeso);
+float fFloor = smoothstep(0.34, 0.94, forest + 0.14 * tPatch + 0.10 * tMeso);
 
 // ---- 色（線形）----
 // 枯れ草の斑: 13m の斑は数百 m のゾーン（tMacro）の中でだけ強く出す（中景が迷彩に見えないように）
@@ -206,20 +206,20 @@ if (fFloor > 0.0005) {
   vec3 duff = mix(vec3(0.074, 0.051, 0.023), vec3(0.028, 0.019, 0.011),
                   smoothstep(0.18, 0.80, fLitter + 0.4 * tPatch));
   // 苔とまばらな下草（濃い緑）が斑で混じる
-  duff = mix(duff, vec3(0.021, 0.037, 0.014), 0.75 * smoothstep(0.28, 0.84, flip_vnoise(tXZ * 0.19 + 5.0) + 0.3 * tMeso));
+  duff = mix(duff, vec3(0.026, 0.046, 0.017), 0.85 * smoothstep(0.20, 0.84, flip_vnoise(tXZ * 0.19 + 5.0) + 0.3 * tMeso)); // 苔と下草の緑を厚めに（茶一色だと泥に見える）
   duff *= 1.0 + 0.16 * tMacro;
   grass = mix(grass, duff, min(1.0, 2.5 * fFloor));
   // 樹冠の下は空が見えない。さらに λ12m の「木が混んで暗い溜まり」を作る
   // （一様に明るいと、いくら暗くしても砂丘の陰影に見える）
   float shade = smoothstep(-0.35, 0.55, tMeso + 0.6 * tPatch);
-  grass *= 1.0 - (0.42 + 0.26 * shade) * fFloor;
+  grass *= 1.0 - (0.16 + 0.22 * shade) * fFloor; // 暗さの大半は下の tCanopy（直達光を遮る）が持つ
   // 根元（植生マップ r = 草の密度。木を置いた texel は薄くしてある）ほどわずかに暗い
   grass *= 1.0 - 0.16 * fFloor * smoothstep(0.30, 0.02, tVeg.r);
   // 遠景の樹冠のざらつき（近景では草・幹が描くので出さない）
   if (tNear < 0.99) grass *= 1.0 - 0.24 * fFloor * flip_vnoise(tXZ * 0.2 + 3.0) * (1.0 - tNear);
   // 木漏れ日: 林が濃いほど直達光が届かない。CSM の落ち影は 200m ほどで尽きるので、
   // それより遠い林床が「日なたの砂」になっていた。斑（2.4m）で木漏れ日にする
-  tCanopy = 1.0 - 0.62 * fFloor * smoothstep(0.85, 0.15, fLitter + 0.45 * tPatch);
+  tCanopy = 1.0 - 0.55 * fFloor * smoothstep(0.90, 0.20, fLitter + 0.45 * tPatch);
 }
 // 中景（10〜60m）: 丈の高い草の群れ（2m）のやわらかい明暗
 if (tDist < 160.0 && uReflect < 0.5) grass *= 1.0 + 0.16 * flip_fbm(tXZ * 0.55 + 8.0, 2) * (1.0 - smoothstep(60.0, 160.0, tDist));
