@@ -34,7 +34,10 @@ float wx_noise3(vec3 p){ return 0.7 * flip_vnoise(p) + 0.3 * flip_vnoise(p.xz * 
 vec3 wx_skyLit(vec3 skyH){ return mix(skyH, uSkyAmbient * 0.64, smoothstep(0.35, 1.0, uCloud)); }
 
 // 霧の密度（0..1 相当）。湖面すれすれの薄い層（場所ごとに厚さの違う「塊」）＋谷底＋斜面を這う霧＋細かいむら
-float mistDensity(vec3 p){
+// fp = その標本の「1画素の footprint（m）」。fp より細かいむらは平らにならす（＝手前でだけ細かい）。
+// これをやらないと、遠くの水面のような「浅い角度で長く伸びる面」で標本ごとに値が飛び、
+// 半解像度の格子が 2px の市松ノイズとして出る。
+float mistDensity(vec3 p, float fp){
   float th = flip_height(p.xz);
   float hL = p.y - uWxLake;
   float hag = p.y - th;
@@ -47,15 +50,24 @@ float mistDensity(vec3 p){
   float base = max(layer, creep) * step(-1.0, hag);
   // 細かいむら: 横に長く、縦に薄い「たなびき」。コントラストを強く（濃い塊と切れ目）
   vec3 q = (p + uWxFogDrift) * vec3(0.045, 0.3, 0.045);
-  float n = wx_noise3(q) * 0.75 + 0.25 * flip_vnoise(q.xz * 3.5 + q.y * 0.5 + 3.0);
-  n = smoothstep(0.42, 0.72, n);
+  // 22m 級（k22）と 6m 級（k6）と 2m 級（k2）のむら。足跡より細かいものは平均値（0.5）へ寄せて消す
+  float k6 = 1.0 - smoothstep(2.5, 9.0, fp);
+  float k2 = 1.0 - smoothstep(0.8, 3.0, fp);
+  float n = mix(0.5, wx_noise3(q), mix(1.0, k6, 0.3)) * 0.75 + 0.25 * mix(0.5, flip_vnoise(q.xz * 3.5 + q.y * 0.5 + 3.0), k2);
+  // 遠いほど閾値をなだらかに（硬い境目はエイリアスの元）
+  float sw = 0.15 * (1.0 - k6);
+  n = smoothstep(0.42 - sw, 0.72 + sw, n);
   // 湖面すれすれ（〜70cm）の濃い「たなびき」: 風向きに引き伸ばした 2D ノイズで筋状に
   vec2 wd = normalize(uWxFogDrift.xz + vec2(1e-3, 0.0));
   vec2 pw = vec2(dot(p.xz, wd), dot(p.xz, vec2(-wd.y, wd.x)));
   // 33m×9m の帯 → 9m×2.5m → 3m×0.8m の3オクターブ（近景でも模様が見える細かさ）
   vec2 pn = vec2(pw.x * 0.03, pw.y * 0.11) + uWxFogDrift.xz * 0.05;
-  float n2 = 0.5 * flip_vnoise(pn) + 0.3 * flip_vnoise(pn * 3.7 + 11.0) + 0.2 * flip_vnoise(pn * 11.0 + 5.0);
-  float wisp = exp(-max(hL, 0.0) / 1.0) * smoothstep(0.44, 0.6, n2) * smoothstep(3.0, -0.5, th - uWxLake) * step(-1.0, hag);
+  float n2 = 0.5 * flip_vnoise(pn) + 0.3 * mix(0.5, flip_vnoise(pn * 3.7 + 11.0), k6) + 0.2 * mix(0.5, flip_vnoise(pn * 11.0 + 5.0), k2);
+  float wsw = 0.02 + 0.14 * (1.0 - k2);
+  // たなびきは湖面から 1m の帯なので、水面を舐める視線では長さがそのまま厚みになる（＝湖が消える）。
+  // 「霧の朝」だけに出し、雨・嵐のうっすらした地表霧では出さない
+  float wispGate = smoothstep(0.35, 0.75, uWxFog.x);
+  float wisp = exp(-max(hL, 0.0) / 1.0) * smoothstep(0.44 - wsw, 0.6 + wsw, n2) * smoothstep(3.0, -0.5, th - uWxLake) * step(-1.0, hag) * wispGate;
   return base * (0.08 + 0.92 * n) + wisp * 4.0;
 }
 
@@ -103,7 +115,10 @@ void main(){
       float marchEnd = min(t1, t0 + 380.0);
       // 霧が薄いときは段数を減らす（雨・嵐の中の薄い地表霧に全段は要らない）
       float N = ceil(uWxSteps * clamp(mist * 2.5 + 0.2, 0.35, 1.0));
-      float dither = flip_hash12(gl_FragCoord.xy + 0.37);
+      // 標本位置は「区間の中点」で固定する。画素ごとにずらす（白色ノイズでも秩序ディザでも）と、
+      // 半解像度の格子がそのまま 2px の粒／斜めの綾になって水面のような平らな面に出る。
+      // 中点法は 2 次精度で、隣の画素と連続に変化する＝拡大しても模様が出ない。
+      float dither = 0.5;
       float k = mist * WX_FOG_K;
       float span = marchEnd - t0;
       float prevT = t0;
@@ -116,7 +131,9 @@ void main(){
         float dt = tNext - prevT;
         prevT = tNext;
         vec3 p = ro + rd * t;
-        float od = mistDensity(p) * k * dt;
+        // その距離での 1 画素の大きさ（半解像度なので 2 倍）
+        float fp = t * uWxPixel * 2.0;
+        float od = mistDensity(p, fp) * k * dt;
         float Ti = exp(-od);
         L += stepLight(p, rd, skyH) * (1.0 - Ti) * T;
         T *= Ti;
@@ -191,6 +208,12 @@ varying vec3 vRay;
 void main(){
   vec2 fc = gl_FragCoord.xy;
   float myD = texture2D(tWxDepth, fc / uWxResolution).r;
+  // 深度の「1画素あたりの傾き」。水面のように浅い角度で伸びる面ではこれが大きい。
+  // 許容差をこの傾きで決めると、平らな面では 4 タップとも同じ重み（＝素直な双一次）になり、
+  // 物のシルエット（傾きでは説明できない段差）だけを弾ける。
+  // 固定の相対誤差で重み付けすると、水面で重みが画素ごとに入れ替わって 2px の市松になる。
+  float grad = abs(dFdx(myD)) + abs(dFdy(myD));
+  float sigma = 3.0 * grad + 0.02 * myD + 0.35;
   vec2 hp = fc * 0.5 - 0.5;
   vec2 b = floor(hp);
   vec2 f = hp - b;
@@ -201,8 +224,7 @@ void main(){
       vec2 n = clamp(b + vec2(float(i), float(j)), vec2(0.0), uWxFogRes - 1.0);
       float bw = (i == 0 ? 1.0 - f.x : f.x) * (j == 0 ? 1.0 - f.y : f.y);
       float d = texture2D(tWxDepth, (n * 2.0 + 0.5) / uWxResolution).r;
-      float dw = 1.0 / (0.02 + abs(d - myD) / max(myD, 1.0) * 8.0);
-      float w = bw * dw + 1e-4;
+      float w = bw * exp(-abs(d - myD) / sigma) + 1e-3;
       acc += texture2D(tWxFog, (n + 0.5) / uWxFogRes) * w;
       wsum += w;
     }

@@ -51,8 +51,8 @@ export type WeatherCounts = {
 export const WEATHER_COUNTS: Record<QualityTier, WeatherCounts> = {
   low: { rain: 1500, splash: 120, fogSteps: 6, dust: 220, fireflies: 90, leaves: 16 },
   mid: { rain: 3000, splash: 240, fogSteps: 9, dust: 450, fireflies: 150, leaves: 32 },
-  high: { rain: 5000, splash: 400, fogSteps: 16, dust: 900, fireflies: 320, leaves: 44 },
-  ultra: { rain: 8000, splash: 620, fogSteps: 20, dust: 1500, fireflies: 400, leaves: 100 },
+  high: { rain: 5000, splash: 400, fogSteps: 12, dust: 900, fireflies: 320, leaves: 44 },
+  ultra: { rain: 8000, splash: 620, fogSteps: 18, dust: 1500, fireflies: 400, leaves: 100 },
 };
 
 /** 稲妻の上端（雲底）の高さの既定（world y）。空担当が env.lightning.cloudHeight を書き換えれば追従する */

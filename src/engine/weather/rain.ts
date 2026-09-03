@@ -166,12 +166,13 @@ void main(){
   // 水面の着弾は水担当の法線リングが描く（重ねると白い粒になる）ので、ここは陸だけ
   float onLand = step(uWxLake + 0.06, th);
   vec3 center = vec3(xz.x, th + 0.015, xz.y);
-  float on = onLand * step(flip_hash12(cell + cycle * 3.7), uRain);
+  // 一度に光る数を減らす（画面いっぱいの輪は「シャボン玉」に見える）
+  float on = onLand * step(flip_hash12(cell + cycle * 3.7), uRain * 0.85);
   float dist = distance(center, uCamPos);
   float px = dist * uWxPixel;
-  // 地面に寝かせた円板。輪は rMax まで広がる（雨粒の着弾の輪は 3〜7cm）
-  float rMax = 0.03 + 0.04 * aSeed.z;
-  float size = max(rMax * 2.4, px * 3.0);
+  // 地面に寝かせた円板。輪は rMax まで広がる（雨粒の着弾の輪は実寸 1〜3cm）
+  float rMax = 0.010 + 0.013 * aSeed.z;
+  float size = max(rMax * 2.2, px * 2.2);
   vec3 pos = center + vec3(position.x, 0.0, position.y - 0.5) * size * 2.0;
   float alpha = on * (1.0 - smoothstep(4.0, 6.2, dist)) * smoothstep(0.25, 0.8, dist);
   vQ = position.xy;
@@ -201,27 +202,30 @@ void main(){
   vec2 q = vec2(vQ.x, vQ.y - 0.5) * 2.0;
   float rq = length(q) * 1.2;
   float t = vLife;
-  // 広がる細い輪（1px 幅）。広がるほど薄くなって消える
-  float aa = max(fwidth(rq) * 1.1, 0.035);
+  // 着弾の閃き: 中心が一瞬だけ光る（輪郭線ではなく点。これが「雨粒が当たった」の主役）
+  float pop = exp(-rq * rq * 9.0) * exp(-t * 5.0);
+  // 広がる輪。広がるほど太く・薄くぼけて消える（細いままだと描いた円＝シャボン玉に見える）
+  float aa = max(fwidth(rq) * 1.2, 0.07 + 0.28 * t);
   float e = (rq - t) / aa;
-  float ring = exp(-e * e) * (1.0 - t) * (1.0 - t);
+  float ring = exp(-e * e) * (1.0 - t) * (1.0 - t) * 0.55;
   // 着弾の暗点（濡れて暗くなった一点）。輪より内側で、輪より先に消える
   float dark = (1.0 - smoothstep(0.0, 0.12 + 0.5 * t, rq)) * (1.0 - smoothstep(0.25, 0.75, t));
   float sunUp = smoothstep(-0.05, 0.05, uSunDir.y);
-  // 輪は空を映して明るい／暗点は濡れた地面そのもの
-  vec3 bright = uSkyAmbient * 0.70 + uGroundAmbient * 0.12 + uSunColor * 0.05 * sunUp + vec3(0.8, 0.85, 1.0) * uLightning * 0.3;
+  // 輪は「濡れた地面が空を映した照り」。空の色をそのまま出すと暗い嵐で白い輪郭線になる
+  vec3 bright = uSkyAmbient * 0.30 + uGroundAmbient * 0.35 + uSunColor * 0.04 * sunUp + vec3(0.8, 0.85, 1.0) * uLightning * 0.12;
   vec3 darkCol = uGroundAmbient * 0.08;
-  float soft = wx_soft(gl_FragCoord.xy, gl_FragCoord.z, 0.05);
+  // ソフトパーティクルの深度フェードは使わない。しぶきは地面に貼りついた「デカール」なので、
+  // 地面との深度差はいつもゼロ＝真上から見ると全部消えてしまう（草の手前後は深度テストが受け持つ）
   vec4 aer = flip_aerial(vWorld);
-  float base = vAlpha * soft * aer.a;
-  float aR = base * ring * 0.30;
-  float aD = base * dark * 0.22;
+  float base = vAlpha * aer.a;
+  float aR = base * (ring * 0.55 + pop * 1.6) * 0.30;
+  float aD = base * dark * 0.20;
   float alpha = clamp(aR + aD, 0.0, 1.0);
   vec3 col = (bright * aR + darkCol * aD) / max(aR + aD, 1e-5);
   // 数式ビュー: 着弾点（座標の点）
   float dotc = 1.0 - smoothstep(0.0, 0.12, rq);
   col = mix(col, FLIP_LINE, vFm);
-  alpha = mix(alpha, dotc * vAlpha * soft, vFm);
+  alpha = mix(alpha, dotc * vAlpha, vFm);
   gl_FragColor = vec4(col * alpha, alpha);
 }
 `;

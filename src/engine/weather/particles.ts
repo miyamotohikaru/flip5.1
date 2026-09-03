@@ -297,7 +297,10 @@ void main(){
   float rib = 1.0 - smoothstep(0.0, 0.06, abs(q.x)) * 0.35;
   float sunUp = smoothstep(-0.05, 0.05, uSunDir.y);
   float ndl = abs(dot(normalize(vN), uSunDir));
-  vec3 col = vCol * rib * (uSkyAmbient * 0.7 + uGroundAmbient * 0.3 + uSunColor * 0.32 * ndl * sunUp + vec3(0.8, 0.85, 1.0) * uLightning * 0.6);
+  vec3 col = vCol * rib * (uSkyAmbient * 0.7 + uGroundAmbient * 0.3 + uSunColor * 0.32 * ndl * sunUp + vec3(0.8, 0.85, 1.0) * uLightning * 0.06);
+  // 葉は空より明るくならない（閃光で白い点になり「空に浮かぶ埃」に見えていた）。
+  // 空を背にすれば暗いシルエット、地面を背にすればうっすら明るい葉になる
+  col = min(col, flip_skyColor(normalize(vWorld - uCamPos)) * 0.75);
   col = flip_applyAerial(col, vWorld);
   float soft = wx_soft(gl_FragCoord.xy, gl_FragCoord.z, 0.08);
   float alpha = vAlpha * a * soft * exp(-wx_fogOD(uCamPos, vWorld));
