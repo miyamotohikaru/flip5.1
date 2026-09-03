@@ -291,10 +291,16 @@ if (sandM > 0.001) {
   sand = mix(sand, vec3(0.16, 0.16, 0.15), 0.5 * smoothstep(0.55, 0.8, flip_vnoise(tXZ * 2.5 + 1.0)) * (1.0 - smoothstep(0.0, 6.0, tShore)));
   // 水際の砂利は濡れて暗い（乾いた砂 → 濡れた砂 → 湖底 がつながる）
   sand = mix(sand, sand * 0.52, wetBand);
-  // 湖底: 深いほど暗く、沈殿・藻のむらを入れる（一様に明るい灰色は「プールの底」に見える）
+  // 湖底: 深いほど暗く、沈殿・藻のむらを入れる（一様に明るい灰色は「プールの底」に見える）。
+  // 浅瀬の棚は遠くからだと幅 10〜20px の一様な淡い帯になり、それ自体が「プールの縁」になるので、
+  // λ2.4m の礫と λ22m の藻・沈泥を 400m 先まで残して崩す
   if (tAbove < 0.1) {
     float dep = -tAbove;
-    sand *= 0.80 + 0.45 * flip_fbm(tXZ * 0.16 + 7.0, 2) + 0.25 * flip_vnoise(tXZ * 0.045 + 12.0);
+    float sFar = 1.0 - 0.45 * smoothstep(160.0, 420.0, tDist);
+    float g1 = flip_vnoise(tXZ * 0.42 + 61.0);
+    sand *= (0.74 + 0.52 * g1 + 0.30 * tMeso + 0.20 * tPatch) * sFar + (1.0 - sFar);
+    sand = mix(sand, vec3(0.034, 0.050, 0.030), 0.55 * smoothstep(0.35, 0.88, tPatch + 0.55 * g1 + 0.3 * tMeso) * sFar);
+    sand *= 0.80 + 0.45 * flip_fbm(tXZ * 0.16 + 7.0, 2) * (1.0 - smoothstep(30.0, 90.0, tDist)) + 0.25 * flip_vnoise(tXZ * 0.045 + 12.0);
     sand = mix(sand, vec3(0.070, 0.086, 0.062), smoothstep(0.5, 5.0, dep)); // 岸ぎわで急に暗くすると水際が線に見える
   }
 }
