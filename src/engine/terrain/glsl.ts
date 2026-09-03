@@ -211,16 +211,18 @@ grass = mix(grass, vec3(0.19, 0.165, 0.06), smoothstep(250.0, 420.0, tH)); // �
 // 日が差さないぶん彩度を落とし、林が濃いほど暗くする。
 // 縁は植生マップの補間に 13m/36m の斑を足して崩すので、境界が線に見えない
 float tCanopy = 1.0; // 樹冠が直達光を遮る割合（1 = 素通り）
+vec3 tDuffCap = vec3(1.0); // 林床の地色の上限（明るい側の裾を切る）
 if (fFloor > 0.0005) {
   float fLitter = flip_vnoise(tXZ * 0.42 + 21.0);
   // 褪せた針葉のリター（灰茶。R/G ≈ 1.0）→ 腐植（ほぼ黒）。
   // R が G に勝つ色（前は R/G = 1.32）は日なたで橙の砂に、1km 先では錆色に見える。
   // 明暗の比 4:1 を近距離で読ませるのが「林床」と「砂」の分かれ目
-  vec3 duff = mix(vec3(0.0190, 0.0230, 0.0136), vec3(0.0046, 0.0060, 0.0036),
+  vec3 duff = mix(vec3(0.0180, 0.0188, 0.0113), vec3(0.0044, 0.0047, 0.0029),
                   smoothstep(0.05, 0.90, fLitter + 0.45 * tPatch));
   // 苔・下草の緑が斑で混じる（緑側なので R/G は下がる方向）
-  duff = mix(duff, vec3(0.0092, 0.0180, 0.0068), 0.6 * smoothstep(0.15, 0.78, tMeso + 0.7 * tPatch + 0.5 * fLitter));
+  duff = mix(duff, vec3(0.0105, 0.0158, 0.0068), 0.5 * smoothstep(0.15, 0.78, tMeso + 0.7 * tPatch + 0.5 * fLitter));
   duff *= 1.0 + 0.16 * tMacro;
+  tDuffCap = duff * 1.18; // 針葉や小枝の明るい粒でも腐植の 1.18 倍まで
   grass = mix(grass, duff, min(1.0, 2.5 * fFloor));
   // 樹冠の下は空が見えない。さらに λ12m の「木が混んで暗い溜まり」を作る
   // （一様に明るいと、いくら暗くしても砂丘の陰影に見える）
@@ -242,6 +244,16 @@ if (fFloor > 0.01 && tDist < 55.0 && uReflect < 0.5) {
   float mFade = 1.0 - smoothstep(26.0, 55.0, tDist);
   float l1 = flip_vnoise(tXZ * 4.0 + 31.0);
   grass *= 1.0 + (0.80 * l1 - 0.40 + 0.45 * tPatch) * fFloor * mFade;
+  // 落ちた針葉と小枝。5〜22m でもはっきり読める大きさ（λ 25cm の束と λ 7cm の針）で、
+  // 暗い側に振る（腐植の上に濃い茶の針葉が散る）。草の陰に隠れない濃さ
+  float nFade = (1.0 - smoothstep(12.0, 24.0, tDist)) * fFloor;
+  if (nFade > 0.01) {
+    vec2 nw = normalize(uWind.xy + vec2(1e-4, 0.0));
+    vec2 na = vec2(dot(tXZ, nw), dot(tXZ, vec2(-nw.y, nw.x)));
+    float twig = flip_vnoise(tXZ * 4.6 + 71.0);
+    float ndl  = flip_vfbm(na * vec2(9.0, 26.0) + 13.0, 2);
+    grass *= 1.0 - (0.62 * smoothstep(0.58, 0.92, twig) + 0.46 * smoothstep(0.55, 0.90, ndl)) * nFade;
+  }
 }
 // 枯れ草・落ち葉のリター（株の間から見える地面）。λ 3.5m の斑で 70m まで。
 // これが無いと地面が「一色の緑の絵の具」になる
@@ -446,6 +458,10 @@ if (rockM > 0.01 || screeM > 0.06) {
 }
 
 if (dirtM > 0.02 && (dirtN.x != 0.0 || dirtN.y != 0.0)) wN = normalize(wN - vec3(dirtN.x, 0.0, dirtN.y) * gN.y * dirtM);
+// 林床の明るい側の裾を切る。近景の針葉・小枝・株の模様は掛け算なので、
+// 一部の画素が地色の 2 倍まで持ち上がり、「日なたの林床が日なたの草地より明るい」
+// （統合担当の実測 127 対 108）の原因になっていた。暗い側は自由に落とす
+if (fFloor > 0.01) grass = min(grass, mix(grass, tDuffCap, fFloor));
 vec3 tCol = grass;
 tCol = mix(tCol, dirt, dirtM);
 tCol = mix(tCol, scree, screeM);
@@ -477,7 +493,7 @@ tCol *= 1.0 - 0.42 * cavD;
 tAO = 0.28 + 0.72 * tAO * tAO * (1.0 - 0.45 * cavD);
 // 樹冠は太陽だけでなく空も隠す。林床の明るさの大半は半球光なので、ここを落とさないと
 // いくら直達光を遮っても「日なたの砂」のままだった
-tAO *= 1.0 - 0.78 * fFloor;
+tAO *= 1.0 - 0.92 * fFloor;
 // 山の影（地平角マップ）: 太陽と、夜だけ月
 float tSunVis = flip_terrainSunVis(tXZ, uSunDir) * tCanopy;
 float tMoonVis = ((uMoonColor.r + uMoonColor.g + uMoonColor.b > 0.0005) ? flip_terrainSunVis(tXZ, uMoonDir) : 1.0) * tCanopy;
@@ -495,6 +511,15 @@ vec3 nonPerturbedNormal = normal;
 export const TERRAIN_FRAG_AO = /* glsl */ `
 reflectedLight.indirectDiffuse *= tAO;
 reflectedLight.indirectSpecular *= tAO;
+// 林床（落ち葉と腐植）は光を内部で散らす多孔質なので、面としての鏡面反射をほとんど返さない。
+// 斜めから見た林床に GGX の照りが残ると、アルベドを真っ黒にしても sRGB 110 の明るさが残る
+// （実測。批評R2〜R4 の「明るい砂」の主因はこれだった）
+reflectedLight.directSpecular *= 1.0 - 0.98 * fFloor;
+reflectedLight.indirectSpecular *= 1.0 - 0.98 * fFloor;
+// 樹冠が直達光を遮る（木漏れ日）。影担当の flip_sunOcclusion は camDist 25m から効くので、
+// それより手前の林床には林の遮蔽が一切かかっていなかった。ここで掛けると地形だけに閉じる。
+// tCanopy は 2.4m の斑なので、光の差す所は明るいまま残る
+reflectedLight.directDiffuse *= tCanopy;
 `;
 
 /**
