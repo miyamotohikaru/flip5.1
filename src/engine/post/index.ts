@@ -230,7 +230,10 @@ export class Post {
     const dark = Math.max(night, 0.85 * storm);
     u.uAutoRef.value = THREE.MathUtils.lerp(0.34, 0.036, night);
     u.uAutoStrength.value = dbg.has("noauto") ? 0 : THREE.MathUtils.lerp(0.5, 1.0, dark);
-    (u.uAutoRange.value as THREE.Vector2).set(THREE.MathUtils.lerp(0.7, 0.15, dark), THREE.MathUtils.lerp(1.45, 30, dark));
+    (u.uAutoRange.value as THREE.Vector2).set(THREE.MathUtils.lerp(0.7, 0.15, dark), THREE.MathUtils.lerp(2.2, 30, dark));
+    // 暗部の持ち上げ（影に空の環境光を残す）。夜だけは持ち上げない（空が乳白色になる）
+    u.uLift.value = this.dbg.has("nograde") ? 0 : THREE.MathUtils.lerp(0.032, 0.004, night);
+    u.uPivot.value = 0.42;
     if (dbg.has("nobloom")) u.uBloomStrength.value = 0;
     if (dbg.has("noao")) u.uAoStrength.value = 0;
     if (dbg.has("nolens")) u.uDropRain.value = 0;

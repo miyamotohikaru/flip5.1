@@ -45,6 +45,8 @@ uniform vec2 uAutoRange;
 uniform float uWarmth;
 uniform float uSaturation;
 uniform float uContrast;
+uniform float uPivot;
+uniform float uLift;
 uniform vec3 uShadowTint;
 uniform vec3 uHighlightTint;
 uniform vec2 uSplit;
@@ -162,10 +164,16 @@ vec3 gradeColor(vec3 c){
   float hw = smoothstep(0.30, 1.0, l);
   c *= mix(vec3(1.0), uShadowTint, sw * uSplit.x);
   c *= mix(vec3(1.0), uHighlightTint, hw * uSplit.y);
-  // コントラスト（ガンマ空間。軸は 0.42＝屋外の中間調。0.5 だと中間まで一緒に沈んで、締まるのでなく暗くなるだけ）
+  // コントラスト（ガンマ空間、軸 = uPivot ＝ 屋外の中間調）。
+  // 直線の (g-p)*C+p は C>1 のとき g < p-p/C を 0 に切り落とす（軸 0.42・C 1.135 なら g<0.050 が全部黒）。
+  // ラウンド2で「下 1/3 が情報ゼロ」になった原因はこれ。軸まわりの「べき」に変えると
+  // 0 と 1 は動かず、中間だけ傾きが立つ＝暗部にも白側にも階調が残る。
   vec3 g = pow(max(c, vec3(0.0)), vec3(1.0 / 2.2));
-  g = (g - 0.42) * uContrast + 0.42;
-  g = mix(g, g * g * (3.0 - 2.0 * g), 0.12);
+  vec3 lo = uPivot * pow(max(g, vec3(0.0)) / uPivot, vec3(uContrast));
+  vec3 hi = 1.0 - (1.0 - uPivot) * pow(max(1.0 - g, vec3(0.0)) / (1.0 - uPivot), vec3(uContrast));
+  g = mix(lo, hi, step(vec3(uPivot), g));
+  // 影に空の環境光を残す（黒潰れ止め）。g が小さいところだけ持ち上げ、中間調には触らない
+  g += uLift * (1.0 - smoothstep(vec3(0.0), vec3(0.30), g));
   c = pow(clamp(g, 0.0, 1.0), vec3(2.2));
   // 彩度
   l = post_luma(c);
@@ -371,6 +379,10 @@ export function gradeUniforms(): Record<string, THREE.IUniform> {
     uWarmth: { value: 0 },
     uSaturation: { value: 0.96 },
     uContrast: { value: 1.04 },
+    /** コントラストの軸（ガンマ空間）。屋外の中間調 */
+    uPivot: { value: 0.42 },
+    /** 暗部の持ち上げ（ガンマ空間）。影に空の環境光を残す */
+    uLift: { value: 0.03 },
     uShadowTint: { value: new THREE.Vector3(0.92, 0.96, 1.1) },
     uHighlightTint: { value: new THREE.Vector3(1.06, 1.01, 0.94) },
     uSplit: { value: new THREE.Vector2(0.35, 0.35) },
