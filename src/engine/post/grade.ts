@@ -280,8 +280,14 @@ void main(){
   float bs = uBloomStrength * (1.0 - 0.7 * fm);
   c = mix(c, bloom, bs);
 
-  // ゴッドレイ
-  float god = texture2D(tGod, uv).r;
+  // ゴッドレイ。1/4 解像度で、放射ブラーの開始位置を IGN でずらしてある。
+  // そのジッタが ×4 に拡大されて平坦な空に斜めの網目（周期 9〜13px）として見えるので、
+  // 1/4 テクセルの 2×2 を平均して均す（批評 R2 の新規破綻 11）
+  vec2 gt = uTexel * 2.0;
+  float god = 0.25 * (texture2D(tGod, uv + vec2( gt.x,  gt.y)).r
+                    + texture2D(tGod, uv + vec2(-gt.x,  gt.y)).r
+                    + texture2D(tGod, uv + vec2( gt.x, -gt.y)).r
+                    + texture2D(tGod, uv + vec2(-gt.x, -gt.y)).r);
   c += uSunColorN * god * uGodStrength;
 
   // レンズフレア（遮蔽は太陽位置のマスクを見る）
