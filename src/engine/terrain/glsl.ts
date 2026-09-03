@@ -84,7 +84,8 @@ float tn_linePx(float v, float px){
   float d = max(fwidth(v), 1e-5);
   float f = abs(fract(v) - 0.5);
   float w = min(px * d * 0.5, 0.42);
-  float l = smoothstep(0.5 - w - d, 0.5 - w + d, f);
+  float aa = d * 0.30;                          // にじみは 0.6 画素。2d だと主線 5px / 副線 3px になり 4:1 が潰れる
+  float l = smoothstep(0.5 - w - aa, 0.5 - w + aa, f);
   return l * (1.0 - smoothstep(0.30, 0.70, d)); // 間隔が 1.5px を切ったら消す（潰れて面が白くなる）
 }
 float tn_line(float v, float w){
@@ -358,8 +359,8 @@ if (tNear > 0.0) {
   // 葉の筋（2〜5cm、風向きに少し伸びる）と粒
   vec2 wdir = normalize(uWind.xy + vec2(1e-4, 0.0));
   vec2 xa = vec2(dot(tXZ, wdir), dot(tXZ, vec2(-wdir.y, wdir.x)));
-  float blades = flip_vfbm(xa * vec2(16.0, 42.0) + 5.0, 2);
-  float edge = 1.0 - abs(flip_gnoise(xa * vec2(14.0, 40.0) + 9.0)); // 葉の縁が光る細い筋
+  float blades = dNear0 > 0.01 ? flip_vfbm(xa * vec2(16.0, 42.0) + 5.0, 2) : 0.5;
+  float edge = dNear0 > 0.01 ? 1.0 - abs(flip_gnoise(xa * vec2(14.0, 40.0) + 9.0)) : 0.0; // 葉の縁が光る細い筋
   edge = edge * edge * edge;
   float grain = flip_vnoise(tXZ * 30.0 + 1.0);
   grass *= 1.0 + ((0.8 * blades - 0.4 + 0.5 * edge) * dNear0 + (0.4 * grain - 0.2) * dNear1) * gDet;
@@ -389,7 +390,9 @@ if (tNear > 0.0) {
   // 水面から 0.8m 以上沈んだ所は屈折越しにしか見えないので細部の法線を作らない
   float subm = 1.0 - smoothstep(-0.1, -0.8, tAbove);
   vec3 d1 = tn_gnoised(tXZ * 2.2), d2 = vec3(0.0), d3 = vec3(0.0);
-  if (subm > 0.01) { d2 = tn_gnoised(tXZ * 7.5 + 3.0); d3 = tn_gnoised(tXZ * 13.0 + 9.0); }
+  // 13cm / 8cm のこぶは、それぞれの距離ゲートが立っているときだけ引く（ゲートは 12〜15m）
+  if (subm > 0.01 && dNear1 > 0.01) d2 = tn_gnoised(tXZ * 7.5 + 3.0);
+  if (subm > 0.01 && dNear0 > 0.01) d3 = tn_gnoised(tXZ * 13.0 + 9.0);
   // 13cm / 8cm のこぶは低い太陽で「風紋」に見え、林床では砂丘そのものになる。林床では 45cm の
   // うねり（根・落ち葉の盛り上がり）だけ残す
   float fineB = 1.0 - 0.85 * fFloor;
@@ -488,11 +491,15 @@ tCol = mix(tCol, sand, sandM);
 // （批評 R2 の 6 番から 4 ラウンド続けて指摘された箇所）。
 // λ36m と λ13m は焼いた場（tMeso / tPatch）の使い回しで無料、λ6m だけ 1 タップ引く。
 // 法線にも同じ勾配を入れて、曇天でも起伏として読めるようにする
-float midN = (1.0 - smoothstep(900.0, 1900.0, tDist)) * smoothstep(25.0, 70.0, tDist) * (1.0 - snowM) * (1.0 - uReflect);
+float midN = (1.0 - smoothstep(900.0, 1900.0, tDist)) * smoothstep(12.0, 40.0, tDist) * (1.0 - snowM) * (1.0 - uReflect); // 始点 25→12m（ridge の 30〜120m の斜面が外に落ちていた）
 if (midN > 0.01) {
   vec3 m6 = tn_gnoised(tXZ * 0.17 + 53.0);
-  tCol *= 1.0 + (0.35 * m6.x + 0.20 * tPatch + 0.12 * tMeso) * midN;
-  wN = normalize(wN - vec3(m6.y, 0.0, m6.z) * (0.17 * 0.34) * midN * gN.y);
+  // λ1.5m の段（振幅 0.20）。これが無いと 100m 先が「ぼかした写真」に見える（批評R6 10位①）。
+  // 400m で消す（それ以遠は 1 画素を切ってにじみになる）
+  float hiF = 1.0 - smoothstep(150.0, 400.0, tDist);
+  vec3 m15 = hiF > 0.01 ? tn_gnoised(tXZ * 0.66 + 77.0) : vec3(0.0);
+  tCol *= 1.0 + (0.35 * m6.x + 0.20 * tPatch + 0.12 * tMeso) * midN + 0.20 * m15.x * hiF * midN;
+  wN = normalize(wN - vec3(m6.y + m15.y * 0.45 * hiF, 0.0, m6.z + m15.z * 0.45 * hiF) * (0.17 * 0.34) * midN * gN.y);
 }
 float tRough = mix(0.92, 0.80, dirtM);
 tRough = mix(tRough, 0.99, fFloor); // 林床は完全なマット（腐植と針葉に艶は無い。斜めから見たときの照りを消す）
@@ -566,7 +573,9 @@ if (uFlipRadius > 0.001) {
   float nearR = 1.0 - smoothstep(200.0, 700.0, tDist);
   // 等高線: 10m ごとの副線（細）と 50m ごとの主線（太さ 4:1）。
   // 5m 間隔で同じ太さだと「バーコード」に見える
-  float cMinor = tn_linePx(tH / 10.0, 1.0) * nearR;
+  // 主線 3px α0.9 / 副線 1px α0.35 の 4:1。副線は 200m で消していたので遠景に主線しか無く、
+  // 「全部同じ太さ」に見えていた（批評R2〜R6 で 5 回指摘）。10m 間隔は 2km 先でも 8px あるので残す
+  float cMinor = tn_linePx(tH / 10.0, 1.0) * (1.0 - smoothstep(1600.0, 2600.0, tDist));
   float cMajor = tn_linePx(tH / 50.0, 3.0);
   // 成分の族はさらに細く（合計の等高線を邪魔しない）
   float lm = tn_linePx(pm / 20.0, 1.2) * smoothstep(0.5, 3.0, pm) * midR;
