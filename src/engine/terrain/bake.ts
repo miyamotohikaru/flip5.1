@@ -77,14 +77,15 @@ void main(){
 `;
 
 const HORIZON_FRAG = /* glsl */ `
+#include <flip_noise>
 #include <flip_height>
 varying vec2 vUv;
 uniform float uDirBase;
 float tn_h(vec2 xz){ return texture2D(uHeightmap, xz * uHeightmapInfo.y + 0.5).r; }
-float horizonDir(vec2 xz, float h0, float a){
+float horizonDir(vec2 xz, float h0, float a, float jit){
   vec2 dir = vec2(cos(a), sin(a));
   float ms = 0.0;
-  float dist = 4.0;
+  float dist = 4.0 * jit;
   for (int s = 0; s < HSTEPS; s++) {
     float hs = tn_h(xz + dir * dist);
     ms = max(ms, (hs - h0) / dist);
@@ -95,11 +96,31 @@ float horizonDir(vec2 xz, float h0, float a){
 void main(){
   vec2 xz = (vUv - 0.5) * uHeightmapInfo.x;
   float h0 = flip_height(xz) + 1.5;
+  // 歩幅が距離に比例して伸びるので、遠くの尾根を「拾う／拾わない」が広い範囲で揃って切り替わり、
+  // 8方位に沿った矩形のタイル（批評R2 の「スプラットのタイル継ぎ目」）になっていた。
+  // 開始距離を texel ごとにばらして高周波の粒に変え、後段の 5×5 ぼかしで均す
+  float jit = 0.5 + 1.0 * flip_hash12(floor(vUv * uHeightmapInfo.z) + 0.5);
   gl_FragColor = vec4(
-    horizonDir(xz, h0, uDirBase * 0.7853982),
-    horizonDir(xz, h0, (uDirBase + 1.0) * 0.7853982),
-    horizonDir(xz, h0, (uDirBase + 2.0) * 0.7853982),
-    horizonDir(xz, h0, (uDirBase + 3.0) * 0.7853982));
+    horizonDir(xz, h0, uDirBase * 0.7853982, jit),
+    horizonDir(xz, h0, (uDirBase + 1.0) * 0.7853982, jit),
+    horizonDir(xz, h0, (uDirBase + 2.0) * 0.7853982, jit),
+    horizonDir(xz, h0, (uDirBase + 3.0) * 0.7853982, jit));
+}
+`;
+
+/** 地平角マップのぼかし（3×3、2 texel 間隔＝5×5 相当）。ジッタで粒にした揺れを均す */
+const BLUR_FRAG = /* glsl */ `
+varying vec2 vUv;
+uniform sampler2D uSrc;
+uniform float uTexel;
+void main(){
+  vec4 c = vec4(0.0);
+  for (int j = -1; j <= 1; j++) {
+    for (int i = -1; i <= 1; i++) {
+      c += texture2D(uSrc, vUv + vec2(float(i), float(j)) * uTexel * 2.0);
+    }
+  }
+  gl_FragColor = c * 0.111111;
 }
 `;
 
@@ -150,6 +171,13 @@ export function bakeTerrainAux(renderer: THREE.WebGLRenderer, env: Env, auxRes: 
     depthTest: false,
     depthWrite: false,
   });
+  const blurMat = new THREE.ShaderMaterial({
+    uniforms: { uSrc: { value: null as THREE.Texture | null }, uTexel: { value: 1 / horizonRes } },
+    vertexShader: FS_VERT,
+    fragmentShader: BLUR_FRAG,
+    depthTest: false,
+    depthWrite: false,
+  });
   const mesh = new THREE.Mesh(geo, auxMat);
   mesh.frustumCulled = false;
   scene.add(mesh);
@@ -158,6 +186,7 @@ export function bakeTerrainAux(renderer: THREE.WebGLRenderer, env: Env, auxRes: 
   const aux = makeTarget(auxRes, THREE.HalfFloatType);
   const horizonA = makeTarget(horizonRes);
   const horizonB = makeTarget(horizonRes);
+  const horizonTmp = makeTarget(horizonRes); // ぼかしの入力（使い終わったら捨てる）
   const field = makeTarget(1024);
 
   const prevTarget = renderer.getRenderTarget();
@@ -167,13 +196,16 @@ export function bakeTerrainAux(renderer: THREE.WebGLRenderer, env: Env, auxRes: 
   renderer.xr.enabled = false;
   renderer.setRenderTarget(aux);
   renderer.render(scene, cam);
-  mesh.material = horizonMat;
-  horizonMat.uniforms.uDirBase.value = 0;
-  renderer.setRenderTarget(horizonA);
-  renderer.render(scene, cam);
-  horizonMat.uniforms.uDirBase.value = 4;
-  renderer.setRenderTarget(horizonB);
-  renderer.render(scene, cam);
+  for (let k = 0; k < 2; k++) {
+    mesh.material = horizonMat;
+    horizonMat.uniforms.uDirBase.value = k * 4;
+    renderer.setRenderTarget(horizonTmp);
+    renderer.render(scene, cam);
+    mesh.material = blurMat;
+    blurMat.uniforms.uSrc.value = horizonTmp.texture;
+    renderer.setRenderTarget(k === 0 ? horizonA : horizonB);
+    renderer.render(scene, cam);
+  }
   mesh.material = fieldMat;
   renderer.setRenderTarget(field);
   renderer.render(scene, cam);
@@ -181,9 +213,11 @@ export function bakeTerrainAux(renderer: THREE.WebGLRenderer, env: Env, auxRes: 
   renderer.shadowMap.autoUpdate = prevShadow;
   renderer.xr.enabled = prevXr;
 
+  horizonTmp.dispose();
   auxMat.dispose();
   horizonMat.dispose();
   fieldMat.dispose();
+  blurMat.dispose();
   geo.dispose();
   return { aux, horizonA, horizonB, field };
 }
