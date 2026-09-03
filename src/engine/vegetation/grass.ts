@@ -1,6 +1,8 @@
 // 草。GPU 配置: インスタンス ID → カメラ周りの格子セル（距離順に並べた表）→ hash で位置・向き・高さ・色。
-// 1 インスタンス = 1 株。3 つの環（近 5葉×3段 / 中 3葉×2段 / 遠 3葉×1段）が相補的にクロスフェードし、
+// 1 インスタンス = 1 株。4 つの環（0-4.5m / 4.5-14m / 14-38m / 38m-）が相補的にクロスフェードし、
 // さらに環の中でも (dRef/dist)^1.4 で間引いて、画面上の密度を距離によらず一定に保つ（環の継ぎ目が消える）。
+// **段（segments）は三角形の単価**。近い環だけ 2 段にして、中景・遠景は 1 段（1 葉 = 1 三角形）にすることで
+// 同じ三角形の予算で本数を 2 倍にしている（「刈った芝に黒い雑草」を「連続した芝」にするのは本数）。
 // 葉幅は 1〜3cm（本物のイネ科は 3〜8mm。遠い環だけ画素より細くならないよう太くする）。
 // 林の中（vegmap の G が濃いところ）では、草の代わりに下草（シダ）と落ち葉を生やして「森の床」にする。
 // 風は uWind と突風ノイズ。影は落とす（近い環の手前 25% だけ、第1カスケードだけ）。
@@ -27,6 +29,8 @@ export const GRASS_COLORS = {
   /** 森の床: 落ち葉（針葉のリター）と下草のシダ・コケ */
   litter: new THREE.Color(0.047, 0.038, 0.021),
   fern: new THREE.Color(0.046, 0.090, 0.036),
+  /** 遠景で溶け込ませる先（地形の草色そのもの）。ここへ寄せないと黒い点の散らばりに見える */
+  far: new THREE.Color(0.058, 0.125, 0.032),
 };
 
 type Ring = {
@@ -40,8 +44,10 @@ type Ring = {
   width: number;
   /** 株の広がり（m）。1 つのインスタンス = 1 株で、葉はこの半径にばらける */
   spread: number;
-  /** ここより遠い株は (dRef/dist)^2 で間引く（画面上の密度を一定に保ち、環の継ぎ目を消す） */
+  /** ここより遠い株は (dRef/dist)^thinPow で間引く（画面上の密度を一定に保つ） */
   dRef: number;
+  /** 間引きの指数。環の外径での密度が次の環の密度と一致するように決める（継ぎ目を消す） */
+  thinPow: number;
   /** 森の床（下草・落ち葉）をこの環でどれだけ出すか 0..1 */
   floor: number;
   /** 影を落とすインスタンスの割合（距離順なので手前から） */
@@ -49,36 +55,65 @@ type Ring = {
 };
 
 // 葉身の実寸（m）。本物のイネ科は 3〜8mm。環が遠いほど少しだけ太くする（画素より細いと消えるため）
-const W_A = 0.010, W_B = 0.021, W_C = 0.030;
+const RING_W = [0.010, 0.020, 0.036, 0.050];
 // 葉の長さの基準（m）。個体は 0.4〜1.4 倍
-const H_A = 0.34, H_B = 0.32, H_C = 0.27;
+const RING_H = [0.34, 0.34, 0.32, 0.29];
+// 株の広がり（m）
+const RING_SPREAD = [0.10, 0.16, 0.26, 0.40];
+// 環の外径（m）。いちばん外は q.grassRadius
+const RING_R = [4.5, 14, 38];
+// 株あたりの葉数と段数（段数 = 三角形の単価。1 段 = 1 葉 1 三角形）
+const RING_BLADES = [5, 4, 3, 3];
+
+/** 近い環から順の「葉の本数 / m²」。品質段階で決める。ここが密度の唯一のつまみ。 */
+function ringDensity(tier: string): number[] {
+  switch (tier) {
+    case "low": return [110, 26, 8, 1.0];
+    case "mid": return [140, 34, 11, 1.2];
+    case "ultra": return [340, 105, 42, 3.0];
+    default: return [270, 80, 27, 2.2];
+  }
+}
 
 /**
  * 環の設計。葉が細い（1cm）ぶん、近くは「濃く」ないと芝生に見えない。
- * 画面に占める面積は距離の 2 乗で小さくなるので、株の間隔もおおよそ距離に比例させる
- * （環 A の 6m で 250本/m²、環 B の 20m で 35本/m²、環 C の 90m で 3本/m²）。
+ * 画面に占める面積は距離の 2 乗で小さくなるので、環の中でも (dRef/dist)^1.4 で間引き、
+ * 隣り合う環の境目で密度が連続するように dRef を決めてある。
  */
 function ringSpecs(q: QualitySettings): Ring[] {
-  const R = q.grassRadius;
-  // 携帯は視界の半径そのものが小さいので、近景の環は相対的に広く取らないと
-  // 画面の大半（縦画面の下半分）が疎な中景の環になってしまう
-  const small = q.tier === "low" || q.tier === "mid";
-  const rA = R * (small ? 0.10 : 0.05), rB = R * 0.24, rC = R;
-  const N = q.grassCount * (small ? 1.0 : 0.78);
-  // 環ごとの「株の間隔」の比。株あたりの葉数を bA/bB/bC にして、総葉数が N になるよう csA を解く
-  const kB = 2.55, kC = 8.4;
-  const bA = 5, bB = 3, bC = 3;
-  const K =
-    bA * Math.PI * rA * rA +
-    (bB * Math.PI * (rB * rB - rA * rA)) / (kB * kB) +
-    (bC * Math.PI * (rC * rC - rB * rB)) / (kC * kC);
-  const csA = Math.sqrt(K / N);
-  const segA = small ? 2 : 3;
-  return [
-    { cell: csA, rIn: 0, rOut: rA, band: 2.0, blades: bA, segments: segA, height: H_A, width: W_A, spread: 0.10, dRef: rA * 0.55, floor: 1.0, shadowFrac: 0.25 },
-    { cell: csA * kB, rIn: rA, rOut: rB, band: 2.5, blades: bB, segments: 2, height: H_B, width: W_B, spread: 0.18, dRef: rA * 1.45, floor: 1.0, shadowFrac: 0 },
-    { cell: csA * kC, rIn: rB, rOut: rC, band: 10, blades: bC, segments: 1, height: H_C, width: W_C, spread: 0.34, dRef: rB * 1.25, floor: 0.7, shadowFrac: 0 },
-  ];
+  const R = Math.max(q.grassRadius, RING_R[2] + 6);
+  const dens = ringDensity(q.tier);
+  // 携帯は描画呼び出しを 1 つでも減らしたいので、いちばん外の 2 環をまとめて 3 環にする
+  const small = q.tier === "low";
+  const rings = small ? 3 : 4;
+  const rOut = small ? [RING_R[0], RING_R[1], R] : [RING_R[0], RING_R[1], RING_R[2], R];
+  const rIn = [0, RING_R[0], RING_R[1], RING_R[2]];
+  const band = small ? [1.6, 2.4, 8.0] : [1.6, 2.4, 4.0, 10.0];
+  // 間引きの基準距離: 環の内径のあたりから 1/d^1.4 で薄くする（境目で密度がつながる）
+  const dRef = [2.6, 5.0, 14, 38];
+  // 各環の外径で密度が次の環と一致するような指数（環の境目に段差を出さない）
+  const thinPow: number[] = [];
+  for (let i = 0; i < 4; i++) {
+    const dNext = i + 1 < dens.length ? dens[i + 1] : dens[i] * 0.17;
+    const rEnd = i < rOut.length ? rOut[i] : R;
+    const ratio = Math.max(1e-3, dNext / dens[i]);
+    const k = Math.min(0.999, dRef[i] / Math.max(rEnd, dRef[i] + 0.1));
+    thinPow.push(Math.min(2.4, Math.max(1.0, Math.log(ratio) / Math.log(k))));
+  }
+  const segments = [q.tier === "low" ? 1 : 2, 1, 1, 1];
+  const floor = [1.0, 1.0, 0.9, 0.7];
+  const shadowFrac = [0.25, 0, 0, 0];
+  const out: Ring[] = [];
+  for (let i = 0; i < rings; i++) {
+    const cell = Math.sqrt(RING_BLADES[i] / dens[i]);
+    out.push({
+      cell, rIn: rIn[i], rOut: rOut[i], band: band[i],
+      blades: RING_BLADES[i], segments: segments[i],
+      height: RING_H[i], width: RING_W[i], spread: Math.min(RING_SPREAD[i], cell * 0.85),
+      dRef: dRef[i], thinPow: thinPow[i], floor: floor[i], shadowFrac: shadowFrac[i],
+    });
+  }
+  return out;
 }
 
 /** 環のセル表（カメラのセルからのオフセット、距離順） */
@@ -139,7 +174,7 @@ function bladeGeometry(segments: number, blades: number, offsets: Float32Array):
 const GRASS_PLACE = /* glsl */ `
 uniform vec4 uRing;   // x = セル(m), y = 内径, z = 外径, w = 株の広がり(m)
 uniform vec4 uBlade;  // x = 高さ(m), y = 幅(m), z = フェード帯(m), w = 間引きの基準距離(m)
-uniform float uFloor; // 森の床（下草・落ち葉）をこの環で出す割合 0..1
+uniform vec2 uFloor;  // x = 森の床（下草・落ち葉）をこの環で出す割合 0..1, y = 間引きの指数
 uniform vec4 uLabVeg;  // 実験室のつまみ。x = 草の密度の倍率（既定 1）
 uniform sampler2D uVegMap;
 uniform vec4 uVegMapInfo;
@@ -162,21 +197,30 @@ void veg_grass(out vec3 p, out vec3 n){
   }
   float h = flip_height(root2);
   vec3 root = vec3(root2.x, h, root2.y);
+  // 水面下・水際には 1 本も生やさない。植生マップは 8m/texel なので岸ぎわで水中へ漏れる。
+  // 葉ごとに実際の地形の高さを見て、湖面より低ければその場で畳む
+  if (h < uLakeLevel + 0.30) {
+    p = root; n = vec3(0.0, 1.0, 0.0);
+    vGrass = vec4(0.0); vBlade = vec4(0.0); vVegWorld = root;
+    return;
+  }
   float dist = distance(root2, uCamPos.xz);
   vec3 tn = flip_terrainNormal(root2, 0.9);
   vec4 vm = texture2D(uVegMap, root2 * uVegMapInfo.y + 0.5);
   // 森の床: 草が薄いところ（vm.r）でも林（vm.g）が濃ければ下草と落ち葉を生やす。
   // これが無いと森の地面が「ぼやけた緑一色」になる
-  float floorD = smoothstep(0.22, 0.48, vm.g) * vm.g * 0.95 * uFloor;
+  float floorD = smoothstep(0.22, 0.48, vm.g) * vm.g * 0.95 * uFloor.x;
   float onFloor = step(vm.r * 0.8 + 0.03, floorD);
-  float density = max(vm.r, floorD);
+  // 植生マップの草地は 0.5 前後。そのまま確率に使うと草原でも半分しか生えず「刈った芝」に見える。
+  // 生える／生えないの境目だけ残して、草地の中では満杯にする
+  float density = max(smoothstep(0.03, 0.52, vm.r), floorD);
   density *= 1.0 - smoothstep(0.42, 0.72, 1.0 - tn.y);
-  density *= smoothstep(uLakeLevel + 0.22, uLakeLevel + 0.8, h);
+  density *= smoothstep(uLakeLevel + 0.30, uLakeLevel + 0.75, h);
   density *= 1.0 - smoothstep(380.0, 420.0, h);
   // 細かい斑（同じセルの株は同じ斑）
-  density *= 0.7 + 0.6 * flip_vnoise(root2 * 0.35 + 3.0);
+  density *= 0.84 + 0.32 * flip_vnoise(root2 * 0.35 + 3.0);
   // 画面での密度を保つ間引き: 遠いほど 1/d² で減らす。環の内側は密、外側は疎になり継ぎ目が消える
-  density *= clamp(pow(uBlade.w / max(dist, 0.5), 1.4), 0.0, 1.0);
+  density *= clamp(pow(uBlade.w / max(dist, 0.5), uFloor.y), 0.0, 1.0);
   density *= uLabVeg.x; // 実験室の「草の密度」（既定 1）
   float band = uBlade.z;
   float ringFade = smoothstep(uRing.y - band, uRing.y + band * 0.3, dist) * (1.0 - smoothstep(uRing.z - band, uRing.z + band * 0.3, dist));
@@ -189,7 +233,7 @@ void veg_grass(out vec3 p, out vec3 n){
   float rnd2 = flip_hash11(rb * 91.7 + 3.0);
   // λ≒12m の斑: 3〜4 割を短く・薄くする（一様な絨毯にしない）
   float pch = flip_vnoise(root2 * 0.083 + 17.0);
-  float shortP = smoothstep(0.70, 0.32, pch);
+  float shortP = smoothstep(0.58, 0.26, pch);
   // 株の種類: 4% は広葉の雑草、1.2% は花穂
   float kindR = flip_hash11(rc * 53.0 + 11.0);
   float broad = step(0.96, kindR) * (1.0 - onFloor);
@@ -199,9 +243,9 @@ void veg_grass(out vec3 p, out vec3 n){
   float litter = onFloor * (1.0 - step(0.55, kindR));
   float kind = broad + spike * 2.0 + fern * 3.0 + litter * 4.0;
   float H = uBlade.x * (0.4 + 1.0 * rnd) * (0.88 + 0.12 * density) * scale;
-  H *= 1.0 - 0.35 * shortP;
+  H *= 1.0 - 0.26 * shortP;
   float W = uBlade.y * (0.8 + 0.4 * rnd2) * (0.75 + 0.25 * scale);
-  W *= 1.0 - 0.15 * shortP;
+  W *= 1.0 - 0.10 * shortP;
   if (broad > 0.5) { W *= 2.4; H *= 0.60; }
   if (spike > 0.5) { W *= 0.55; H *= 1.7; }
   if (fern > 0.5) { W *= 2.1; H *= 0.80; }
@@ -272,7 +316,7 @@ export class Grass {
       const geo = bladeGeometry(ring.segments, ring.blades, offsets);
       const uRing = { value: new THREE.Vector4(ring.cell, ring.rIn, ring.rOut, Math.min(ring.spread, ring.cell * 0.85)) };
       const uBlade = { value: new THREE.Vector4(ring.height, ring.width, ring.band, ring.dRef) };
-      const uFloor = { value: ring.floor };
+      const uFloor = { value: new THREE.Vector2(ring.floor, ring.thinPow) };
       const mat = this.buildMaterial(uRing, uBlade, uFloor);
       const mesh = new THREE.Mesh(geo, mat);
       mesh.frustumCulled = false;
@@ -346,7 +390,8 @@ export class Grass {
           const vec3 GRASS_TIP2 = vec3(${c.tip2.r}, ${c.tip2.g}, ${c.tip2.b});
           const vec3 GRASS_DRY = vec3(${c.dry.r}, ${c.dry.g}, ${c.dry.b});
           const vec3 GRASS_LITTER = vec3(${c.litter.r}, ${c.litter.g}, ${c.litter.b});
-          const vec3 GRASS_FERN = vec3(${c.fern.r}, ${c.fern.g}, ${c.fern.b});`,
+          const vec3 GRASS_FERN = vec3(${c.fern.r}, ${c.fern.g}, ${c.fern.b});
+          const vec3 GRASS_FAR = vec3(${c.far.r}, ${c.far.g}, ${c.far.b});`,  // uCamPos は flip_atmosphere が宣言済み
           "grass fs common",
         );
         shader.fragmentShader = replaceOnce(
@@ -375,6 +420,11 @@ export class Grass {
             col *= 1.0 + 0.28 * smoothstep(0.74, 1.0, ax) * (1.0 - 0.75 * step(0.5, vBlade.y));
             // 根元は影に沈む（株の接地）
             col *= 1.0 - 0.46 * clamp(vBlade.z, 0.0, 1.0);
+            // 遠くの葉は地形の草色へ溶かす。1 本ずつが黒い点として読めるのを防ぐ
+            float vd = distance(vVegWorld.xz, uCamPos.xz);
+            vec3 farCol = mix(GRASS_FAR, GRASS_DRY * 0.6, clamp(dry * 1.3, 0.0, 1.0));
+            if (vBlade.y > 2.5) farCol = mix(farCol, col, 0.5);
+            col = mix(col, farCol, 0.85 * smoothstep(18.0, 62.0, vd));
             diffuseColor.rgb = col;
           }`,
           "grass fs map",

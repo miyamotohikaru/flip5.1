@@ -131,13 +131,13 @@ type Tier = { nearR: number; farR: number; band: number; capNear: number; cell: 
 function tierSettings(q: QualitySettings): Tier {
   switch (q.tier) {
     case "low":
-      return { nearR: 50, farR: 400, band: 10, capNear: 120, cell: 16, pebbles: 700, pebbleR: 18 };
+      return { nearR: 50, farR: 400, band: 10, capNear: 80, cell: 16, pebbles: 500, pebbleR: 16 };
     case "mid":
-      return { nearR: 70, farR: 600, band: 12, capNear: 160, cell: 14, pebbles: 1400, pebbleR: 24 };
+      return { nearR: 70, farR: 600, band: 12, capNear: 110, cell: 14, pebbles: 900, pebbleR: 22 };
     case "ultra":
       return { nearR: 130, farR: 1200, band: 20, capNear: 300, cell: 12, pebbles: 3200, pebbleR: 40 };
     default:
-      return { nearR: 95, farR: 900, band: 14, capNear: 220, cell: 12, pebbles: 2400, pebbleR: 32 };
+      return { nearR: 95, farR: 900, band: 14, capNear: 175, cell: 12, pebbles: 1900, pebbleR: 30 };
   }
 }
 
@@ -404,14 +404,16 @@ export class Rocks {
           // 岸線のすぐそば（水際ほど密）に多く、内陸はガレ場だけ。水中と急斜面には無い
           float shore = texture2D(uShore, root2 * uVegMapInfo.y + 0.5).r;
           shore = shore * shore * step(uLakeLevel + 0.01, h);
-          float inland = 0.05 * texture2D(uVegMap, root2 * uVegMapInfo.y + 0.5).a;
+          float inland = 0.018 * texture2D(uVegMap, root2 * uVegMapInfo.y + 0.5).a;
           float density = (shore * (0.55 + 0.45 * flip_vnoise(root2 * 0.3)) + inland) * (1.0 - smoothstep(0.3, 0.6, 1.0 - tn.y));
+          // 水面下には 1 粒も出さない（岸線マップは粗いので、粒ごとに実際の高さで切る）
+          density *= step(uLakeLevel + 0.25, h);
           density *= 1.0 - smoothstep(uPebble.y * 0.75, uPebble.y, dist);
           float hh = flip_hash12(cw * 1.91 + 7.0);
           float alive = smoothstep(0.0, 0.08, density - hh);
           float seed = flip_hash12(cw * 3.7 + 1.0);
           // 大きさ: 小さいものが多く、まれに大きい。水際ほど小さい
-          float size = (0.02 + 0.13 * pow(flip_hash11(seed * 3.0), 2.6)) * (0.7 + 0.5 * (1.0 - shore)) * alive;
+          float size = (0.014 + 0.058 * pow(flip_hash11(seed * 3.0), 2.6)) * (0.7 + 0.5 * (1.0 - shore)) * alive;
           vec3 sq = vec3(0.75 + 0.6 * flip_hash11(seed * 5.0), 0.4 + 0.5 * flip_hash11(seed * 7.0), 0.75 + 0.6 * flip_hash11(seed * 11.0));
           float yaw = seed * 6.2832;
           float tiltA = (flip_hash11(seed * 17.0) - 0.5) * 0.7;
@@ -447,8 +449,9 @@ export class Rocks {
           "#include <map_fragment>",
           `{
             float s = vPeb.x;
-            vec3 grey = mix(vec3(0.30, 0.29, 0.27), vec3(0.55, 0.52, 0.47), flip_hash11(s * 3.0));
-            vec3 warm = vec3(0.46, 0.36, 0.27);
+            // 草の中で白い玉に見えないよう、地形の砂利より明るくしない
+            vec3 grey = mix(vec3(0.150, 0.145, 0.135), vec3(0.29, 0.275, 0.245), flip_hash11(s * 3.0));
+            vec3 warm = vec3(0.25, 0.195, 0.145);
             vec3 c = mix(grey, warm, step(0.7, flip_hash11(s * 9.0)) * 0.6);
             float speck = flip_vnoise(vVegWorld * 40.0);
             c *= 0.85 + 0.3 * speck;
