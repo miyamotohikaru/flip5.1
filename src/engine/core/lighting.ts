@@ -14,21 +14,31 @@
 //     大きすぎると影が足元から浮く（peter-panning）ので、半径 + 定数の 0.8 倍に留めて上限を切る。
 //   - 影の中は真っ黒にしない。太陽（directLight）だけを影で消し、半球光（hemi）と環境マップ
 //     （scene.environment）はそのまま残す＝日陰は「空の色」で満たされる。
+//   - カスケードの割り方は CSM 既定の practical をやめて、**25m を起点にした等比**にする。
+//     practical は 1 枚目が 0〜64m と広く、足元（幹の根元・株の際）の影がテクセルに埋もれて出ない。
+//     等比なら 1 枚目が 0〜25m に締まって接地影が出て、最後の 1 枚が遠くまで伸びる。
+//     画面に映るテクセルの大きさ（texel/距離）はどのカスケードでもほぼ一定になる。
 import * as THREE from "three";
 import { CSM } from "three/examples/jsm/csm/CSM.js";
 import type { Env } from "./env";
 import type { QualitySettings } from "./quality";
 import { LAYER } from "./pipeline";
 
+/**
+ * 1 枚目のカスケードが受け持つ距離（m）。ここから maxFar まで等比で割る。
+ * 小さいほど足元の接地影が細かく出るが、2 枚目以降が粗くなる。
+ */
+const CASCADE_NEAR_M = 25;
+
 /** 近景で狙う半影の幅（m）。ここを大きくすると足元の接地影がぼやける */
-const PENUMBRA_NEAR = 0.03;
+const PENUMBRA_NEAR = 0.015;
 /**
  * 見ている距離 1m ごとに増える半影の幅（m）。
  * 本来の半影は「遮る物と地面の距離」で決まる（太陽の見かけの直径 0.53° ≒ 0.0093）が、
  * 遮蔽距離は分からないので視距離で代用する。遠景がふわりと柔らかくなり、
  * 大きくなったシャドウマップのテクセル（＝階段）もちょうど隠れる。
  */
-const PENUMBRA_RATE = 0.005;
+const PENUMBRA_RATE = 0.0045;
 /**
  * 日陰に残す太陽の割合。周りの日なたから跳ね返ってくる光（1 回目の相互反射）の代用で、
  * 半球光・環境マップだけでは屋外の日陰が実際より 2 倍暗くなるのを埋める。
@@ -80,6 +90,19 @@ function installPcfTaps(taps: number) {
   pcfChunkTaps = taps;
 }
 
+/**
+ * カスケードの分割。1 枚目の終わりを `CASCADE_NEAR_M` に固定し、そこから maxFar まで等比で割る。
+ * CSM 既定の practical（uniform と log の中点）は 1 枚目が 0〜64m と広く、
+ * 足元（幹の根元・株の際）の影がテクセルに埋もれて出ないので使わない。
+ * target には「far で割った 0..1」を cascades 個入れる（最後は必ず 1）。
+ */
+function geometricSplits(cascades: number, _near: number, far: number, target: number[]) {
+  const d0 = Math.max(4, Math.min(CASCADE_NEAR_M, far * 0.4));
+  const ratio = Math.pow(far / d0, 1 / Math.max(1, cascades - 1));
+  for (let i = 0; i < cascades - 1; i++) target.push(Math.min(1, (d0 * Math.pow(ratio, i)) / far));
+  target.push(1);
+}
+
 export class Lighting {
   csm: CSM;
   hemi: THREE.HemisphereLight;
@@ -96,7 +119,8 @@ export class Lighting {
     this.csm = new CSM({
       maxFar: q.shadowMaxFar,
       cascades: q.shadowCascades,
-      mode: "practical",
+      mode: "custom",
+      customSplitsCallback: geometricSplits,
       parent: scene,
       shadowMapSize: q.shadowMapSize,
       lightDirection: new THREE.Vector3(-0.3, -1, -0.2).normalize(),
@@ -177,8 +201,10 @@ export class Lighting {
       const radius = Math.min(this.pcf.maxRadius, Math.max(rMin, penumbra / texel));
       sh.radius = radius;
       sh.intensity = 1 - SHADOW_FILL;
-      // 法線オフセット: PCF が舐めるテクセル数に比例。浮き（peter-panning）を避けるため上限を切る
-      sh.normalBias = Math.min(1.1, texel * (radius + 0.9) * 0.8 * graze);
+      // 法線オフセット: PCF が舐めるテクセル数に比例。大きすぎると影が幹の根元から離れて
+      // 別の場所に落ちて見える（peter-panning。批評 R2 の ridge「影が根元から 80px ずれる」）ので、
+      // 「テクセル 2.6 枚」と 0.8m を上限に切る
+      sh.normalBias = Math.min(2.6 * texel, 0.8, texel * (radius + 0.9) * 0.6 * graze);
       // 深度バイアス（光の向きへのずらし）。three.js は影のカメラの奥行き（既定 1〜2000m）に対する
       // 比で持つので、テクセル幅の 0.36〜0.74 倍（m）を割って渡す
       const depthRange = Math.max(1, c.far - c.near);
