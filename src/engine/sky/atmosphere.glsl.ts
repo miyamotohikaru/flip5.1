@@ -23,7 +23,13 @@ export const ATMO_COMMON = /* glsl */ `
 #define PI 3.141592653589793
 #endif
 #endif
-#define FLIP_MIE_K vec3(0.727, 1.0, 1.40)
+// エアロゾル（靄）の波長依存を「散乱」と「吸収」に分ける。
+//   散乱 FLIP_MIE_S … Angstrom 指数 0.8（ほぼ灰色）。ここを青寄りにしても空が青くなるだけで橙にならない
+//   吸収 FLIP_MIE_A … 吸収 Angstrom 指数 4（砂塵・褐色炭素）。青だけを強く食う。
+//                     これで斜めに厚く通った直射光が赤くなり、その光を前方散乱した空が橙になる。
+//                     散乱を増やすのと違って空を明るくしないので、太陽まわりが白く飛ばない
+#define FLIP_MIE_S vec3(0.86, 1.0, 1.16)
+#define FLIP_MIE_A vec3(0.43, 1.0, 2.44)
 #define FLIP_RG 6360.0
 #define FLIP_RT 6460.0
 #define FLIP_TRANS_W 256.0
@@ -43,17 +49,16 @@ void flip_atmoMedium(float h, out vec3 sR, out vec3 sM, out vec3 sE){
   float hr = max(h, 0.0);
   float dR = exp(-hr / 8.0);
   float dM = exp(-hr / 2.5);
-  float dH = uSkyParams.z * exp(-max(h - uSkyParams.w, 0.0) / 1.0);
+  // 靄（境界層のエアロゾル）。高さスケール 1.6km。ここを厚くすると日没の橙の帯が地平から上へ広がる
+  float dH = uSkyParams.z * exp(-max(h - uSkyParams.w, 0.0) / 1.6);
   float dO = max(0.0, 1.0 - abs(hr - 25.0) / 15.0);
   // uLabSky = 実験室のつまみ（既定は全部 1 ＝ 何も変わらない）
   sR = vec3(5.802, 13.558, 33.1) * 1e-3 * dR * uLabSky.y;
   // ミー（エアロゾル）。黄昏に「橙の帯」が出る量。cpu.ts の extinction() と同じ値にすること
-  // FLIP_MIE_K = 波長依存（Angstrom 指数 1.5＝大陸性エアロゾル）。青いほど強く減るので、
-  // 厚い斜め経路を通った直射光と、その光を前方散乱した地平線の帯が橙になる
-  float mS = (8.0e-3 * dM + dH * 0.9) * uLabSky.x;
-  float mA = (1.0e-3 * dM + dH * 0.1) * uLabSky.x;
-  sM = FLIP_MIE_K * mS;
-  sE = sR + FLIP_MIE_K * (mS + mA) + vec3(0.65, 1.881, 0.085) * 1.0e-3 * dO * uLabSky.z;
+  float mS = (1.0e-2 * dM + dH * 0.70) * uLabSky.x;
+  float mA = (4.0e-3 * dM + dH * 0.75) * uLabSky.x;
+  sM = FLIP_MIE_S * mS;
+  sE = sR + FLIP_MIE_S * mS + FLIP_MIE_A * mA + vec3(0.65, 1.881, 0.085) * 1.0e-3 * dO * uLabSky.z;
 }
 float flip_phaseR(float c){ return 0.0596831 * (1.0 + c * c); }
 // Cornette-Shanks

@@ -28,8 +28,14 @@ float cl_heightGrad(float hf, float type, float undul){
 float cl_density(vec3 p, float hf, vec4 w, bool detail){
   float cov = cl_coverage(w);
   if (cov <= 0.002) return 0.0;
-  // 雲底のうねり（嵐・雨）。天気マップの細かいむら（w.b、λ≈3km）で底の高さを上下させる
-  float hg = cl_heightGrad(hf, w.g, uCloudShape.z * (w.b - 0.5) * 2.0);
+  // 雲底のうねり（嵐・雨）。天気マップの細かいむら（w.b、λ≈3km）と、
+  // 3D ノイズ λ≈300m の 2 オクターブ（detail の R/G）で底を上下させ、暗い塊とすき間を作る
+  float undul = 0.0;
+  if (uCloudShape.z > 0.001){
+    vec3 dn = texture(uNoiseDetail, (p + uWindOffset) * (1.0 / 300.0)).rgb;
+    undul = uCloudShape.z * ((w.b - 0.5) * 1.1 + (dn.r - 0.5) * 1.0 + (dn.g - 0.5) * 0.55);
+  }
+  float hg = cl_heightGrad(hf, w.g, undul);
   if (hg <= 0.002) return 0.0;
   vec3 sp = (p + uWindOffset) * (1.0 / 4200.0);
   vec4 s = texture(uNoiseShape, sp);

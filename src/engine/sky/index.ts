@@ -287,8 +287,8 @@ export class Sky {
     // ---- 大気: 靄（uFog）と地表の霧 ----
     const fogK = clamp((w.fog - 0.15) / 0.85, 0, 1);
     // 靄（エアロゾル）。太陽が低いほど厚い層を通るので、黄昏・薄明では 1.8 倍にして前方散乱を強める
-    const lowSun = 1 - smoothstep(0.02, 0.25, env.sunDir.y);
-    const hazeKm = 0.025 * (1 + 0.8 * lowSun) + 0.04 * Math.pow(fogK, 1.3);
+    const lowSun = 1 - smoothstep(0.03, 0.35, env.sunDir.y);
+    const hazeKm = 0.016 * (1 + 1.5 * lowSun) + 0.026 * Math.pow(fogK, 1.3);
     eu.uSkyParams.value.set(SHADOW_EXTENT, AERIAL_MAX, hazeKm, GROUND_ALT_KM);
     const mistK = smoothstep(0.5, 1.0, w.fog);
     const t = env.time;
@@ -317,7 +317,9 @@ export class Sky {
     // ---- 雲の層 ----
     // 嵐で 1.0 に飽和させない（飽和すると一枚板になって塊とすき間が消える）
     // 実験室の「雲量」「雲の高さ」はここに掛かる（既定は 1 ＝ 変化なし）
-    const cov = (0.16 + 1.0 * Math.pow(w.cloud, 1.05) - 0.20 * w.storm) * LAB.skyCloud;
+    // 下限 0.45 =「晴れでも晴天積雲がいくつか浮く」。日没に下面が橙に染まる雲が要る。
+    // 下限なので曇り・雨・嵐の雲量は変わらない
+    const cov = (Math.max(0.16 + 1.0 * Math.pow(w.cloud, 1.05), 0.55) - 0.20 * w.storm) * LAB.skyCloud;
     const base = (1900 - 900 * w.storm - 250 * w.rain) * LAB.skyCloudBase;
     const top = base + 1500 + 800 * w.cloud + 1500 * w.storm;
     const sigma = 0.03 + 0.025 * w.storm;
@@ -382,9 +384,12 @@ export class Sky {
     // 目安 = 地面の平均輝度 ＋ 太陽側の地平線の帯の輝度（夕焼けの明るい帯で露出が決まるように）
     const keyL = 0.064 * (luminance(sunGround) + luminance(skyEff) + 2.0 * luminance(moonGround)) + 0.1 * luminance(p.sunside) * (1 - 0.7 * coverG) + 1e-5;
     // 露出の上限。夜（太陽が −11° より下）は 6 で止める＝これ以上開くと月明かりの地面が
-    // 昼と同じ明るさになる（「青い昼」）。薄明（−11°〜−2°）は実際に夜の 10 倍以上明るいので 13 まで開く
+    // 昼と同じ明るさになる（「青い昼」）。この 6 のとき ?dbg=noauto の夜の地面は表示輝度 0.024〜0.04 で、
+    // 批評R2 の目標（0.02〜0.04）ちょうど。実際の画が明るいのは post の夜の自動露出
+    // （uAutoRef = 0.036, strength 1.0）が上から ×8 掛けているためで、ここを下げても打ち消される。
+    // 薄明（−11°〜−2°）は実際に夜の 10 倍以上明るいので 13 まで開く
     const nightCap = 6 + 7 * smoothstep(-0.20, -0.03, env.sunDir.y);
-    const target = clamp(0.8 * Math.pow(0.24 / keyL, 0.65), 0.5, nightCap);
+    const target = clamp(0.8 * Math.pow(0.30 / keyL, 0.65), 0.5, nightCap);
     if (this.exposure < 0) this.exposure = target;
     else this.exposure += (target - this.exposure) * (1 - Math.exp(-dt * 2.0));
     env.exposure = this.exposure * this.exposureBias;
