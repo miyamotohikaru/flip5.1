@@ -127,13 +127,10 @@ export class Water {
     this.mesh.renderOrder = 0;
     scene.add(this.mesh);
 
-    // 映り込みは MSAA 無しだと、映った稜線・木立が本編より粗いギザギザになり、
-    // 拡大すると「ブロック」に見える（批評ラウンド2）。本編と同じ MSAA を掛ける
     this.reflRT = new THREE.WebGLRenderTarget(1, 1, {
       type: THREE.HalfFloatType,
       depthBuffer: true,
       stencilBuffer: false,
-      samples: q.msaaSamples,
       generateMipmaps: true,
       minFilter: THREE.LinearMipmapLinearFilter,
       magFilter: THREE.LinearFilter,

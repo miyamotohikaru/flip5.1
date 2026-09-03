@@ -249,7 +249,10 @@ void main(){
     float env = smoothstep(0.0, 0.6, vDepthA) * (1.0 - smoothstep(4.0, 30.0, vDepthA));
     float amp = (0.012 + 0.05 * smoothstep(1.0, 10.0, wind)) * env;
     float k = 6.2831853 / 9.0;
-    slope += -amp * k * sin(sw.y) * vShoreDir * (1.0 - smoothstep(40.0, 140.0, dist));
+    // 寄せ波は波長 9m しかないので、浅い視線で 1 画素が波長に近づくと
+    // 「等間隔の横縞」に潰れる（夜の湖面のバンディング）。画素の足跡で消す
+    slope += -amp * k * sin(sw.y) * vShoreDir
+           * (1.0 - smoothstep(40.0, 140.0, dist)) * (1.0 - smoothstep(0.30, 1.4, fp));
   }
   // 雨の波紋（法線のリング）。輪の波長は 10cm しかないので、1 画素で解けなくなったら描かない
   // （描くと 1 画素ごとに法線が暴れ、スペキュラが 2px の市松ノイズになる）。約 10m 以遠で切れる
@@ -343,7 +346,11 @@ void main(){
     float sigmaR = sqrt(0.30 * var + farMix * varCap + 0.30 * varRing + 0.00004);
     float pixAng = 2.0 * uWaterB.y / uReflSize.y;
     float blurPx = 2.0 * sigmaR / pixAng;
-    float lod = clamp(log2(max(blurPx * max(sinDown, 0.06), 1.0)), 0.0, uWaterA.y);
+    // タップ 5 本の隙間をミップで埋める。埋めないと明るい物が「等間隔の横縞」に分裂する
+    // （夜の湖面のバンディング。隙間 = 0.5·spread、その 0.45 倍をならす）
+    float tapGapPx = 0.5 * min(2.0 * sigmaR, 0.10) / pixAng;
+    float lod = clamp(max(log2(max(blurPx * max(sinDown, 0.06), 1.0)),
+                          log2(max(tapGapPx * 0.45, 1.0))), 0.0, uWaterA.y);
     // 5 タップの縦ずらしを広げすぎると、映った山の形まで平らな灰色に潰れる（雨・曇天で
     // 「映り込みが消えた」に見える）。広い方のぼけはミップ（lod）に任せ、ずらしは 0.10 rad まで
     float spread = min(2.0 * sigmaR, 0.10);
