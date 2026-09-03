@@ -13,7 +13,7 @@ const DIM = "rgba(242, 239, 232, 0.62)";
 const ACCENT = "#ffb847";
 const FORMULA = "rgba(140, 217, 255, 0.55)";
 
-const TEXT_JP = "数式の絶景画像枚Dモデル個音源全部数式です。裏返すと、確かめられます制作こす.くま×ふりっぷ／0123456789 MATHSCAPEClaudeFable";
+const TEXT_JP = "数式の絶景画像枚Dモデル個音源全部数式です。ふりっぷすると、確かめられます制作こす.くま×ふりっぷ／0123456789 MATHSCAPEClaudeFable";
 
 async function loadJapaneseFont(text: string): Promise<ArrayBuffer | null> {
   const ctrl = new AbortController();
@@ -91,7 +91,7 @@ const Card = ({ jp }: { jp: boolean }) => (
         )}
       </div>
       <div style={{ marginTop: 22, fontSize: 26, letterSpacing: 2, color: DIM, display: "flex" }}>
-        {jp ? "全部、数式です。裏返すと、確かめられます。" : "Everything is a formula. Flip it to check."}
+        {jp ? "全部、数式です。ふりっぷすると、確かめられます。" : "Everything is a formula. Flip it to check."}
       </div>
     </div>
 

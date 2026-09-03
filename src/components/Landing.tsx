@@ -42,7 +42,7 @@ export default function Landing({ phase, progress, heightmapRes, isMobile, onEnt
           <br />
           全部、<strong>数式</strong>です。
           <MobileBreak />
-          裏返すと、確かめられます。
+          ふりっぷすると、確かめられます。
         </p>
 
         <div className="landing-actions">
@@ -71,9 +71,9 @@ export default function Landing({ phase, progress, heightmapRes, isMobile, onEnt
       <div className="landing-foot">
         <span className="landing-howto">
           {isMobile ? (
-            <>左で歩く ／ 右で見回す ／ 画面のボタンで裏返す</>
+            <>左で歩く ／ 右で見回す ／ 画面のボタンでふりっぷ</>
           ) : (
-            <>WASD 歩く ／ ドラッグで見回す ／ F 裏返す ／ P 写真</>
+            <>WASD 歩く ／ ドラッグで見回す ／ F ふりっぷ ／ P 写真</>
           )}
         </span>
         {/* 作者の指示（2026-09-03）で制作クレジットは外した。「この風景について」の中には残してある */}

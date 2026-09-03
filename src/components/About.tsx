@@ -1,6 +1,6 @@
 "use client";
 // 「この風景について」。専門知識ゼロの人が読んで分かる言葉で、
-// 何をひっくり返したか／中に何が入っているか／裏返すとは／どう作ったか、を書く。
+// 何をひっくり返したか／中に何が入っているか／ふりっぷするとは／どう作ったか、を書く。
 import { useEffect, useRef } from "react";
 import MobileBreak from "./MobileBreak";
 import SeedFinale from "./SeedFinale";
@@ -121,9 +121,9 @@ export default function About({ open, onClose, sourceLines, isMobile, world }: P
           スマホでも動きます。
         </p>
 
-        <p className="about-label">「裏返す」とは</p>
+        <p className="about-label">「ふりっぷする」とは</p>
         <p>
-          {isMobile ? "画面の「裏返す」ボタンを押すと、" : "「裏返す」ボタン（パソコンは F キー）を押すと、"}
+          {isMobile ? "画面の「ふりっぷする」ボタンを押すと、" : "「ふりっぷする」ボタン（パソコンは F キー）を押すと、"}
           <br />
           足元から波が広がって、
           <MobileBreak />
@@ -201,7 +201,7 @@ export default function About({ open, onClose, sourceLines, isMobile, world }: P
             ここは、自分の足で入っていけます。
           </li>
           <li>
-            <b>裏返せる。</b>
+            <b>ふりっぷできる。</b>
             素材ゼロは普通、
             <MobileBreak />
             ソースを読める人しか確かめられません。
@@ -246,7 +246,7 @@ export default function About({ open, onClose, sourceLines, isMobile, world }: P
             <li>
               右上のボタンで
               <MobileBreak />
-              裏返す・写真・音・天気・時刻
+              ふりっぷする・写真・音・天気・時刻
             </li>
             <li>
               「いじる」で数式のつまみ
@@ -263,7 +263,7 @@ export default function About({ open, onClose, sourceLines, isMobile, world }: P
               <kbd>D</kbd> 歩く ／ <kbd>Shift</kbd> 走る ／ ドラッグで見回す
             </li>
             <li>
-              <kbd>F</kbd> 裏返す ／ <kbd>P</kbd> 写真 ／ <kbd>M</kbd> 音 ／ <kbd>T</kbd> 時間を進める
+              <kbd>F</kbd> ふりっぷ ／ <kbd>P</kbd> 写真 ／ <kbd>M</kbd> 音 ／ <kbd>T</kbd> 時間を進める
             </li>
             <li>
               <kbd>L</kbd> 数式をいじる ／ <kbd>H</kbd> 表示を全部消す ／ <kbd>Esc</kbd> マウス固定をやめる

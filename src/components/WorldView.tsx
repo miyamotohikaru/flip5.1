@@ -210,7 +210,7 @@ export default function WorldView({ sourceLines }: { sourceLines: number | null 
     return () => window.removeEventListener("keydown", onKey);
   }, [enter, toggleMute, openAbout, toggleLab]);
 
-  // 携帯では実験室を開いている間、下中央の「裏返す」を隠す（CSS が .lab-open を見る）
+  // 携帯では実験室を開いている間、下中央の「ふりっぷする」を隠す（CSS が .lab-open を見る）
   useEffect(() => {
     document.body.classList.toggle("lab-open", lab);
     return () => document.body.classList.remove("lab-open");

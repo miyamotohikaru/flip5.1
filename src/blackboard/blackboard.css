@@ -290,9 +290,11 @@ body.bb-on .loading-log {
   height: auto;
 }
 @media screen and (max-width: 620px) {
+  /* 携帯では下に「ふりっぷする」の主ボタン・ジャイロ・操作ヒントが並ぶので、その上へ逃がす。
+     幅も詰めて、画面の下半分を文字で埋めない（批評R4「文字と UI が画面の 69%」） */
   .bbnow {
-    max-width: calc(100vw - 32px);
-    bottom: calc(108px + var(--safe-b, 0px));
+    max-width: calc(100vw - 24px);
+    bottom: calc(196px + var(--safe-b, 0px));
   }
   .bbnow-head {
     font-size: 10.5px;

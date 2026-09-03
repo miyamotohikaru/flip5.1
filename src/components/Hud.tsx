@@ -1,7 +1,7 @@
 "use client";
 // HUD。細く、上品に。風景の邪魔をしない。
 // 左上: 題字と「画像 0 枚 ／ 3Dモデル 0 個 ／ 音源 0 個」（この作品の看板。本当に 0）
-// 右上: 裏返す／写真／音／？、天気 5 種、時刻スライダー
+// 右上: ふりっぷする／写真／音／？、天気 5 種、時刻スライダー
 // 下  : 操作ヒント（初回だけ 8 秒）
 import { useState } from "react";
 import type { Stats } from "@/engine/world";
@@ -63,8 +63,8 @@ export default function Hud(p: HudProps) {
 
       <div className="hud-tr">
         <div className="row">
-          <button className={`btn flip ${p.flip ? "on" : ""}`} onClick={p.onFlip} aria-pressed={p.flip} aria-label={p.flip ? "もどす（F）" : "裏返す（F）"}>
-            {p.flip ? "もどす" : "裏返す"}
+          <button className={`btn flip ${p.flip ? "on" : ""}`} onClick={p.onFlip} aria-pressed={p.flip} aria-label={p.flip ? "もどす（F）" : "ふりっぷする（F）"}>
+            {p.flip ? "もどす" : "ふりっぷする"}
           </button>
           <button className="btn" onClick={p.onPhoto} aria-label="写真を撮る（P）">
             写真
@@ -117,8 +117,8 @@ export default function Hud(p: HudProps) {
       </div>
 
       {p.isMobile && (
-        <button className={`flip-thumb ${p.flip ? "on" : ""}`} onClick={p.onFlip} aria-pressed={p.flip} aria-label={p.flip ? "もどす" : "裏返す"}>
-          {p.flip ? "もどす" : "裏返す"}
+        <button className={`flip-thumb ${p.flip ? "on" : ""}`} onClick={p.onFlip} aria-pressed={p.flip} aria-label={p.flip ? "もどす" : "ふりっぷする"}>
+          {p.flip ? "もどす" : "ふりっぷする"}
         </button>
       )}
 
@@ -130,7 +130,7 @@ export default function Hud(p: HudProps) {
         <div className={`hud-hint ${p.hint === "fade" ? "fade" : ""}`} aria-hidden>
           {p.isMobile
             ? "左で歩く ／ 右で見回す"
-            : "ドラッグで見回す ／ WASD 歩く ／ Shift 走る ／ F 裏返す ／ P 写真 ／ H 表示を消す"}
+            : "ドラッグで見回す ／ WASD 歩く ／ Shift 走る ／ F ふりっぷ ／ P 写真 ／ H 表示を消す"}
         </div>
       )}
 
