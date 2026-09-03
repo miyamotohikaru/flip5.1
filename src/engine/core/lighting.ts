@@ -145,10 +145,18 @@ export class Lighting {
   moon: THREE.DirectionalLight;
   /** カスケードごとの影の実測値（調査・報告用。`window.__flip.lighting.shadowInfo` で読める） */
   readonly shadowInfo: { texel: number; penumbra: number; radius: number; normalBias: number }[] = [];
+  /** ?dbg=noshadow: CSM の落ち影を切る（切り分け用） */
+  private noShadow = false;
   private tmp = new THREE.Vector3();
   private pcf: { maxRadius: number; taps: number };
 
   constructor(public scene: THREE.Scene, public env: Env, public q: QualitySettings) {
+    // 調査用（批評が影の寄与を切り分けるための口）:
+    //   ?dbg=noshadow   … CSM の落ち影を切る（山の影と林の帯は残る）
+    //   ?dbg=nosunocc   … 林が落とす帯を切る（CSM の落ち影と山の影は残る）
+    const dbg = typeof location !== "undefined" ? (new URLSearchParams(location.search).get("dbg") ?? "") : "";
+    this.noShadow = dbg.split(",").includes("noshadow");
+    if (dbg.split(",").includes("nosunocc")) env.uniforms.uSunOccParams.value.x = 0;
     this.pcf = PCF[q.tier] ?? PCF.high;
     // マテリアルが 1 つでもコンパイルされる前に差し替える（Lighting は Terrain/Vegetation より先に作られる）
     installPcfTaps(this.pcf.taps);
@@ -240,7 +248,7 @@ export class Lighting {
       const rMin = 1.5 + 1.0 * t;
       const radius = Math.min(this.pcf.maxRadius, Math.max(rMin, penumbra / texel));
       sh.radius = radius;
-      sh.intensity = 1 - SHADOW_FILL;
+      sh.intensity = this.noShadow ? 0 : 1 - SHADOW_FILL;
       // 法線オフセット: PCF が舐めるテクセル数に比例。大きすぎると影が幹の根元から離れて
       // 別の場所に落ちて見える（peter-panning。批評 R2 の ridge「影が根元から 80px ずれる」）ので、
       // 「テクセル 2.6 枚」と 0.8m を上限に切る
