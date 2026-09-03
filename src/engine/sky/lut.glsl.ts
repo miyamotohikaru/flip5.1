@@ -101,7 +101,9 @@ uniform vec3 uSunE;
 uniform vec3 uMoonE;
 // 多重散乱の強さ。Hillaire の Psi は 2 次以降を「等方位相・無吸収」で積むので、
 // エアロゾルが多い（ω0≈0.9）大気では過大になる。1.0 のままだと地平線が灰色に濁って黄昏の橙が消える。
+#ifndef FLIP_MS
 #define FLIP_MS 0.5
+#endif
 vec3 flip_msLookup(float r, float muS){
   float sx = sign(muS) * sqrt(abs(muS));
   vec2 uv = vec2(sx * 0.5 + 0.5, (r - FLIP_RG) / (FLIP_RT - FLIP_RG));

@@ -22,7 +22,7 @@ import { SKY_VERT, SKY_FRAG } from "./sky.glsl";
 import { ATMO, transmittance, moonDirection, luminance } from "./cpu";
 import { seedOffset } from "../core/seed";
 import { LAB } from "../lab/store";
-import { SKY_DBG_PREFIX } from "./debug";
+import { SKY_DBG_PREFIX, SKY_LIGHT_DBG, SKY_DBG } from "./debug";
 
 type U = Record<string, THREE.IUniform>;
 
@@ -294,8 +294,8 @@ export class Sky {
     eu.uSkyParams.value.set(SHADOW_EXTENT, AERIAL_MAX, hazeKm, GROUND_ALT_KM);
     // 相対湿度（エアロゾルの吸湿成長。GLSL の flip_atmoMedium の wet と同じ式）。
     // ミストの層と同じ曲線を使う ＝「霧が出るほど湿っている」
-    const wet = smoothstep(0.5, 1.0, w.fog);
-    const mistK = wet;
+    const wet = SKY_DBG.wetR7 ? smoothstep(0.025, 0.075, hazeKm) : smoothstep(0.5, 1.0, w.fog);
+    const mistK = smoothstep(0.5, 1.0, w.fog);
     const t = env.time;
     // 第1層: 広いミスト（H=22m）。第2層: 湖面に張り付く濃い層（H=6m）。雨は薄い第1層だけ
     eu.uSkyFog.value.set(3.0e-3 * mistK + 3e-4 * w.rain, 22 + 12 * w.storm, w.windDir.x * w.wind * 0.6 * t, w.windDir.y * w.wind * 0.6 * t);
@@ -373,6 +373,9 @@ export class Sky {
         p.groundIrr.setRGB(0.28, 0.27, 0.22).multiply(this.tmpC.copy(sunGround).add(skyEff).add(moonGround));
     env.skyAmbient.copy(skyEff).multiplyScalar(0.5);
     env.groundAmbient.copy(p.groundIrr).multiplyScalar(0.5);
+    // 切り分け用（?dbg=nosun / noamb）。式は変えず、光源の強さだけをゼロにする
+    if (SKY_LIGHT_DBG.noSun) { env.sunIntensity = 0; env.moonIntensity = 0; }
+    if (SKY_LIGHT_DBG.noAmb) { env.skyAmbient.setRGB(0, 0, 0); env.groundAmbient.setRGB(0, 0, 0); }
     // 霧に当たる光: 上半球の平均放射輝度（照度/π）が主。地面からの照り返しを少し
     eu.uSkyFogLight.value.copy(skyEff).multiplyScalar(0.85 / Math.PI).add(this.tmpC.copy(p.groundIrr).multiplyScalar(0.15 / Math.PI));
     const stormDark = 1 - 0.65 * w.storm;
@@ -469,7 +472,9 @@ export class Sky {
     const hazeKm = this.env.uniforms.uSkyParams.value.z;
     // 実験室で媒質（ミー・レイリー・オゾン）を動かしたら、透過率と多重散乱の LUT も焼き直す。
     // 湿度（uFog）も媒質を変える（吸湿成長）ので、同じ条件で見る
-    const wet = smoothstep(0.5, 1.0, this.env.uniforms.uFog.value as number);
+    const wet = SKY_DBG.wetR7
+      ? smoothstep(0.025, 0.075, hazeKm)
+      : smoothstep(0.5, 1.0, this.env.uniforms.uFog.value as number);
     const lb = this.env.uniforms.uLabSky.value as THREE.Vector4;
     const labKey = lb.x + lb.y * 7.13 + lb.z * 31.77;
     if (Math.abs(hazeKm - b.hazeKm) > 0.004 || Math.abs(wet - b.wet) > 0.02 || labKey !== b.lab) {
@@ -558,7 +563,7 @@ export class Sky {
     this.envRT = rt;
     this.scene.environment = rt.texture;
     // 半球光（env.skyAmbient）と二重にならないよう半分ずつ。地形が環境マップだけを使うなら 1.0 にして skyAmbient を 0 に
-    this.scene.environmentIntensity = 0.5;
+    this.scene.environmentIntensity = SKY_LIGHT_DBG.noAmb ? 0 : 0.5;
     if (old) old.dispose();
   }
 }

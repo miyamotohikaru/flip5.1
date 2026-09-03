@@ -44,6 +44,10 @@ export const ATMO_COMMON = /* glsl */ `
 #ifndef FLIP_MIE_GROW
 #define FLIP_MIE_GROW 0.0
 #endif
+// 1 にすると R7 の式（湿度を hazeKm で読む）に戻す。?dbg=skyr7 の前後比較用。既定 0 で畳まれる
+#ifndef FLIP_WET_R7
+#define FLIP_WET_R7 0.0
+#endif
 #define FLIP_RG 6360.0
 #define FLIP_RT 6460.0
 #define FLIP_TRANS_W 256.0
@@ -83,7 +87,7 @@ void flip_atmoMedium(float h, out vec3 sR, out vec3 sM, out vec3 sE){
   //   ・吸収する芯（砂塵・褐色炭素）は無くならない。むしろ殻がレンズになって**吸収は強まる**
   //     （coating enhancement, Bond & Bergstrom 2006 の Eabs ≈ 1.3〜1.6）。
   // R5 はここを逆向き（湿ると吸収が消える）にしていたので、薄明の橙が丸ごと抜けた。
-  float wet = smoothstep(0.5, 1.0, uFog);
+  float wet = mix(smoothstep(0.5, 1.0, uFog), smoothstep(0.025, 0.075, uSkyParams.z), FLIP_WET_R7);
   float absK = mix(FLIP_ABSK_DRY, FLIP_ABSK_WET, wet);
   float mS = (1.0e-2 * dM + dH * 0.70) * uLabSky.x;
   float mW = dH * FLIP_MIE_GROW * wet * uLabSky.x;
