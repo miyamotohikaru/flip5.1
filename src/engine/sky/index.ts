@@ -384,7 +384,7 @@ export class Sky {
     // 露出の上限。夜（太陽が −11° より下）は 6 で止める＝これ以上開くと月明かりの地面が
     // 昼と同じ明るさになる（「青い昼」）。薄明（−11°〜−2°）は実際に夜の 10 倍以上明るいので 13 まで開く
     const nightCap = 6 + 7 * smoothstep(-0.20, -0.03, env.sunDir.y);
-    const target = clamp(0.8 * Math.pow(0.24 / keyL, 0.65), 0.5, nightCap);
+    const target = clamp(0.8 * Math.pow(0.30 / keyL, 0.65), 0.5, nightCap);
     if (this.exposure < 0) this.exposure = target;
     else this.exposure += (target - this.exposure) * (1 - Math.exp(-dt * 2.0));
     env.exposure = this.exposure * this.exposureBias;
