@@ -30,7 +30,7 @@ function tierSettings(q: QualitySettings): Tier {
     case "ultra":
       return { r0: 65, r1: 170, band: 10, capNear: 320, capMid: 1100, cell: 7.5, impCell: 252, chunk: 1024, shadowR: 330, capShadow: 2400 };
     default:
-      return { r0: 44, r1: 104, band: 9, capNear: 220, capMid: 640, cell: 8, impCell: 252, chunk: 1024, shadowR: 280, capShadow: 820 };
+      return { r0: 40, r1: 104, band: 8, capNear: 220, capMid: 640, cell: 8, impCell: 252, chunk: 1024, shadowR: 280, capShadow: 700 };
   }
 }
 

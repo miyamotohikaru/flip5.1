@@ -155,10 +155,14 @@ export function makeNeedleAtlas(cell = 256): THREE.CanvasTexture {
     }
   }
   img.data.set(out);
-  // アルファを 2 テクセル膨張させる。針と針の 1〜2 テクセルの隙間が、明るい空を背にすると
-  // 「白いピンホール」として点で読めるため。384px のコマで 2 テクセル＝画面上 1px 未満で、
-  // 輪郭はほとんど変わらない
-  dilateAlpha(img, 3);
+  // ここでアルファを膨張させてはいけない。針と針の隙間が埋まって、
+  // 1 枚のカードが「すりガラスの半透明な板」に見える（統合担当の指摘・R6）。
+  // ピンホールは穴を塞ぐのではなく、カードを小さく・多くして葉を増やすことで減らす
+  dilateAlpha(img, 1);
+  // アルファの縁だけをぼかす（膨張ではない）。面は触らないので「すりガラスの板」にはならず、
+  // 縁が中間値になることで MSAA のアルファ→カバレッジが効き、
+  // カードとカードの間に残る 1px の空の筋が半分の被覆になって白く抜けなくなる
+  blurAlphaEdge(img, 0);
   ctx.putImageData(img, 0, 0);
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
@@ -177,6 +181,31 @@ export function makeNeedleAtlas(cell = 256): THREE.CanvasTexture {
 
 /** 葉カードのアルファテストのしきい値。ミップ生成と materials の alphaTest はこの値で揃える。 */
 export const ALPHA_CUTOFF = 0.30;
+
+/** アルファだけを 3x3 の平均でぼかす（色は触らない）。縁が中間値になり MSAA が効く。 */
+function blurAlphaEdge(img: ImageData, n: number) {
+  const w = img.width, h = img.height;
+  for (let it = 0; it < n; it++) {
+    const src = new Uint8ClampedArray(img.data);
+    const d = img.data;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        let sum = 0, cnt = 0;
+        for (let oy = -1; oy <= 1; oy++) {
+          const yy = y + oy;
+          if (yy < 0 || yy >= h) continue;
+          for (let ox = -1; ox <= 1; ox++) {
+            const xx = x + ox;
+            if (xx < 0 || xx >= w) continue;
+            sum += src[(yy * w + xx) * 4 + 3];
+            cnt++;
+          }
+        }
+        d[(y * w + x) * 4 + 3] = sum / cnt;
+      }
+    }
+  }
+}
 
 /** アルファを n テクセル膨張（3x3 の最大アルファのテクセルを色ごと採る）。内側の穴を塞ぐ。 */
 function dilateAlpha(img: ImageData, n: number) {

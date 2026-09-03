@@ -71,7 +71,7 @@ function ringDensity(tier: string): number[] {
     case "low": return [110, 26, 8, 0.55];
     case "mid": return [150, 34, 11, 0.6];
     case "ultra": return [320, 115, 38, 1.05];
-    default: return [250, 88, 27, 0.52];
+    default: return [250, 84, 24, 0.40];
   }
 }
 

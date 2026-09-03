@@ -33,10 +33,10 @@ export type TreeVariant = {
 // 段数を減らして 1 段あたりの枝を増やし、枝ごとに高さ・長さ・垂れ角をばらけさせると、
 // 段々の皿ではなく「もじゃもじゃした円錐」になる。
 export const TREE_VARIANTS: TreeVariant[] = [
-  { H: 15, crownBase: 0.18, lmax: 0.16, whorls: 9, perWhorl: 11, sideRatio: 0.50, seed: 1 },
-  { H: 12.5, crownBase: 0.05, lmax: 0.20, whorls: 9, perWhorl: 10, sideRatio: 0.50, seed: 2 },
-  { H: 17, crownBase: 0.12, lmax: 0.165, whorls: 10, perWhorl: 11, sideRatio: 0.45, seed: 3 },
-  { H: 10, crownBase: 0.03, lmax: 0.22, whorls: 8, perWhorl: 10, sideRatio: 0.55, seed: 4 },
+  { H: 15, crownBase: 0.16, lmax: 0.155, whorls: 13, perWhorl: 9, sideRatio: 0.50, seed: 1 },
+  { H: 12.5, crownBase: 0.05, lmax: 0.19, whorls: 13, perWhorl: 7, sideRatio: 0.50, seed: 2 },
+  { H: 17, crownBase: 0.10, lmax: 0.16, whorls: 14, perWhorl: 9, sideRatio: 0.45, seed: 3 },
+  { H: 10, crownBase: 0.03, lmax: 0.21, whorls: 12, perWhorl: 7, sideRatio: 0.55, seed: 4 },
 ];
 
 export type TreeGeo = { geometry: THREE.BufferGeometry; H: number; radius: number; topY: number; tris: number };
@@ -190,7 +190,7 @@ export function buildConifer(v: TreeVariant, lod: 0 | 1): TreeGeo {
   const branch = (t: number, u: number, L: number, az: number, flex: number, spire: boolean) => {
     const a0 = axisAt(t), rt = radiusAt(t);
     // 垂れ角 15+35(1-u)° ±10°
-    const droop = ((15 + 35 * (1 - u)) * Math.PI) / 180 + (rnd() - 0.5) * 0.35;
+    const droop = ((24 + 42 * (1 - u)) * Math.PI) / 180 + (rnd() - 0.5) * 0.35;
     const Lb = Math.max(L * (0.55 + 0.9 * rnd()), 0.28); // 枝長 ±45%
     maxR = Math.max(maxR, Lb * Math.cos(droop) + rt);
     const cd = Math.cos(droop), sd = Math.sin(droop);
@@ -201,17 +201,24 @@ export function buildConifer(v: TreeVariant, lod: 0 | 1): TreeGeo {
     // 枝 1 本を「大きな 1 枚のカード」で表すと、10〜40m で紙を貼った棒に見える（批評 R3 の 3 位）。
     // 面積 1/3 の小さなカードを 3 枚、枝に沿って位置をずらし、向きと捻りを変えて出す。
     // 総面積はほぼ同じだが、輪郭が細かくなって「もじゃもじゃした枝」に見える
-    const nCards = lod === 0 ? (spire ? 2 : 5) : 1;
+    // 1 枚が大きいと「板」に見える。面積を 1/9 にして枚数を増やす（枝 1 本 = 7 枚）
+    const nCards = lod === 0 ? (spire ? 4 : 9) : 1;
     for (let ci = 0; ci < nCards; ci++) {
-      const along = nCards === 1 ? 0 : (0.02 + (0.82 / nCards) * ci) * Lb;
-      const len = nCards === 1 ? Lb : Lb * (0.52 + 0.24 * rnd()) * (1 - 0.10 * ci);
+      const along = nCards === 1 ? 0 : (0.02 + (0.88 / nCards) * ci) * Lb;
+      const len = nCards === 1 ? Lb : Lb * (0.30 + 0.13 * rnd()) * (1 - 0.05 * ci);
       // 枝の向きから左右に振る（枝先が扇状に分かれる）
-      const yawOff = nCards === 1 ? 0 : (rnd() - 0.5) * 0.95;
+      const yawOff = nCards === 1 ? 0 : (rnd() - 0.5) * 0.62;
       const dc = d.clone().applyAxisAngle(up, yawOff).normalize();
+      // いちばん内側の 2 枚は幹に沿って強く垂らす。これが無いと幹が上から下まで
+      // 1 本の棒として見通せる（統合担当の指摘・R6）
+      if (nCards > 1 && ci < 3) {
+        const side = new THREE.Vector3().crossVectors(dc, up).normalize();
+        dc.applyAxisAngle(side, -(0.45 + 0.25 * rnd())).normalize();
+      }
       // 幅方向は「下」。カードごとに捻りを変えて、平らな面が揃わないようにする
       let dn = new THREE.Vector3().crossVectors(new THREE.Vector3().crossVectors(dc, up).normalize(), dc).normalize();
       if (dn.y > 0) dn = dn.negate();
-      dn.applyAxisAngle(dc, (rnd() - 0.5) * (nCards === 1 ? 0.8 : 1.1));
+      dn.applyAxisAngle(dc, (rnd() - 0.5) * (nCards === 1 ? 0.8 : 0.75));
       const cell = nCards === 1 ? 1 : ci === 1 ? (rnd() < 0.5 ? 0 : 3) : 1;
       const v0 = cell === 1 ? 0.32 : 0.14, v1 = cell === 1 ? 0.92 : 0.86;
       addCard(
@@ -223,7 +230,8 @@ export function buildConifer(v: TreeVariant, lod: 0 | 1): TreeGeo {
   for (let j = 0; j < nW; j++) {
     const u = nW > 1 ? j / (nW - 1) : 0;
     const tW = v.crownBase + spanT * u + (rnd() - 0.5) * 0.10;
-    const L = v.lmax * H * (1 - 0.82 * Math.pow(u, 0.95));
+    // 上ほど短くするが、落としすぎると樹冠がすかすかで幹が上から下まで見通せる
+    const L = v.lmax * H * (1 - 0.62 * Math.pow(u, 0.8));
     const nB = lod === 0 ? v.perWhorl + (rnd() < 0.5 ? 1 : 0) : Math.max(3, Math.round(v.perWhorl * 0.36));
     for (let b = 0; b < nB; b++) {
       // 黄金角で回して、段どうしの枝が同じ方位に並ばないようにする
@@ -234,7 +242,7 @@ export function buildConifer(v: TreeVariant, lod: 0 | 1): TreeGeo {
   }
   // 梢: 交差カード 2 枚だと電球に見えるので、短い輪生 3 段の小さな円錐にする
   {
-    const tips = lod === 0 ? [0.88, 0.935, 0.975] : [0.92];
+    const tips = lod === 0 ? [0.88, 0.925, 0.962, 0.992] : [0.92];
     const nb = lod === 0 ? 5 : 3;
     for (let s = 0; s < tips.length; s++) {
       const t0 = tips[s];
@@ -248,8 +256,10 @@ export function buildConifer(v: TreeVariant, lod: 0 | 1): TreeGeo {
     }
     // 先端の一本（頂芽）
     const a0 = axisAt(0.975);
-    const wS = 0.022 * H;
-    addCard(a0.x, a0.y, a0.z, up, new THREE.Vector3(1, 0, 0), (1.035 - 0.975) * H, -wS, wS, 2, 0, 1, 1.0, 0.3, true);
+    // 頂芽の縦カードは置かない。梢のテクスチャが潰れて、40〜70m の木の頭に
+    // 「緑の矩形が乗った」ように見えるため（統合担当の指摘・R6）。
+    // 梢は下の 3 段の短い輪生でつくる
+    void a0;
   }
 
   const geo = new THREE.BufferGeometry();
@@ -392,7 +402,9 @@ float veg_treeAO(){
   // 樹冠の中ほど・下ほど暗い（自己遮蔽）。枝は幹側ほど暗い
   float hN = clamp(vBark.y / uTreeH, 0.0, 1.0);
   if (vTree.z > 0.5) return (0.42 + 0.58 * fract(vTreeUv.x * 2.0)) * (0.55 + 0.45 * smoothstep(0.05, 0.9, hN));
-  return (0.5 + 0.5 * smoothstep(0.0, 0.35, hN)) * (0.6 + 0.4 * smoothstep(0.25, 0.95, hN));
+  // 幹は樹冠の中ほど・上ほど**暗い**（葉に囲まれて光が届かない）。
+  // 逆にすると幹が明るい棒として樹冠を突き抜けて見える
+  return mix(0.88, 0.26, smoothstep(0.04, 0.34, hN));
 }
 `;
 
