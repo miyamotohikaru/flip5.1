@@ -34,9 +34,12 @@ const start = startPosition();
 
 export const SHOTS: ShotDef[] = [
   { name: "golden", desc: "開始地点・夕方の湖と山脈", hour: 17.4, weather: "clear", pos: [start.x, start.z], look: [0, 4] },
-  { name: "noon", desc: "真昼の草地と針葉樹", hour: 12.2, weather: "clear", pos: [start.x + 60, start.z + 30], look: [-35, -2] },
+  // 2026-09-03 変更: 旧位置は太陽がカメラの真後ろ 23°で、影が物陰に隠れ「昼なのに影が無い」画になっていた。
+  // 木の近く・太陽が横から当たる向きへ移し、落ち影が見える構図にした（影の仕組みは変えていない）。
+  { name: "noon", desc: "真昼の草地と針葉樹", hour: 12.2, weather: "clear", pos: [start.x + 260, start.z + 350], look: [100, 2] },
   { name: "dawn", desc: "夜明けの霧の湖", hour: 5.9, weather: "mist", pos: [start.x - 40, start.z + 10], look: [20, 3] },
-  { name: "cloudy", desc: "曇りの午後・斜面の森", hour: 14.5, weather: "cloudy", pos: [start.x + 220, start.z + 180], look: [-60, 6] },
+  // 2026-09-03 変更: 同上（旧位置は太陽がカメラの真後ろ 23°）。
+  { name: "cloudy", desc: "曇りの午後・斜面の森", hour: 14.5, weather: "cloudy", pos: [start.x + 430, start.z + 470], look: [128, 3] },
   { name: "rain", desc: "雨の湖岸", hour: 15.0, weather: "rain", pos: [start.x, start.z - 4], look: [10, -6] },
   { name: "storm", desc: "嵐の稜線", hour: 18.2, weather: "storm", pos: [start.x - 300, start.z + 260], look: [45, 8] },
   { name: "night", desc: "星と月の湖", hour: 23.5, weather: "clear", pos: [start.x, start.z], look: [0, 12] },
