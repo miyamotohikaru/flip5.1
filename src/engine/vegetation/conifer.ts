@@ -222,6 +222,18 @@ export function buildConifer(v: TreeVariant, lod: 0 | 1): TreeGeo {
     const u = nW > 1 ? j / (nW - 1) : 0;
     const tW = v.crownBase + spanT * u + (rnd() - 0.5) * 0.10;
     const L = v.lmax * H * (1 - 0.82 * Math.pow(u, 0.95));
+    // 樹冠の「詰め物」: 段ごとに十字の縦カードを 2 枚、枝より内側に。
+    // これが無いと明るい空を背にした樹冠に 1px の穴が点々と残る（輪郭は変えない）
+    {
+      const a1 = axisAt(tW);
+      const hgt = Math.min((spanT * H) / Math.max(1, nW - 1) * 1.6, Math.max(0.15, (0.97 - tW) * H * 1.6));
+      const wid = L * 0.42;
+      for (let c2 = 0; c2 < 2; c2++) {
+        const aa = j * 1.13 + c2 * Math.PI * 0.5;
+        const wdir = new THREE.Vector3(Math.cos(aa), 0, Math.sin(aa));
+        addCard(a1.x, a1.y - hgt * 0.35, a1.z, up, wdir, hgt, -wid, wid, 2, 0.04, 0.96, 0.45 + 0.55 * tW, rnd() * 6.2832, true);
+      }
+    }
     const nB = lod === 0 ? v.perWhorl + (rnd() < 0.5 ? 1 : 0) : Math.max(5, Math.round(v.perWhorl * 0.66));
     for (let b = 0; b < nB; b++) {
       // 黄金角で回して、段どうしの枝が同じ方位に並ばないようにする

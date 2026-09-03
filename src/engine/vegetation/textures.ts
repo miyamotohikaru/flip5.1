@@ -172,7 +172,7 @@ export function makeNeedleAtlas(cell = 256): THREE.CanvasTexture {
 }
 
 /** 葉カードのアルファテストのしきい値。ミップ生成と materials の alphaTest はこの値で揃える。 */
-export const ALPHA_CUTOFF = 0.34;
+export const ALPHA_CUTOFF = 0.30;
 
 /** ImageData を canvas に包む（three の texture.mipmaps は TexImageSource を受ける） */
 function toCanvas(img: ImageData): HTMLCanvasElement {

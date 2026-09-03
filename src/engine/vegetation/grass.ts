@@ -55,7 +55,7 @@ type Ring = {
 };
 
 // 葉身の実寸（m）。本物のイネ科は 3〜8mm。環が遠いほど少しだけ太くする（画素より細いと消えるため）
-const RING_W = [0.010, 0.020, 0.036, 0.050];
+const RING_W = [0.010, 0.016, 0.029, 0.042];
 // 葉の長さの基準（m）。個体は 0.4〜1.4 倍
 const RING_H = [0.34, 0.34, 0.32, 0.29];
 // 株の広がり（m）
@@ -70,8 +70,8 @@ function ringDensity(tier: string): number[] {
   switch (tier) {
     case "low": return [110, 26, 8, 1.0];
     case "mid": return [140, 34, 11, 1.2];
-    case "ultra": return [340, 130, 46, 2.2];
-    default: return [270, 100, 33, 1.0];
+    case "ultra": return [320, 115, 38, 1.8];
+    default: return [250, 88, 27, 0.9];
   }
 }
 
