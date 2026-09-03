@@ -48,7 +48,15 @@ float flip_horizonPick(vec4 a, vec4 b, float i){
   return i < 3.5 ? (i < 1.5 ? (i < 0.5 ? a.r : a.g) : (i < 2.5 ? a.b : a.a))
                  : (i < 5.5 ? (i < 4.5 ? b.r : b.g) : (i < 6.5 ? b.b : b.a));
 }
-// 地形の地平角による光源の見え方（0 = 山の影, 1 = 日なた）。dir は光の来る向き（world、正規化）
+// 地形の地平角による光源の見え方（0 = 山の影, 1 = 日なた）。dir は光の来る向き（world、正規化）。
+// 木・草の「山の影」にも使える。使うときの前提（terrain/bake.ts が焼いている中身）:
+//   ・解像度 high 1536²（2.7m/texel）／mid・low 1024²（4m/texel）。線形補間なので影の縁は
+//     texel 幅ぶんぼける。山の影の半影は 1km 先で 9m なので、この粗さは物理的に妥当
+//   ・方位は 8 方向（45°刻み）を線形補間。大きな山塊は正しく、単独の尖峰は方位方向に ±22.5° 滲む
+//   ・地平角は「地面 +1.5m」の点で焼いてある。高さ h の樹冠はもっと低い地平を見るので、
+//     木に使うときは dir.y を少し持ち上げる（例 dir.y + h/1500）と過剰な影を避けられる
+//   ・射程 high 4.9km ／ mid 2.5km（世界は 4km 四方）
+//   ・遷移幅は 11.5°（半影の代用）。これより硬い影が要るなら CSM を使うこと
 float flip_terrainSunVis(vec2 xz, vec3 dir){
   vec2 uv = flip_terrainUv(xz);
   vec4 a = texture2D(uTerrainHorizonA, uv);

@@ -140,7 +140,9 @@ export class Terrain {
     this.baking = true;
     const res = this.env.heightmap.res;
     const mobile = this.q.tier === "low" || this.q.tier === "mid";
-    const b = bakeTerrainAux(renderer, this.env, res, 1024, mobile ? 28 : 40, mobile ? 1.27 : 1.18);
+    // 地平角マップ: 影担当が木・草の「山の影」にも使うので、high では 1536²（2.7m/texel）まで上げ、
+    // 歩数も 44（4.9km ＝ 世界の対角より遠くまで）にする。mid/low は 1024²・28 歩のまま
+    const b = bakeTerrainAux(renderer, this.env, res, mobile ? 1024 : 1536, mobile ? 28 : 44, mobile ? 1.27 : 1.18);
     this.bake = b;
     const u = this.env.uniforms;
     u.uTerrainAux.value = b.aux.texture;

@@ -77,6 +77,15 @@ vec3 tn_gnoised(vec2 p){
 }
 // 等高線用の細い線。fwidth が 0 のとき（成分が定数の所）に core の flip_line が NaN になるのを避け、
 // 間隔が画素より細かくなったら消す（潰れて面が白くならないように）
+// 画素幅で太さを決める線。値の幅（tn_line）で決めると、距離と傾きで太さが変わって
+// 「主線 3px / 副線 1px」の 4:1 が画の中で消えてしまう（批評R2→R3 で未達だった原因）
+float tn_linePx(float v, float px){
+  float d = max(fwidth(v), 1e-5);
+  float f = abs(fract(v) - 0.5);
+  float w = min(px * d * 0.5, 0.42);
+  float l = smoothstep(0.5 - w - d, 0.5 - w + d, f);
+  return l * (1.0 - smoothstep(0.30, 0.70, d)); // 間隔が 1.5px を切ったら消す（潰れて面が白くなる）
+}
 float tn_line(float v, float w){
   float d = max(fwidth(v), 1e-5);
   float f = abs(fract(v) - 0.5);
@@ -493,13 +502,13 @@ if (uFlipRadius > 0.001) {
   float nearR = 1.0 - smoothstep(200.0, 700.0, tDist);
   // 等高線: 10m ごとの副線（細）と 50m ごとの主線（太さ 4:1）。
   // 5m 間隔で同じ太さだと「バーコード」に見える
-  float cMinor = tn_line(tH / 10.0, 0.010) * nearR;
-  float cMajor = tn_line(tH / 50.0, 0.040);
+  float cMinor = tn_linePx(tH / 10.0, 1.0) * nearR;
+  float cMajor = tn_linePx(tH / 50.0, 3.0);
   // 成分の族はさらに細く（合計の等高線を邪魔しない）
-  float lm = tn_line(pm / 20.0, 0.022) * smoothstep(0.5, 3.0, pm) * midR;
-  float lb = tn_line(pb / 8.0, 0.016) * nearR;
-  float lf = tn_line(pf / 0.5, 0.012) * (1.0 - smoothstep(40.0, 120.0, tDist));
-  fc += FLIP_LINE * (0.90 * cMajor + 0.35 * cMinor) * far; // 主線 3px a0.9 / 副線 1px a0.35（太さも明るさも 4:1 弱）
+  float lm = tn_linePx(pm / 20.0, 1.2) * smoothstep(0.5, 3.0, pm) * midR;
+  float lb = tn_linePx(pb / 8.0, 1.0) * nearR;
+  float lf = tn_linePx(pf / 0.5, 1.0) * (1.0 - smoothstep(40.0, 120.0, tDist));
+  fc += FLIP_LINE * (0.90 * cMajor + 0.35 * cMinor) * far; // 主線 3px a0.9 / 副線 1px a0.35
   fc += vec3(0.75, 0.95, 1.0) * 0.34 * lm;
   fc += FLIP_LINE * 0.18 * lb;
   fc += FLIP_LINE * 0.10 * lf;
