@@ -97,8 +97,15 @@ export class Trees {
       // 近景（LOD0）は湖の映り込みに出さない。1 本 1000 三角形が 2 回描かれるのは高すぎる。
       // 代わりに映り込みでは LOD1 が 0m から受け持つ（uReflect）
       near.layers.set(LAYER.MAIN_ONLY);
+      // 主パスでは 1 本も描かない（count=0）。映り込みだけ全部描く
+      // 主パスでは 1 本も描かない（count=0）。映り込みだけ全部描く
       mid.onBeforeRender = (_r, _s, camera) => {
-        this.uReflect.value = camera === env.camera ? 0 : 1;
+        const refl = camera !== env.camera;
+        this.uReflect.value = refl ? 1 : 0;
+        mid.count = refl ? ((mid.userData.full as number) ?? 0) : 0;
+      };
+      mid.onAfterRender = () => {
+        mid.count = (mid.userData.full as number) ?? 0;
       };
       for (const m of [near, mid]) {
         m.count = 0;
@@ -114,14 +121,12 @@ export class Trees {
       near.castShadow = false;
       mid.castShadow = true;
       mid.customDepthMaterial = makeTreeDepthMaterial(env, this.needle, o1, true);
-      let midCount = 0;
       mid.onBeforeShadow = (_r, _o, _c, cam) => {
-        midCount = mid.count;
         // 近カスケードだけ「葉のアルファ付きの影」。遠カスケードは 16 三角形の円錐プロキシに任せる
-        if ((this.cascadeIndex.get(cam) ?? 0) >= 1) mid.count = 0;
+        mid.count = (this.cascadeIndex.get(cam) ?? 0) >= 1 ? 0 : ((mid.userData.full as number) ?? 0);
       };
       mid.onAfterShadow = () => {
-        mid.count = midCount;
+        mid.count = (mid.userData.full as number) ?? 0;
       };
       this.near.push(near);
       this.mid.push(mid);
@@ -163,7 +168,8 @@ export class Trees {
     // 遠景ビルボードの視程。品質段階の treeDistance は空気遠近のための値なので、
     // ここでは「木が 3px 未満になる距離」で頭打ちにする（1 本 2 三角形でも万単位で効く）
     const impFar = Math.min(q.treeDistance, q.tier === "low" ? 900 : q.tier === "mid" ? 1250 : 2100);
-    const impMat = makeImpostorMaterial(env, lighting, this.atlas, { r1: t.r1, band: t.band, far: impFar, farBand: impFar * 0.12 }, msaa);
+    // インポスターは r0（近景メッシュの外）から受け持つ
+    const impMat = makeImpostorMaterial(env, lighting, this.atlas, { r1: t.r0, band: t.band, far: impFar, farBand: impFar * 0.12 }, msaa);
     const quad = impostorQuad();
     const n = Math.ceil(WORLD.size / t.chunk);
     const sc = this.scatter;
@@ -268,7 +274,7 @@ export class Trees {
           float h = flip_height(wxz) + 0.07;
           vec3 wp = vec3(wxz.x, h, wxz.y);
           float dist = distance(root.xz, uCamPos.xz);
-          vLit = vec3(length(position.xz), veg_flipMask(root), 1.0 - smoothstep(70.0, 100.0, dist));
+          vLit = vec3(length(position.xz), veg_flipMask(root), 1.0 - smoothstep(22.0, 40.0, dist));
           vLitUv = wxz * 0.7;
           vec3 transformed = wp;`,
           "litter vs begin",
@@ -395,6 +401,7 @@ export class Trees {
             this.litter.setMatrixAt(litterN++, _m);
           }
         }
+        mesh.userData.full = list.length;
         mesh.count = list.length;
         mesh.instanceMatrix.needsUpdate = true;
       };

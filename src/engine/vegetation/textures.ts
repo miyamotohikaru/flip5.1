@@ -18,7 +18,7 @@ type Ctx = CanvasRenderingContext2D;
 function drawTwig(ctx: Ctx, r: () => number, x0: number, y0: number, ang: number, len: number, needleLen: number, dark: number, hue: number) {
   const dx = Math.cos(ang), dy = Math.sin(ang);
   // 芯
-  ctx.strokeStyle = `rgba(${Math.round(36 + dark * 12)}, ${Math.round(31 + dark * 11)}, ${25}, 1)`;
+  ctx.strokeStyle = `rgba(${Math.round(33 + dark * 9)}, ${Math.round(33 + dark * 10)}, ${28}, 1)`;
   ctx.lineWidth = Math.max(1.2, len * 0.05);
   ctx.beginPath();
   ctx.moveTo(x0, y0);
@@ -155,6 +155,10 @@ export function makeNeedleAtlas(cell = 256): THREE.CanvasTexture {
     }
   }
   img.data.set(out);
+  // アルファを 2 テクセル膨張させる。針と針の 1〜2 テクセルの隙間が、明るい空を背にすると
+  // 「白いピンホール」として点で読めるため。384px のコマで 2 テクセル＝画面上 1px 未満で、
+  // 輪郭はほとんど変わらない
+  dilateAlpha(img, 3);
   ctx.putImageData(img, 0, 0);
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
@@ -173,6 +177,35 @@ export function makeNeedleAtlas(cell = 256): THREE.CanvasTexture {
 
 /** 葉カードのアルファテストのしきい値。ミップ生成と materials の alphaTest はこの値で揃える。 */
 export const ALPHA_CUTOFF = 0.30;
+
+/** アルファを n テクセル膨張（3x3 の最大アルファのテクセルを色ごと採る）。内側の穴を塞ぐ。 */
+function dilateAlpha(img: ImageData, n: number) {
+  const w = img.width, h = img.height;
+  for (let it = 0; it < n; it++) {
+    const src = new Uint8ClampedArray(img.data);
+    const d = img.data;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const k = (y * w + x) * 4;
+        let ba = src[k + 3], bk = k;
+        for (let oy = -1; oy <= 1; oy++) {
+          const yy = y + oy;
+          if (yy < 0 || yy >= h) continue;
+          for (let ox = -1; ox <= 1; ox++) {
+            const xx = x + ox;
+            if (xx < 0 || xx >= w) continue;
+            const j = (yy * w + xx) * 4;
+            if (src[j + 3] > ba) { ba = src[j + 3]; bk = j; }
+          }
+        }
+        d[k] = src[bk];
+        d[k + 1] = src[bk + 1];
+        d[k + 2] = src[bk + 2];
+        d[k + 3] = ba;
+      }
+    }
+  }
+}
 
 /** ImageData を canvas に包む（three の texture.mipmaps は TexImageSource を受ける） */
 function toCanvas(img: ImageData): HTMLCanvasElement {

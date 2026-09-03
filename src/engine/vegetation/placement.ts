@@ -78,8 +78,11 @@ export function scatterTrees(hm: Heightmap, vm: VegMap, cell: number, variants: 
   for (let j = 0; j < n; j++) {
     for (let i = 0; i < n; i++) {
       const h1 = hash2(i, j, 101);
-      const x = (i + 0.15 + 0.7 * hash2(i, j, 102)) * cell - WORLD.half;
-      const z = (j + 0.15 + 0.7 * hash2(i, j, 103)) * cell - WORLD.half;
+      // 格子の中に収めると木が等間隔に並び、**落ち影が平行のリボン（畑の畝）**に見える。
+      // セルの外まではみ出すジッタ（±0.95 セル）にして、寄り集まりと空きを作る
+      const lim = WORLD.half - 2;
+      const x = clamp((i + 0.5 + (hash2(i, j, 102) - 0.5) * 1.9) * cell - WORLD.half, -lim, lim);
+      const z = clamp((j + 0.5 + (hash2(i, j, 103) - 0.5) * 1.9) * cell - WORLD.half, -lim, lim);
       // 植生マップで素早く却下（湖・高山）
       if (sampleVegMap(vm, x, z, 1) < 0.02) continue;
       const h = sampleHeightmap(hm, x, z);
@@ -97,7 +100,7 @@ export function scatterTrees(hm: Heightmap, vm: VegMap, cell: number, variants: 
       const seed = hash2(i, j, 104);
       const fd = sampleVegMap(vm, x, z, 1);
       // 大きさ: 0.6〜1.3 倍。密な林ほど高い。森林限界に向かって低くなる
-      let s = (0.6 + 0.7 * Math.pow(hash2(i, j, 105), 1.15)) * SHAPE.treeSize;
+      let s = (0.5 + 0.92 * Math.pow(hash2(i, j, 105), 1.15)) * SHAPE.treeSize;
       s *= 0.86 + 0.24 * fd;
       s *= 1 - 0.42 * smoothstep(240, 380, h);
       b.x.push(x);

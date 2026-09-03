@@ -52,6 +52,46 @@ export class ImpostorAtlas {
     for (const g of geos) this.frames.push({ W: g.radius * 2.12, Hf: g.topY + g.H * 0.06, below: g.H * 0.04 });
   }
 
+  /** アルファの穴を 1px 膨張で塞ぐ（元の RT に書き戻すので、テクスチャ参照は変わらない）。 */
+  private dilateAlpha(renderer: THREE.WebGLRenderer, targets: THREE.WebGLRenderTarget[]) {
+    const w = targets[0].width, h = targets[0].height;
+    const tmp = new THREE.WebGLRenderTarget(w, h, {
+      format: THREE.RGBAFormat, type: THREE.UnsignedByteType,
+      generateMipmaps: false, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, depthBuffer: false,
+    });
+    tmp.texture.colorSpace = THREE.NoColorSpace;
+    const mat = new THREE.ShaderMaterial({
+      uniforms: {
+        uTex: { value: null }, uTexel: { value: new THREE.Vector2(1 / w, 1 / h) },
+        uCells: { value: new THREE.Vector2(IMP_AZ * this.geos.length, IMP_ROWS) },
+      },
+      vertexShader: DILATE_SHADER.vertexShader,
+      fragmentShader: DILATE_SHADER.fragmentShader,
+      depthTest: false, depthWrite: false,
+    });
+    const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat);
+    quad.frustumCulled = false;
+    const sc = new THREE.Scene();
+    sc.add(quad);
+    const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+    renderer.setScissorTest(false);
+    renderer.setViewport(0, 0, w / renderer.getPixelRatio(), h / renderer.getPixelRatio());
+    // 2 往復＝ 2px 膨張。1px では 2〜3px の隙間が残る
+    for (const rt of targets) {
+      for (let it = 0; it < 2; it++) {
+        mat.uniforms.uTex.value = rt.texture;
+        renderer.setRenderTarget(tmp);
+        renderer.render(sc, cam);
+        mat.uniforms.uTex.value = tmp.texture;
+        renderer.setRenderTarget(rt);
+        renderer.render(sc, cam);
+      }
+    }
+    tmp.dispose();
+    mat.dispose();
+    quad.geometry.dispose();
+  }
+
   /** 描く。主描画の途中（onBeforeRender）から呼ばれるので、状態を全部戻す。 */
   bake(renderer: THREE.WebGLRenderer) {
     if (this.baked) return;
@@ -125,6 +165,12 @@ export class ImpostorAtlas {
         }
       }
     }
+    // アルファの穴埋め（膨張）。焼いた樹冠には枝と枝の 1〜3px の隙間が残り、
+    // 明るい空を背にすると「白いピンホール」として点々と読める。
+    // 3x3 で最もアルファの高いテクセルを取る＝輪郭を 1px 太らせつつ内側の穴を塞ぐ。
+    // 250px のコマで 1px なので輪郭はほぼ変わらない
+    this.dilateAlpha(renderer, [this.albedo, this.normal, this.skeleton]);
+
     // 後始末
     for (const m of meshes) m.geometry.dispose === undefined ? 0 : 0;
     mat.dispose();
@@ -137,6 +183,34 @@ export class ImpostorAtlas {
     renderer.setRenderTarget(prevRT);
   }
 }
+
+const DILATE_SHADER = {
+  vertexShader: /* glsl */ `
+    varying vec2 vUvD;
+    void main(){ vUvD = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
+  fragmentShader: /* glsl */ `
+    uniform sampler2D uTex;
+    uniform vec2 uTexel;
+    uniform vec2 uCells;   // アトラスの列数・行数
+    varying vec2 vUvD;
+    void main(){
+      // **コマの外へはみ出して読まない**。隣のコマ（別の方位・別の仰角の木）の
+      // アルファを取り込むと、コマの境目に水平な板や「金床」の形ができる
+      vec2 cs = 1.0 / uCells;
+      vec2 ci = floor(vUvD * uCells);
+      vec2 lo = ci * cs + 0.5 * uTexel;
+      vec2 hi = (ci + 1.0) * cs - 0.5 * uTexel;
+      vec4 best = texture2D(uTex, vUvD);
+      for (int j = -1; j <= 1; j++) {
+        for (int i = -1; i <= 1; i++) {
+          vec2 uv = clamp(vUvD + vec2(float(i), float(j)) * uTexel, lo, hi);
+          vec4 s = texture2D(uTex, uv);
+          if (s.a > best.a) best = s;
+        }
+      }
+      gl_FragColor = best;
+    }`,
+};
 
 /** 焼き込み用: 色 / 法線 / 骨組み を uMode で切り替える */
 function makeBakeMaterial(needle: THREE.Texture): THREE.ShaderMaterial {
@@ -231,7 +305,8 @@ export function makeImpostorMaterial(env: Env, lighting: Lighting, atlas: Impost
         varying vec3 vVegWorld;
         varying vec3 vRight;
         varying vec3 vFace;
-        varying float vSeed;`,
+        varying float vSeed;
+`,
         "imp vs common",
       );
       shader.vertexShader = replaceOnce(
@@ -245,6 +320,7 @@ export function makeImpostorMaterial(env: Env, lighting: Lighting, atlas: Impost
         float seed = flip_hash12(floor(root.xz * 3.7 + 0.5));
         // メッシュ側と同じ「木ごとにばらけた切り替え距離」。画素ごとのディザ（網戸）を使わない
         float lodJit = flip_hash11(seed * 31.0 + 5.0);
+
         float fade = step(uImp.x - uImp.y * lodJit, dist) * step(dist, uImp.z - uImp.w * flip_hash11(seed * 17.0 + 2.0));
         // 間引きは CPU 側（チャンクごとの count）でやる。ここでは減った分だけ少し大きくして密度を保つ
         float thin = smoothstep(uImp.z * 0.12, uImp.z * 0.75, dist);
@@ -264,7 +340,7 @@ export function makeImpostorMaterial(env: Env, lighting: Lighting, atlas: Impost
         float cellF = fract(az / 6.2831853) * ${IMP_AZ}.0;
         float c0 = floor(cellF);
         float el = atan(cameraPosition.y - (root.y + 0.5 * Hh), dc);
-        float rowBlend = smoothstep(0.55, 1.05, el);
+        float rowBlend = 0.0;
         float fm = veg_flipMask(root);
         float flipped = step(flip_hash11(seed * 13.0 + 0.5), fm) * step(0.001, fm);
         // 数式ビュー: 遠くの木を全部「骨組み」で描くと白い粒の雲になる。3 本に 1 本だけ残す

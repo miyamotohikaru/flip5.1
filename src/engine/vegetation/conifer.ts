@@ -180,7 +180,9 @@ export function buildConifer(v: TreeVariant, lod: 0 | 1): TreeGeo {
     }
   }
 
-  const nW = lod === 0 ? v.whorls : Math.max(4, Math.round(v.whorls * 0.58));
+  // LOD1 は「段数を減らして 1 段の枝を増やす」と、遠くで段が分離して**パゴダ（塔の相輪）**に見える。
+  // 三角形の総数は同じまま、段を増やして 1 段の枝を減らすと、段が重なって円錐に読める
+  const nW = lod === 0 ? v.whorls : Math.max(7, Math.round(v.whorls * 0.95));
   const top = 0.88;
   // 1 段の枝を丸ごと 1 つの高さに置くと「皿」に見える。段の高さ（±0.05H）と
   // 枝ごとの高さ（±0.05H）を別々に散らして、段の境目を溶かす。
@@ -199,9 +201,9 @@ export function buildConifer(v: TreeVariant, lod: 0 | 1): TreeGeo {
     // 枝 1 本を「大きな 1 枚のカード」で表すと、10〜40m で紙を貼った棒に見える（批評 R3 の 3 位）。
     // 面積 1/3 の小さなカードを 3 枚、枝に沿って位置をずらし、向きと捻りを変えて出す。
     // 総面積はほぼ同じだが、輪郭が細かくなって「もじゃもじゃした枝」に見える
-    const nCards = lod === 0 ? (spire ? 2 : 4) : 1;
+    const nCards = lod === 0 ? (spire ? 2 : 5) : 1;
     for (let ci = 0; ci < nCards; ci++) {
-      const along = nCards === 1 ? 0 : (0.02 + (0.86 / nCards) * ci) * Lb;
+      const along = nCards === 1 ? 0 : (0.02 + (0.82 / nCards) * ci) * Lb;
       const len = nCards === 1 ? Lb : Lb * (0.52 + 0.24 * rnd()) * (1 - 0.10 * ci);
       // 枝の向きから左右に振る（枝先が扇状に分かれる）
       const yawOff = nCards === 1 ? 0 : (rnd() - 0.5) * 0.95;
@@ -214,7 +216,7 @@ export function buildConifer(v: TreeVariant, lod: 0 | 1): TreeGeo {
       const v0 = cell === 1 ? 0.32 : 0.14, v1 = cell === 1 ? 0.92 : 0.86;
       addCard(
         bx + d.x * along, by + d.y * along, bz + d.z * along,
-        dc, dn, len, -0.26 * len, 0.58 * len, cell, v0, v1, flex, phase + 1.0 + ci * 2.1, false,
+        dc, dn, len, -0.32 * len, 0.66 * len, cell, v0, v1, flex, phase + 1.0 + ci * 2.1, false,
       );
     }
   };
@@ -222,19 +224,7 @@ export function buildConifer(v: TreeVariant, lod: 0 | 1): TreeGeo {
     const u = nW > 1 ? j / (nW - 1) : 0;
     const tW = v.crownBase + spanT * u + (rnd() - 0.5) * 0.10;
     const L = v.lmax * H * (1 - 0.82 * Math.pow(u, 0.95));
-    // 樹冠の「詰め物」: 段ごとに十字の縦カードを 2 枚、枝より内側に。
-    // これが無いと明るい空を背にした樹冠に 1px の穴が点々と残る（輪郭は変えない）
-    {
-      const a1 = axisAt(tW);
-      const hgt = Math.min((spanT * H) / Math.max(1, nW - 1) * 1.6, Math.max(0.15, (0.97 - tW) * H * 1.6));
-      const wid = L * 0.42;
-      for (let c2 = 0; c2 < 2; c2++) {
-        const aa = j * 1.13 + c2 * Math.PI * 0.5;
-        const wdir = new THREE.Vector3(Math.cos(aa), 0, Math.sin(aa));
-        addCard(a1.x, a1.y - hgt * 0.35, a1.z, up, wdir, hgt, -wid, wid, 2, 0.04, 0.96, 0.45 + 0.55 * tW, rnd() * 6.2832, true);
-      }
-    }
-    const nB = lod === 0 ? v.perWhorl + (rnd() < 0.5 ? 1 : 0) : Math.max(5, Math.round(v.perWhorl * 0.66));
+    const nB = lod === 0 ? v.perWhorl + (rnd() < 0.5 ? 1 : 0) : Math.max(3, Math.round(v.perWhorl * 0.36));
     for (let b = 0; b < nB; b++) {
       // 黄金角で回して、段どうしの枝が同じ方位に並ばないようにする
       const az = j * 2.39996 + (b * Math.PI * 2) / nB + (rnd() - 0.5) * 0.9;
@@ -252,7 +242,8 @@ export function buildConifer(v: TreeVariant, lod: 0 | 1): TreeGeo {
       for (let b = 0; b < nb; b++) {
         const az = s * 1.7 + (b * Math.PI * 2) / nb + (rnd() - 0.5) * 0.6;
         // LOD1 は梢が 1 段しかないので、ここで長い枝を出すと「きのこの傘」になる
-        branch(t0, 1.0, Ls * (lod === 0 ? 1.4 + 0.4 * rnd() : 0.55), az, 1.0, true);
+        // 梢の枝は垂れ角を強くする（u=1 のままだと 15° でほぼ水平になり、遠景で「きのこの傘」に見える）
+        branch(t0, 0.15, Ls * (lod === 0 ? 1.25 + 0.35 * rnd() : 0.5), az, 1.0, true);
       }
     }
     // 先端の一本（頂芽）
@@ -307,9 +298,14 @@ void veg_tree(out vec3 p, out vec3 n){
   float sw0 = uLod.x - uLod.z * lodJit;
   float sw1 = uLod.y - uLod.z * lodJit;
   float fade = 1.0;
+  // LOD1 は r0 の外では描かない。1 枚カードの枝が遠くで段に分離して「パゴダ（塔の相輪）」に見えるため、
+  // r0 の外はインポスター（LOD0 を焼いた板）に任せる。
+  // r0 の内側では 8% 縮めて LOD0 の**裏当て**にする。枝と枝の隙間から明るい空が
+  // 1px の白い点として抜けるのを、奥の葉で塞ぐため（映り込みでは等倍で 0〜r1 を受け持つ）
+  float backdrop = 0.0;
   if (uLod.w < 0.5) fade = step(dist, sw0);
-  else if (uLod.w < 1.5) fade = mix(step(sw0, dist), 1.0, uReflect) * step(dist, sw1);
-  vec3 lp = position;
+  else if (uLod.w < 1.5) fade = uReflect * step(dist, sw1);
+  vec3 lp = position * mix(1.0, 0.92, backdrop);
   float hN = clamp(lp.y / uTreeH, 0.0, 1.0);
   vec2 wd = veg_windDir();
   float gust = veg_gust(root.xz);

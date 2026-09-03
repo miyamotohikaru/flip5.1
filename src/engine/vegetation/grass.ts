@@ -68,10 +68,10 @@ const RING_BLADES = [5, 4, 3, 3];
 /** 近い環から順の「葉の本数 / m²」。品質段階で決める。ここが密度の唯一のつまみ。 */
 function ringDensity(tier: string): number[] {
   switch (tier) {
-    case "low": return [110, 26, 8, 1.0];
-    case "mid": return [140, 34, 11, 1.2];
-    case "ultra": return [320, 115, 38, 1.8];
-    default: return [250, 88, 27, 0.9];
+    case "low": return [110, 26, 8, 0.55];
+    case "mid": return [150, 34, 11, 0.6];
+    case "ultra": return [320, 115, 38, 1.05];
+    default: return [250, 88, 27, 0.52];
   }
 }
 
@@ -86,16 +86,19 @@ function ringSpecs(q: QualitySettings): Ring[] {
   // 携帯は描画呼び出しを 1 つでも減らしたいので、いちばん外の 2 環をまとめて 3 環にする
   const small = q.tier === "low";
   const rings = small ? 3 : 4;
-  const rOut = small ? [RING_R[0], RING_R[1], R] : [RING_R[0], RING_R[1], RING_R[2], R];
+  // いちばん外の環は視程の 1.35 倍まで伸ばし、帯（band）を 30m 取って長く消す。
+  // 短い帯だと環の外周が地面に一直線の境目として見える
+  const rFar = R * 1.35;
+  const rOut = small ? [RING_R[0], RING_R[1], rFar] : [RING_R[0], RING_R[1], RING_R[2], rFar];
   const rIn = [0, RING_R[0], RING_R[1], RING_R[2]];
-  const band = small ? [1.6, 2.4, 8.0] : [1.6, 2.4, 4.0, 10.0];
+  const band = small ? [1.6, 2.4, 26.0] : [1.6, 2.4, 4.0, 30.0];
   // 間引きの基準距離: 環の内径のあたりから 1/d^1.4 で薄くする（境目で密度がつながる）
   const dRef = [2.6, 5.0, 14, 38];
   // 各環の外径で密度が次の環と一致するような指数（環の境目に段差を出さない）
   const thinPow: number[] = [];
   for (let i = 0; i < 4; i++) {
     const dNext = i + 1 < dens.length ? dens[i + 1] : dens[i] * 0.17;
-    const rEnd = i < rOut.length ? rOut[i] : R;
+    const rEnd = i < rOut.length ? rOut[i] : rFar;
     const ratio = Math.max(1e-3, dNext / dens[i]);
     const k = Math.min(0.999, dRef[i] / Math.max(rEnd, dRef[i] + 0.1));
     thinPow.push(Math.min(2.4, Math.max(1.0, Math.log(ratio) / Math.log(k))));
@@ -213,7 +216,7 @@ void veg_grass(out vec3 p, out vec3 n){
   // 裸の土（岩でも雪でもない斜面）にも、短い草をまばらに生やす。
   // これが無いと傾いた土の面が「無地の絵の具」に見える（批評 R3 の 5 位）
   float slope = 1.0 - tn.y;
-  float dirtD = (1.0 - vm.a) * smoothstep(0.03, 0.16, slope) * 0.95 * uFloor.x;
+  float dirtD = (1.0 - vm.a) * smoothstep(0.03, 0.16, slope) * 1.0 * uFloor.x;
   float onFloor = step(vm.r * 0.8 + 0.03, floorD);
   float onDirt = step(max(vm.r * 0.9, floorD) + 0.02, dirtD);
   // 植生マップの草地は 0.5 前後。そのまま確率に使うと草原でも半分しか生えず「刈った芝」に見える。
@@ -242,7 +245,7 @@ void veg_grass(out vec3 p, out vec3 n){
   // 株の種類: 4% は広葉の雑草、1.2% は花穂
   float kindR = flip_hash11(rc * 53.0 + 11.0);
   float broad = step(0.96, kindR) * (1.0 - onFloor);
-  float spike = step(0.952, kindR) * (1.0 - broad) * (1.0 - onFloor);
+  float spike = step(0.92, kindR) * (1.0 - broad) * (1.0 - onFloor);
   // 床は 45% がシダ・コケの下草、55% が落ち葉（地面に寝た短い葉）
   float fern = onFloor * step(0.55, kindR);
   float litter = onFloor * (1.0 - step(0.55, kindR));
@@ -256,7 +259,7 @@ void veg_grass(out vec3 p, out vec3 n){
   if (fern > 0.5) { W *= 1.5; H *= 0.95; }
   if (litter > 0.5) { W *= 1.25; H *= 0.34; }
   // 土の斜面の草は短い（丈 0.5 倍）。斜面にすがりつく低い草
-  if (onDirt > 0.5) { H *= 0.6; W *= 1.0; }
+  if (onDirt > 0.5) { H *= 0.78; W *= 1.15; }
   #ifdef VEG_SHADOW_PASS
   // 影用: 葉身が影テクセル（8cm）より細いと影が消えるので、株の影の塊として太らせる
   W = max(W * 3.5, 0.038) * step(0.001, H);
@@ -266,7 +269,8 @@ void veg_grass(out vec3 p, out vec3 n){
   vec3 bendDir = vec3(-side.z, 0.0, side.x);
   float t = position.y;
   // 葉は弓なりに反る。反りが強いほど上面が見えて明るく、シルエットも柔らかくなる
-  float curl = (0.20 + 0.70 * flip_hash11(rb * 5.0 + 9.0)) * (broad > 0.5 ? 1.6 : 1.0);
+  // 葉は弓なり。まっすぐな棒に見えないよう反りを強くする
+  float curl = (0.30 + 0.95 * flip_hash11(rb * 5.0 + 9.0)) * (broad > 0.5 ? 1.6 : 1.0);
   // 下草は大きく広がり、落ち葉（針葉のリター）はほぼ地面に寝る
   if (fern > 0.5) curl *= 1.8;
   if (litter > 0.5) curl = 1.2 + 1.1 * flip_hash11(rb * 9.0 + 2.0);
