@@ -16,7 +16,7 @@ const tmpE = [0, 0, 0];
 function extinction(h: number, haze: number, groundAlt: number) {
   const hr = Math.max(h, 0);
   const dR = Math.exp(-hr / 8), dM = Math.exp(-hr / 2.5);
-  const dH = haze * Math.exp(-Math.max(h - groundAlt, 0) / 1.0);
+  const dH = haze * Math.exp(-Math.max(h - groundAlt, 0) / 1.6);
   const dO = Math.max(0, 1 - Math.abs(hr - 25) / 15);
   // ミー（散乱＋吸収）。atmosphere.glsl.ts の flip_atmoMedium と同じ値にすること
   // 散乱は Angstrom 0.8（0.86/1.0/1.16）、吸収は AAE 4（0.43/1.0/2.44）

@@ -49,7 +49,8 @@ void flip_atmoMedium(float h, out vec3 sR, out vec3 sM, out vec3 sE){
   float hr = max(h, 0.0);
   float dR = exp(-hr / 8.0);
   float dM = exp(-hr / 2.5);
-  float dH = uSkyParams.z * exp(-max(h - uSkyParams.w, 0.0) / 1.0);
+  // 靄（境界層のエアロゾル）。高さスケール 1.6km。ここを厚くすると日没の橙の帯が地平から上へ広がる
+  float dH = uSkyParams.z * exp(-max(h - uSkyParams.w, 0.0) / 1.6);
   float dO = max(0.0, 1.0 - abs(hr - 25.0) / 15.0);
   // uLabSky = 実験室のつまみ（既定は全部 1 ＝ 何も変わらない）
   sR = vec3(5.802, 13.558, 33.1) * 1e-3 * dR * uLabSky.y;
