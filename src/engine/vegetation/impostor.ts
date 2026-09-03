@@ -31,13 +31,17 @@ export class ImpostorAtlas {
       const rt = new THREE.WebGLRenderTarget(w, h, {
         format: THREE.RGBAFormat,
         type: THREE.UnsignedByteType,
-        generateMipmaps: mips,
-        minFilter: mips ? THREE.LinearMipmapLinearFilter : THREE.LinearFilter,
+        // ミップは作らない。アルファテストのある葉はミップで平均されて太り、
+        // 粗いレベルではコマ全体が不透明になって「ぼやけた矩形」になる。
+        // 縮小のちらつきは異方性フィルタと、遠方の間引き（uImp.z）で抑える
+        generateMipmaps: false,
+        minFilter: THREE.LinearFilter,
         magFilter: THREE.LinearFilter,
         depthBuffer: true,
         stencilBuffer: false,
       });
-      rt.texture.anisotropy = 4;
+      void mips;
+      rt.texture.anisotropy = 8;
       rt.texture.colorSpace = THREE.NoColorSpace;
       return rt;
     };
@@ -134,6 +138,7 @@ function makeBakeMaterial(needle: THREE.Texture): THREE.ShaderMaterial {
   const uniforms: Record<string, THREE.IUniform> = {
     uMode: { value: 0 },
     uNeedle: { value: needle },
+    uNeedleSize: { value: (needle.image as HTMLCanvasElement | undefined)?.width ?? 512 },
     uTreeH: { value: 1 },
     uLod: { value: new THREE.Vector4(1e6, 1e6, 1, 2) },
     uForceFlip: { value: 0 },
@@ -190,7 +195,9 @@ export type ImpostorOpts = { r1: number; band: number; far: number; farBand: num
 /** ビルボードの材質。instanceMatrix から位置・大きさ・向きを取り、aVar で種類を選ぶ。 */
 export function makeImpostorMaterial(env: Env, lighting: Lighting, atlas: ImpostorAtlas, o: ImpostorOpts, msaa: boolean): THREE.MeshStandardMaterial {
   const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0, side: THREE.DoubleSide, alphaTest: 0.35 });
-  mat.alphaToCoverage = msaa;
+  // 遠景のビルボードでカバレッジ・ディザを使うと「網戸」になる
+  mat.alphaToCoverage = false;
+  void msaa;
   const frames = atlas.frames.map((f) => new THREE.Vector4(f.W, f.Hf, 0, 0));
   while (frames.length < 4) frames.push(new THREE.Vector4(1, 1, 0, 0));
   patchMaterial(
@@ -230,10 +237,9 @@ export function makeImpostorMaterial(env: Env, lighting: Lighting, atlas: Impost
         float dist = distance(root.xz, uCamPos.xz);
         float fade = smoothstep(uImp.x - uImp.y, uImp.x, dist) * (1.0 - smoothstep(uImp.z - uImp.w, uImp.z, dist));
         float seed = flip_hash12(floor(root.xz * 3.7 + 0.5));
-        // 遠く（視程の 45% から）は半分に間引き、残りを少し大きくして密度を保つ
-        float thin = smoothstep(uImp.z * 0.4, uImp.z * 0.55, dist);
-        if (seed > 0.55) fade *= 1.0 - thin;
-        else scl *= 1.0 + 0.3 * thin;
+        // 間引きは CPU 側（チャンクごとの count）でやる。ここでは減った分だけ少し大きくして密度を保つ
+        float thin = smoothstep(uImp.z * 0.12, uImp.z * 0.75, dist);
+        scl *= 1.0 + 0.55 * thin;
         int vi = int(aVar + 0.5);
         vec4 fr = uFrames[vi];
         vec2 toCam2 = cameraPosition.xz - root.xz;
@@ -249,7 +255,7 @@ export function makeImpostorMaterial(env: Env, lighting: Lighting, atlas: Impost
         float cellF = fract(az / 6.2831853) * ${IMP_AZ}.0;
         float c0 = floor(cellF);
         float el = atan(cameraPosition.y - (root.y + 0.5 * Hh), dc);
-        float rowBlend = smoothstep(0.17, 0.42, el);
+        float rowBlend = smoothstep(0.36, 0.78, el);
         float fm = veg_flipMask(root);
         float flipped = step(flip_hash11(seed * 13.0 + 0.5), fm) * step(0.001, fm);
         // 数式ビュー: 遠くの木を全部「骨組み」で描くと白い粒の雲になる。3 本に 1 本だけ残す
@@ -294,13 +300,17 @@ export function makeImpostorMaterial(env: Env, lighting: Lighting, atlas: Impost
           float col = vImp2.z * uAtlasN2.x + mod(c, uAtlasN2.x);
           return vec2((col + vImp2.x) / (uAtlasN2.x * uAtlasN2.y), (row + vImp2.y) / ${IMP_ROWS}.0);
         }
+        // 4 コマを必ず引いて混ぜる。**条件分岐の中で texture2D を呼ばない**こと:
+        // 分岐の中では導関数が未定義になり、GPU が最も粗いミップを選んで
+        // 木が「50×90px のぼやけた矩形」に化ける（批評 R2 の 4 位の原因）
         vec4 veg_impSample(sampler2D t){
-          vec4 s = mix(texture2D(t, veg_impUv(vImp.x, 0.0)), texture2D(t, veg_impUv(vImp.x + 1.0, 0.0)), vImp.y);
-          if (vImp.z > 0.002) {
-            vec4 s1 = mix(texture2D(t, veg_impUv(vImp.x, 1.0)), texture2D(t, veg_impUv(vImp.x + 1.0, 1.0)), vImp.y);
-            s = mix(s, s1, vImp.z);
-          }
-          return s;
+          vec2 u00 = veg_impUv(vImp.x, 0.0);
+          vec2 u10 = veg_impUv(vImp.x + 1.0, 0.0);
+          vec2 u01 = veg_impUv(vImp.x, 1.0);
+          vec2 u11 = veg_impUv(vImp.x + 1.0, 1.0);
+          vec4 s0 = mix(texture2D(t, u00), texture2D(t, u10), vImp.y);
+          vec4 s1 = mix(texture2D(t, u01), texture2D(t, u11), vImp.y);
+          return mix(s0, s1, vImp.z);
         }`,
         "imp fs common",
       );

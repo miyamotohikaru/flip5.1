@@ -22,13 +22,13 @@ type Tier = { r0: number; r1: number; band: number; capNear: number; capMid: num
 function tierSettings(q: QualitySettings): Tier {
   switch (q.tier) {
     case "low":
-      return { r0: 24, r1: 80, band: 2.5, capNear: 90, capMid: 320, cell: 10, impCell: 128, chunk: 1024 };
+      return { r0: 22, r1: 62, band: 2.5, capNear: 90, capMid: 260, cell: 10, impCell: 128, chunk: 512 };
     case "mid":
-      return { r0: 34, r1: 100, band: 3, capNear: 140, capMid: 500, cell: 9, impCell: 192, chunk: 1024 };
+      return { r0: 32, r1: 70, band: 3, capNear: 130, capMid: 300, cell: 9, impCell: 192, chunk: 512 };
     case "ultra":
       return { r0: 65, r1: 170, band: 4.5, capNear: 320, capMid: 1100, cell: 7.5, impCell: 256, chunk: 1024 };
     default:
-      return { r0: 44, r1: 120, band: 4, capNear: 220, capMid: 800, cell: 8, impCell: 256, chunk: 1024 };
+      return { r0: 44, r1: 104, band: 4, capNear: 220, capMid: 640, cell: 8, impCell: 256, chunk: 1024 };
   }
 }
 
@@ -46,6 +46,9 @@ export class Trees {
   mid: THREE.InstancedMesh[] = [];
   litter: THREE.InstancedMesh;
   chunks: THREE.InstancedMesh[] = [];
+  /** チャンクの全インスタンス数と中心・半径（距離で間引くため） */
+  private chunkInfo: { full: number; cx: number; cz: number; r: number }[] = [];
+  private impFar = 1000;
   atlas: ImpostorAtlas;
   tier: Tier;
   private lastBuild = new THREE.Vector3(1e9, 0, 1e9);
@@ -64,7 +67,7 @@ export class Trees {
       t.band = 0.001;
     }
     for (let i = 0; i < lighting.csm.lights.length; i++) this.cascadeIndex.set(lighting.csm.lights[i].shadow.camera, i);
-    const msaa = q.msaaSamples > 0;
+    const msaa = q.msaaSamples >= 4;
     this.needle = makeNeedleAtlas(q.tier === "low" ? 192 : q.tier === "mid" ? 256 : 384);
     // 形
     for (const v of TREE_VARIANTS) this.geos.push({ lod0: buildConifer(v, 0), lod1: buildConifer(v, 1) });
@@ -131,8 +134,12 @@ export class Trees {
       const cz = Math.min(n - 1, Math.floor((sc.z[i] + WORLD.half) / t.chunk));
       buckets[cx * n + cz].push(i);
     }
+    this.impFar = q.treeDistance;
     for (const list of buckets) {
       if (list.length === 0) continue;
+      // 距離で count を減らして間引くので、並びを決定的にばらけさせておく
+      // （前から N 本だけ描いても、林の中で偏らないように）
+      list.sort((a, b) => (Math.imul(a, 2654435761) >>> 8) - (Math.imul(b, 2654435761) >>> 8));
       const geo = new THREE.InstancedBufferGeometry();
       geo.index = quad.index;
       geo.setAttribute("position", quad.getAttribute("position"));
@@ -163,6 +170,7 @@ export class Trees {
       mesh.visible = false; // アトラスが焼けてから
       parent.add(mesh);
       this.chunks.push(mesh);
+      this.chunkInfo.push({ full: list.length, cx: sphere.center.x, cz: sphere.center.z, r: sphere.radius });
     }
 
     // アトラスを焼く引き金（描画の中で renderer を得る）
@@ -280,10 +288,33 @@ export class Trees {
 
   update() {
     const cam = this.env.cameraPos;
+    this.updateImpostorChunks(cam.x, cam.z);
     const dx = cam.x - this.lastBuild.x, dz = cam.z - this.lastBuild.z;
     if (dx * dx + dz * dz < 6 * 6) return;
     this.lastBuild.copy(cam);
     this.rebuildLists(cam.x, cam.z);
+  }
+
+  /**
+   * 遠景のビルボードは 1 本 2 三角形でも本数が万単位になり、しかも映り込みでもう一度描かれる。
+   * チャンク（512m）ごとに「視程の外なら描かない」「遠いチャンクは本数を減らす」で submit 自体を減らす。
+   * 減らした分は表示側で少し大きくして密度を保つ（impostor.ts の uImp.z を見た拡大）。
+   */
+  private updateImpostorChunks(cx: number, cz: number) {
+    if (!this.atlas.baked) return;
+    const far = this.impFar;
+    for (let i = 0; i < this.chunks.length; i++) {
+      const c = this.chunks[i], info = this.chunkInfo[i];
+      const d = Math.max(0, Math.hypot(info.cx - cx, info.cz - cz) - info.r);
+      if (d > far) {
+        c.visible = false;
+        continue;
+      }
+      c.visible = true;
+      const t = Math.min(1, Math.max(0, (d - far * 0.06) / (far * 0.55)));
+      const frac = 1 - 0.85 * t * t * (3 - 2 * t);
+      c.count = Math.max(1, Math.ceil(info.full * frac));
+    }
   }
 
   private rebuildLists(cx: number, cz: number) {
