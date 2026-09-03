@@ -178,7 +178,7 @@ export class Post {
     u.uWarmth.value = clamp(warmth, -1, 1);
     // 夜は彩度を大きく落とす（プルキンエ現象＝暗いと錐体が働かず色が抜ける）。
     // 草の緑が読めるのが「青い昼」に見える一番の原因だった
-    u.uSaturation.value = 0.97 - 0.57 * night - 0.22 * storm - 0.05 * cloud * (1 - storm);
+    u.uSaturation.value = 0.97 + 0.30 * golden - 0.5 * night + 0.22 * storm - 0.05 * cloud * (1 - storm);
     // 黒を締める（夜明けの紫灰の一色フィルターを避ける）。夜は締めない（暗部が全部つぶれる）
     u.uContrast.value = 1.1 + 0.05 * golden - 0.16 * night - 0.1 * storm;
     // 影の青みは控えめに（朝夕が「Instagram のフィルター」にならないように）
@@ -230,12 +230,14 @@ export class Post {
     //   夜・嵐: env.exposure が上限に張り付いて「青い昼」「白飛びした灰色」になる。
     //       ここは追従の強さを 1 に上げて「狙った明るさ」に合わせ切る（空側の上限が 30 でも 6 でも同じ絵になる）。
     const dark = Math.max(night, 0.85 * storm);
-    u.uAutoRef.value = THREE.MathUtils.lerp(0.34, 0.011, night);
-    u.uAutoStrength.value = dbg.has("noauto") ? 0 : THREE.MathUtils.lerp(0.5, 1.0, dark);
-    (u.uAutoRange.value as THREE.Vector2).set(THREE.MathUtils.lerp(0.7, 0.15, dark), THREE.MathUtils.lerp(2.55, 30, dark));
+    u.uAutoRef.value = THREE.MathUtils.lerp(0.38, 0.045, night);
+    u.uAutoStrength.value = dbg.has("noauto") ? 0 : THREE.MathUtils.lerp(0.70, 1.0, dark);
+    (u.uAutoRange.value as THREE.Vector2).set(THREE.MathUtils.lerp(0.7, 0.15, dark), THREE.MathUtils.lerp(12.0, 30, dark));
     // 暗部の持ち上げ（影に空の環境光を残す）。夜だけは持ち上げない（空が乳白色になる）
     u.uLift.value = this.dbg.has("nograde") ? 0 : THREE.MathUtils.lerp(0.024, 0.004, night);
     u.uPivot.value = 0.42;
+    // AgX の白側の脱色を戻す。露出を上げるほど色が抜けるので、黄昏と嵐で多めに
+    u.uChromaBack.value = this.dbg.has("nograde") ? 0 : clamp(0.55 + 0.3 * golden + 0.3 * storm, 0, 0.9);
     if (dbg.has("nobloom")) u.uBloomStrength.value = 0;
     if (dbg.has("noao")) u.uAoStrength.value = 0;
     if (dbg.has("nolens")) u.uDropRain.value = 0;

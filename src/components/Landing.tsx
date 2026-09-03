@@ -12,9 +12,11 @@ type Props = {
   isMobile: boolean;
   onEnter: () => void;
   onAbout: () => void;
+  /** 黒板をぜんぶ見る（入口の黒板を前面に出して読む） */
+  onBoard?: () => void;
 };
 
-export default function Landing({ phase, progress, heightmapRes, isMobile, onEnter, onAbout }: Props) {
+export default function Landing({ phase, progress, heightmapRes, isMobile, onEnter, onAbout, onBoard }: Props) {
   // 「入る」は Enter / Space でも押せる（WorldView のキー処理）。自動フォーカスはしない（枠が出て騒がしい）
   const loading = phase === "loading";
   const pct = Math.round(Math.min(1, progress.p) * 100);
@@ -54,6 +56,11 @@ export default function Landing({ phase, progress, heightmapRes, isMobile, onEnt
             <span className="enter-label">{loading ? "計算中" : "入る"}</span>
             {loading && <span className="enter-pct">{pct}%</span>}
           </button>
+          {onBoard && (
+            <button className="about-link bb-link" onClick={onBoard} type="button">
+              黒板を読む
+            </button>
+          )}
           <button className="about-link" onClick={onAbout} type="button">
             この風景について
           </button>
