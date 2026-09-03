@@ -44,8 +44,8 @@ type Placed = {
 };
 
 type Rect = { x: number; y: number; w: number; h: number };
-/** dim = 入口の言葉の裏。**章の見出しはここには置かない**（重なって両方読めなくなる） */
-type Region = Rect & { dim?: boolean };
+/** 段。かつて「入口の言葉の裏に薄く書く段（dim）」があったが、重なって両方読めなくなるので外した */
+type Region = Rect;
 type Opts = { off: boolean; hold: boolean; all: boolean; still: boolean; pen: number; font: boolean; fullp: boolean };
 
 const PAD = 42;
@@ -159,23 +159,24 @@ export default function Blackboard({ phase, isMobile, full = false, onClose }: P
       regions = [];
       for (let p = 0; p < 8; p++) {
         for (let c = 0; c < cols; c++) {
-          regions.push({ x: pad + c * (colW + gap), y: p * pageH + top, w: colW, h: pageH - top - 34 });
+          regions.push({ x: pad + c * (colW + gap), y: p * pageH + top, w: colW, h: pageH - top - 40 });
         }
       }
     } else if (narrow) {
       regions = [
         { x: pad, y: 62, w: VW - pad * 2, h: landing.y - 62 - 8 },
-        { x: pad, y: landing.y + landing.h + 10, w: VW - pad * 2, h: VHview - (landing.y + landing.h) - 10 - 74 },
-        { x: pad, y: landing.y + landing.h * 0.34, w: VW - pad * 2, h: landing.h * 0.66 - 8, dim: true },
+        { x: pad, y: landing.y + landing.h + 24, w: VW - pad * 2, h: VHview - (landing.y + landing.h) - 24 - 74 },
       ];
     } else {
       regions = [
-        { x: VW * 0.5, y: 38, w: VW * 0.965 - VW * 0.5, h: VHview - 38 - 36 },
+        { x: VW * 0.5, y: 38, w: VW * 0.965 - VW * 0.5, h: VHview - 38 - 40 },
         { x: PAD, y: 34, w: VW * 0.44 - PAD, h: landing.y - 34 - 6 },
-        { x: PAD, y: landing.y + landing.h + 10, w: VW * 0.44 - PAD, h: VHview - (landing.y + landing.h) - 10 - 38 },
-        { x: PAD, y: landing.y + landing.h * 0.42, w: VW * 0.42 - PAD, h: landing.h * 0.58 - 8, dim: true },
+        { x: PAD, y: landing.y + landing.h + 24, w: VW * 0.44 - PAD, h: VHview - (landing.y + landing.h) - 24 - 38 },
       ];
     }
+    // 入口の言葉の裏に薄く書く段（dim）は外した。批評R4〜R7 が 4 ラウンド続けて
+    // 「15 秒後に左段が言葉の真下に書かれ、両方読めなくなる」と指摘したため。
+    // 同じ内容は「黒板を読む」の全景で読める。
 
     const cues = opts?.font ? SPECIMEN : wide ? boardScriptFull() : boardScript(24);
     const placed: Placed[] = [];
@@ -195,8 +196,6 @@ export default function Blackboard({ phase, isMobile, full = false, onClose }: P
           y = regions[ri].y;
         }
         const RR = regions[ri];
-        // 携帯は入口の言葉の裏に章を置かない（重なって両方読めなくなる）。desktop は題字を外してあるので置ける
-        if (RR.dim && narrow) break;
         placed.push({ cue, x: RR.x, y: y + (wide ? 16 : 12), size, at: t, dur: 240, colW: RR.w });
         y += h;
         bottom = Math.max(bottom, y);
@@ -228,7 +227,6 @@ export default function Blackboard({ phase, isMobile, full = false, onClose }: P
         at: t,
         dur,
         note,
-        back: !!RR.dim,
       });
       y += h;
       bottom = Math.max(bottom, y);
