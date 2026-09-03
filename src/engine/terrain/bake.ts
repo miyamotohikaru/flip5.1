@@ -126,18 +126,25 @@ void main(){
 }
 `;
 
-function makeTarget(res: number, type: THREE.TextureDataType = THREE.UnsignedByteType): THREE.WebGLRenderTarget {
+/**
+ * 焼き込み用のレンダーターゲット。
+ * mip = true のものはミップマップと異方性フィルタを付ける。地面を浅い角度で見ると
+ * 1 画素の足跡がテクスチャ空間で細長くなるので、バイリニアだけだと「一方向へ引き伸ばした
+ * 彗星形のにじみ」が出る（批評R4〜R6 の「岸のにじみ」）。
+ */
+function makeTarget(res: number, type: THREE.TextureDataType = THREE.UnsignedByteType, mip = false, aniso = 0): THREE.WebGLRenderTarget {
   const rt = new THREE.WebGLRenderTarget(res, res, {
     type,
     format: THREE.RGBAFormat,
     depthBuffer: false,
     stencilBuffer: false,
-    generateMipmaps: false,
-    minFilter: THREE.LinearFilter,
+    generateMipmaps: mip,
+    minFilter: mip ? THREE.LinearMipmapLinearFilter : THREE.LinearFilter,
     magFilter: THREE.LinearFilter,
     wrapS: THREE.MirroredRepeatWrapping,
     wrapT: THREE.MirroredRepeatWrapping,
   });
+  if (aniso > 0) rt.texture.anisotropy = aniso;
   rt.texture.name = "terrainBake";
   return rt;
 }
@@ -185,11 +192,12 @@ export function bakeTerrainAux(renderer: THREE.WebGLRenderer, env: Env, auxRes: 
   scene.add(mesh);
 
   // aux は RGBA16F。法線 xz を 8bit で持つと、なだらかな雪面で同じ値の平原ができて「折り紙」に見える
-  const aux = makeTarget(auxRes, THREE.HalfFloatType);
+  const aniso = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+  const aux = makeTarget(auxRes, THREE.HalfFloatType, true, aniso);
   const horizonA = makeTarget(horizonRes);
   const horizonB = makeTarget(horizonRes);
   const horizonTmp = makeTarget(horizonRes); // ぼかしの入力（使い終わったら捨てる）
-  const field = makeTarget(1024);
+  const field = makeTarget(1024, THREE.UnsignedByteType, true, aniso);
 
   const prevTarget = renderer.getRenderTarget();
   const prevShadow = renderer.shadowMap.autoUpdate;
