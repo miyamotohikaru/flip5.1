@@ -20,8 +20,8 @@ import Joystick from "./Joystick";
 type Phase = "loading" | "ready" | "in";
 type Hint = "on" | "fade" | "off";
 
-/** 操作ヒントを出しておく時間 */
-const HINT_MS = 8000;
+/** 操作ヒントを出しておく時間（作者の指示で 8 秒 → 40 秒。読む前に消えていた） */
+const HINT_MS = 40000;
 /** 入口のフェード（CSS の transition と合わせる） */
 const FADE_MS = 1100;
 
