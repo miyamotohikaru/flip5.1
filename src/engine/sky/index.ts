@@ -287,8 +287,8 @@ export class Sky {
     // ---- 大気: 靄（uFog）と地表の霧 ----
     const fogK = clamp((w.fog - 0.15) / 0.85, 0, 1);
     // 靄（エアロゾル）。太陽が低いほど厚い層を通るので、黄昏・薄明では 1.8 倍にして前方散乱を強める
-    const lowSun = 1 - smoothstep(0.02, 0.25, env.sunDir.y);
-    const hazeKm = 0.025 * (1 + 0.8 * lowSun) + 0.04 * Math.pow(fogK, 1.3);
+    const lowSun = 1 - smoothstep(0.03, 0.35, env.sunDir.y);
+    const hazeKm = 0.025 * (1 + 1.5 * lowSun) + 0.04 * Math.pow(fogK, 1.3);
     eu.uSkyParams.value.set(SHADOW_EXTENT, AERIAL_MAX, hazeKm, GROUND_ALT_KM);
     const mistK = smoothstep(0.5, 1.0, w.fog);
     const t = env.time;

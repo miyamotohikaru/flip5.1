@@ -19,11 +19,12 @@ function extinction(h: number, haze: number, groundAlt: number) {
   const dH = haze * Math.exp(-Math.max(h - groundAlt, 0) / 1.0);
   const dO = Math.max(0, 1 - Math.abs(hr - 25) / 15);
   // ミー（散乱＋吸収）。atmosphere.glsl.ts の flip_atmoMedium と同じ値にすること
-  // 係数 0.727 / 1.0 / 1.40 は波長依存（Angstrom 指数 1.5）
-  const m = 8.0e-3 * dM + dH * 0.9 + 1.0e-3 * dM + dH * 0.1;
-  tmpE[0] = 5.802e-3 * dR + m * 0.727 + 0.65e-3 * dO;
-  tmpE[1] = 13.558e-3 * dR + m * 1.0 + 1.881e-3 * dO;
-  tmpE[2] = 33.1e-3 * dR + m * 1.40 + 0.085e-3 * dO;
+  // 散乱は Angstrom 0.8（0.86/1.0/1.16）、吸収は AAE 4（0.43/1.0/2.44）
+  const mS = 1.0e-2 * dM + dH * 0.70;
+  const mA = 4.0e-3 * dM + dH * 0.75;
+  tmpE[0] = 5.802e-3 * dR + mS * 0.86 + mA * 0.43 + 0.65e-3 * dO;
+  tmpE[1] = 13.558e-3 * dR + mS * 1.0 + mA * 1.0 + 1.881e-3 * dO;
+  tmpE[2] = 33.1e-3 * dR + mS * 1.16 + mA * 2.44 + 0.085e-3 * dO;
   return tmpE;
 }
 
