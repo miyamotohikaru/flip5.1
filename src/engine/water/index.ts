@@ -149,8 +149,17 @@ export class Water {
     }
   }
 
+  /**
+   * 映り込み RT の倍率。high は core の 0.5 のままだと、映った山が 4〜5px のブロックに見える
+   * （批評ラウンド2）。high/ultra だけ 0.75 に上げる。core の値は変えない。
+   */
+  private reflScale(): number {
+    const t = this.q.tier;
+    return t === "high" || t === "ultra" ? Math.max(this.q.reflectionScale, 0.75) : this.q.reflectionScale;
+  }
+
   resize(width: number, height: number) {
-    const s = this.q.reflectionScale;
+    const s = this.reflScale();
     const rw = Math.max(1, Math.floor(width * s)), rh = Math.max(1, Math.floor(height * s));
     this.reflRT.setSize(rw, rh);
     (this.material.uniforms.uResolution.value as THREE.Vector2).set(width, height);
