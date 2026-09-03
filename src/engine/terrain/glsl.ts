@@ -217,10 +217,10 @@ if (fFloor > 0.0005) {
   // 褪せた針葉のリター（灰茶。R/G ≈ 1.0）→ 腐植（ほぼ黒）。
   // R が G に勝つ色（前は R/G = 1.32）は日なたで橙の砂に、1km 先では錆色に見える。
   // 明暗の比 4:1 を近距離で読ませるのが「林床」と「砂」の分かれ目
-  vec3 duff = mix(vec3(0.0180, 0.0188, 0.0113), vec3(0.0044, 0.0047, 0.0029),
+  vec3 duff = mix(vec3(0.0228, 0.0216, 0.0136), vec3(0.0056, 0.0053, 0.0035),
                   smoothstep(0.05, 0.90, fLitter + 0.45 * tPatch));
   // 苔・下草の緑が斑で混じる（緑側なので R/G は下がる方向）
-  duff = mix(duff, vec3(0.0105, 0.0158, 0.0068), 0.5 * smoothstep(0.15, 0.78, tMeso + 0.7 * tPatch + 0.5 * fLitter));
+  duff = mix(duff, vec3(0.0128, 0.0152, 0.0074), 0.35 * smoothstep(0.15, 0.78, tMeso + 0.7 * tPatch + 0.5 * fLitter));
   duff *= 1.0 + 0.16 * tMacro;
   tDuffCap = duff * 1.18; // 針葉や小枝の明るい粒でも腐植の 1.18 倍まで
   grass = mix(grass, duff, min(1.0, 2.5 * fFloor));
@@ -493,7 +493,7 @@ tCol *= 1.0 - 0.42 * cavD;
 tAO = 0.28 + 0.72 * tAO * tAO * (1.0 - 0.45 * cavD);
 // 樹冠は太陽だけでなく空も隠す。林床の明るさの大半は半球光なので、ここを落とさないと
 // いくら直達光を遮っても「日なたの砂」のままだった
-tAO *= 1.0 - 0.92 * fFloor;
+tAO *= 1.0 - 0.62 * fFloor;
 // 山の影（地平角マップ）: 太陽と、夜だけ月
 float tSunVis = flip_terrainSunVis(tXZ, uSunDir) * tCanopy;
 float tMoonVis = ((uMoonColor.r + uMoonColor.g + uMoonColor.b > 0.0005) ? flip_terrainSunVis(tXZ, uMoonDir) : 1.0) * tCanopy;
@@ -519,7 +519,7 @@ reflectedLight.indirectSpecular *= 1.0 - 0.98 * fFloor;
 // 樹冠が直達光を遮る（木漏れ日）。影担当の flip_sunOcclusion は camDist 25m から効くので、
 // それより手前の林床には林の遮蔽が一切かかっていなかった。ここで掛けると地形だけに閉じる。
 // tCanopy は 2.4m の斑なので、光の差す所は明るいまま残る
-reflectedLight.directDiffuse *= tCanopy;
+reflectedLight.directDiffuse *= mix(1.0, tCanopy, 0.35); // 影担当の flip_sunOcclusion と二重にならない程度に
 `;
 
 /**
