@@ -70,8 +70,8 @@ function ringDensity(tier: string): number[] {
   switch (tier) {
     case "low": return [110, 26, 8, 1.0];
     case "mid": return [140, 34, 11, 1.2];
-    case "ultra": return [340, 105, 42, 3.0];
-    default: return [270, 80, 27, 2.2];
+    case "ultra": return [340, 130, 46, 2.2];
+    default: return [270, 100, 33, 1.0];
   }
 }
 
@@ -209,12 +209,17 @@ void veg_grass(out vec3 p, out vec3 n){
   vec4 vm = texture2D(uVegMap, root2 * uVegMapInfo.y + 0.5);
   // 森の床: 草が薄いところ（vm.r）でも林（vm.g）が濃ければ下草と落ち葉を生やす。
   // これが無いと森の地面が「ぼやけた緑一色」になる
-  float floorD = smoothstep(0.22, 0.48, vm.g) * vm.g * 0.95 * uFloor.x;
+  float floorD = smoothstep(0.12, 0.34, vm.g) * (0.62 + 0.38 * vm.g) * uFloor.x;
+  // 裸の土（岩でも雪でもない斜面）にも、短い草をまばらに生やす。
+  // これが無いと傾いた土の面が「無地の絵の具」に見える（批評 R3 の 5 位）
+  float slope = 1.0 - tn.y;
+  float dirtD = (1.0 - vm.a) * smoothstep(0.03, 0.16, slope) * 0.95 * uFloor.x;
   float onFloor = step(vm.r * 0.8 + 0.03, floorD);
+  float onDirt = step(max(vm.r * 0.9, floorD) + 0.02, dirtD);
   // 植生マップの草地は 0.5 前後。そのまま確率に使うと草原でも半分しか生えず「刈った芝」に見える。
   // 生える／生えないの境目だけ残して、草地の中では満杯にする
-  float density = max(smoothstep(0.03, 0.52, vm.r), floorD);
-  density *= 1.0 - smoothstep(0.42, 0.72, 1.0 - tn.y);
+  float density = max(max(smoothstep(0.03, 0.52, vm.r), floorD), dirtD);
+  density *= 1.0 - smoothstep(0.52, 0.82, slope);
   density *= smoothstep(uLakeLevel + 0.30, uLakeLevel + 0.75, h);
   density *= 1.0 - smoothstep(380.0, 420.0, h);
   // 細かい斑（同じセルの株は同じ斑）
@@ -248,8 +253,10 @@ void veg_grass(out vec3 p, out vec3 n){
   W *= 1.0 - 0.10 * shortP;
   if (broad > 0.5) { W *= 2.4; H *= 0.60; }
   if (spike > 0.5) { W *= 0.55; H *= 1.7; }
-  if (fern > 0.5) { W *= 2.1; H *= 0.80; }
-  if (litter > 0.5) { W *= 1.5; H *= 0.32; }
+  if (fern > 0.5) { W *= 1.5; H *= 0.95; }
+  if (litter > 0.5) { W *= 1.25; H *= 0.34; }
+  // 土の斜面の草は短い（丈 0.5 倍）。斜面にすがりつく低い草
+  if (onDirt > 0.5) { H *= 0.6; W *= 1.0; }
   #ifdef VEG_SHADOW_PASS
   // 影用: 葉身が影テクセル（8cm）より細いと影が消えるので、株の影の塊として太らせる
   W = max(W * 3.5, 0.038) * step(0.001, H);

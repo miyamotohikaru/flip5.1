@@ -26,11 +26,11 @@ function tierSettings(q: QualitySettings): Tier {
     case "low":
       return { r0: 22, r1: 62, band: 5, capNear: 90, capMid: 260, cell: 10, impCell: 128, chunk: 512, shadowR: 160, capShadow: 700 };
     case "mid":
-      return { r0: 32, r1: 70, band: 7, capNear: 130, capMid: 300, cell: 10, impCell: 224, chunk: 768, shadowR: 200, capShadow: 550 };
+      return { r0: 32, r1: 70, band: 7, capNear: 130, capMid: 300, cell: 10, impCell: 224, chunk: 768, shadowR: 200, capShadow: 430 };
     case "ultra":
       return { r0: 65, r1: 170, band: 10, capNear: 320, capMid: 1100, cell: 7.5, impCell: 256, chunk: 1024, shadowR: 330, capShadow: 2400 };
     default:
-      return { r0: 44, r1: 104, band: 9, capNear: 220, capMid: 640, cell: 8, impCell: 256, chunk: 1024, shadowR: 280, capShadow: 1000 };
+      return { r0: 44, r1: 104, band: 9, capNear: 220, capMid: 640, cell: 8, impCell: 256, chunk: 1024, shadowR: 280, capShadow: 820 };
   }
 }
 
@@ -53,6 +53,8 @@ export class Trees {
   /** チャンクの全インスタンス数と中心・半径（距離で間引くため） */
   private chunkInfo: { full: number; cx: number; cz: number; r: number }[] = [];
   private impFar = 1000;
+  /** 1 = 映り込みカメラで描いている最中（LOD1 が 0m から受け持つ） */
+  private uReflect: THREE.IUniform<number> = { value: 0 };
   atlas: ImpostorAtlas;
   tier: Tier;
   private lastBuild = new THREE.Vector3(1e9, 0, 1e9);
@@ -91,7 +93,13 @@ export class Trees {
       const o0 = { lod: 0 as const, H: g.lod0.H, r0: t.r0, r1: t.r1, band: t.band };
       const o1 = { lod: 1 as const, H: g.lod1.H, r0: t.r0, r1: t.r1, band: t.band };
       const near = new THREE.InstancedMesh(g.lod0.geometry, makeTreeMaterial(env, lighting, this.needle, o0, msaa), t.capNear);
-      const mid = new THREE.InstancedMesh(g.lod1.geometry, makeTreeMaterial(env, lighting, this.needle, o1, msaa), t.capMid);
+      const mid = new THREE.InstancedMesh(g.lod1.geometry, makeTreeMaterial(env, lighting, this.needle, o1, msaa, this.uReflect), t.capMid);
+      // 近景（LOD0）は湖の映り込みに出さない。1 本 1000 三角形が 2 回描かれるのは高すぎる。
+      // 代わりに映り込みでは LOD1 が 0m から受け持つ（uReflect）
+      near.layers.set(LAYER.MAIN_ONLY);
+      mid.onBeforeRender = (_r, _s, camera) => {
+        this.uReflect.value = camera === env.camera ? 0 : 1;
+      };
       for (const m of [near, mid]) {
         m.count = 0;
         m.frustumCulled = false;
@@ -109,7 +117,8 @@ export class Trees {
       let midCount = 0;
       mid.onBeforeShadow = (_r, _o, _c, cam) => {
         midCount = mid.count;
-        if ((this.cascadeIndex.get(cam) ?? 0) >= 2) mid.count = 0; // 遠カスケードは地形の影で足りる
+        // 近カスケードだけ「葉のアルファ付きの影」。遠カスケードは 16 三角形の円錐プロキシに任せる
+        if ((this.cascadeIndex.get(cam) ?? 0) >= 1) mid.count = 0;
       };
       mid.onAfterShadow = () => {
         mid.count = midCount;
@@ -364,8 +373,9 @@ export class Trees {
     forEachInRadius(sc, cx, cz, t.shadowR, (i, d) => {
       const v = sc.v[i];
       if (d < t.r0 + margin) nearList[v].push(i);
-      if (d < t.r1 + margin) midList[v].push(i); // 中景は影も受け持つので 0〜r1 の全部
-      else farList[v].push(i);
+      if (d < t.r1 + margin) midList[v].push(i); // 中景は近カスケードの影も受け持つので 0〜r1 の全部
+      // 遠カスケードの影は円錐プロキシ。r0-band より外はすべてプロキシで落とす
+      if (d > t.r0 - t.band) farList[v].push(i);
     });
     let litterN = 0;
     for (let v = 0; v < V; v++) {

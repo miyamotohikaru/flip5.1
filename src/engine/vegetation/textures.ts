@@ -18,7 +18,7 @@ type Ctx = CanvasRenderingContext2D;
 function drawTwig(ctx: Ctx, r: () => number, x0: number, y0: number, ang: number, len: number, needleLen: number, dark: number, hue: number) {
   const dx = Math.cos(ang), dy = Math.sin(ang);
   // 芯
-  ctx.strokeStyle = `rgba(${Math.round(34 + dark * 16)}, ${Math.round(26 + dark * 12)}, ${20}, 1)`;
+  ctx.strokeStyle = `rgba(${Math.round(36 + dark * 12)}, ${Math.round(31 + dark * 11)}, ${25}, 1)`;
   ctx.lineWidth = Math.max(1.2, len * 0.05);
   ctx.beginPath();
   ctx.moveTo(x0, y0);
@@ -162,8 +162,87 @@ export function makeNeedleAtlas(cell = 256): THREE.CanvasTexture {
   tex.wrapT = THREE.ClampToEdgeWrapping;
   tex.minFilter = THREE.LinearMipmapLinearFilter;
   tex.magFilter = THREE.LinearFilter;
-  tex.generateMipmaps = true;
+  // ミップは自分で作る。GL の自動生成（アルファも単純平均）だと、針の隙間で
+  // アルファがカットオフを割って葉に「白いピンホール」が開く（批評 R3 の最重要破綻）
+  tex.mipmaps = buildCoverageMips(img, ALPHA_CUTOFF);
+  tex.generateMipmaps = false;
   tex.anisotropy = 4;
   tex.needsUpdate = true;
   return tex;
+}
+
+/** 葉カードのアルファテストのしきい値。ミップ生成と materials の alphaTest はこの値で揃える。 */
+export const ALPHA_CUTOFF = 0.34;
+
+/** ImageData を canvas に包む（three の texture.mipmaps は TexImageSource を受ける） */
+function toCanvas(img: ImageData): HTMLCanvasElement {
+  const c = document.createElement("canvas");
+  c.width = img.width;
+  c.height = img.height;
+  c.getContext("2d")!.putImageData(img, 0, 0);
+  return c;
+}
+
+/**
+ * アルファテストの被覆率を保つミップ列を作る。
+ *
+ * 針葉は 1〜2px の線の集まりなので、2x2 の単純平均で縮小するとアルファが 0.5 → 0.25 → …と落ち、
+ * `alphaTest` を割った画素が穴になる（＝葉の面に白い点が開く）。
+ * 各段で「アルファ×s がしきい値を超える画素の割合」が原寸と同じになる s を二分探索して掛ける。
+ * 色はアルファ重み付き平均（透明画素の色を混ぜると縁が暗くなるため）。
+ */
+function buildCoverageMips(level0: ImageData, cutoff: number): HTMLCanvasElement[] {
+  const cut = cutoff * 255;
+  let cover = 0;
+  for (let i = 3; i < level0.data.length; i += 4) if (level0.data[i] >= cut) cover++;
+  const target = cover / (level0.data.length / 4);
+  const mips: HTMLCanvasElement[] = [toCanvas(level0)];
+  let cur = level0;
+  let lv = 0;
+  while (cur.width > 1 || cur.height > 1) {
+    lv++;
+    const w = Math.max(1, cur.width >> 1), h = Math.max(1, cur.height >> 1);
+    const next = new ImageData(w, h);
+    const sd = cur.data, nd = next.data;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        let r = 0, g = 0, b = 0, a = 0, wsum = 0;
+        for (let oy = 0; oy < 2; oy++) {
+          for (let ox = 0; ox < 2; ox++) {
+            const sx = Math.min(cur.width - 1, x * 2 + ox), sy = Math.min(cur.height - 1, y * 2 + oy);
+            const k = (sy * cur.width + sx) * 4;
+            const av = sd[k + 3];
+            r += sd[k] * av;
+            g += sd[k + 1] * av;
+            b += sd[k + 2] * av;
+            a += av;
+            wsum += av;
+          }
+        }
+        const k = (y * w + x) * 4;
+        if (wsum > 0) {
+          nd[k] = r / wsum;
+          nd[k + 1] = g / wsum;
+          nd[k + 2] = b / wsum;
+        }
+        nd[k + 3] = a / 4;
+      }
+    }
+    // 被覆率が原寸と同じ（＋段が下るほど少し濃く）になるようにアルファを持ち上げる。
+    // 本物の針葉樹は遠いほど枝が重なって「濃い塊」に見えるので、段ごとに 1.18 倍ずつ詰める。
+    // これをやらないと、遠景の樹冠に 1px の空の穴が点々と残る
+    const targetL = Math.min(0.985, target * Math.pow(1.6, lv));
+    let lo = 1, hi = 24, s = 1;
+    for (let it = 0; it < 14; it++) {
+      s = (lo + hi) * 0.5;
+      let n = 0;
+      for (let i = 3; i < nd.length; i += 4) if (nd[i] * s >= cut) n++;
+      if (n / (nd.length / 4) < targetL) lo = s;
+      else hi = s;
+    }
+    for (let i = 3; i < nd.length; i += 4) nd[i] = Math.min(255, Math.round(nd[i] * s));
+    mips.push(toCanvas(next));
+    cur = next;
+  }
+  return mips;
 }

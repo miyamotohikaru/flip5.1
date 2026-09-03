@@ -13,6 +13,7 @@ import type { Env } from "../core/env";
 import type { Lighting } from "../core/lighting";
 import { patchMaterial, replaceOnce } from "../core/patch";
 import { VEG_FRAG_DITHER, VEG_LIGHTS_FRAGMENT, VEG_VERT_COMMON } from "./shaders";
+import { ALPHA_CUTOFF } from "./textures";
 
 export type TreeVariant = {
   /** 高さ（m）。個体はこれに 0.55〜1.5 のスケール */
@@ -32,10 +33,10 @@ export type TreeVariant = {
 // 段数を減らして 1 段あたりの枝を増やし、枝ごとに高さ・長さ・垂れ角をばらけさせると、
 // 段々の皿ではなく「もじゃもじゃした円錐」になる。
 export const TREE_VARIANTS: TreeVariant[] = [
-  { H: 15, crownBase: 0.18, lmax: 0.15, whorls: 9, perWhorl: 14, sideRatio: 0.50, seed: 1 },
-  { H: 12.5, crownBase: 0.05, lmax: 0.19, whorls: 9, perWhorl: 13, sideRatio: 0.50, seed: 2 },
-  { H: 17, crownBase: 0.12, lmax: 0.155, whorls: 10, perWhorl: 15, sideRatio: 0.45, seed: 3 },
-  { H: 10, crownBase: 0.03, lmax: 0.21, whorls: 8, perWhorl: 13, sideRatio: 0.55, seed: 4 },
+  { H: 15, crownBase: 0.18, lmax: 0.16, whorls: 9, perWhorl: 11, sideRatio: 0.50, seed: 1 },
+  { H: 12.5, crownBase: 0.05, lmax: 0.20, whorls: 9, perWhorl: 10, sideRatio: 0.50, seed: 2 },
+  { H: 17, crownBase: 0.12, lmax: 0.165, whorls: 10, perWhorl: 11, sideRatio: 0.45, seed: 3 },
+  { H: 10, crownBase: 0.03, lmax: 0.22, whorls: 8, perWhorl: 10, sideRatio: 0.55, seed: 4 },
 ];
 
 export type TreeGeo = { geometry: THREE.BufferGeometry; H: number; radius: number; tris: number };
@@ -147,7 +148,7 @@ export function buildConifer(v: TreeVariant, lod: 0 | 1): TreeGeo {
   };
 
   const up = new THREE.Vector3(0, 1, 0);
-  const nW = lod === 0 ? v.whorls : Math.max(4, Math.round(v.whorls * 0.55));
+  const nW = lod === 0 ? v.whorls : Math.max(4, Math.round(v.whorls * 0.58));
   const top = 0.88;
   let maxR = 0;
   // 1 段の枝を丸ごと 1 つの高さに置くと「皿」に見える。段の高さ（±0.05H）と
@@ -164,23 +165,46 @@ export function buildConifer(v: TreeVariant, lod: 0 | 1): TreeGeo {
     const bx = a0.x + Math.cos(az) * rt * 0.6, by = a0.y, bz = a0.z + Math.sin(az) * rt * 0.6;
     const w0 = new THREE.Vector3().crossVectors(d, up).normalize();
     const phase = rnd() * 6.2832;
-    const cellTop = rnd() < 0.5 ? 0 : 3;
-    // 横向きカード（垂れる小枝）: 全部の枝に。幅方向は「下」。少し捻る
-    let dn = new THREE.Vector3().crossVectors(w0, d).normalize();
-    if (dn.y > 0) dn = dn.negate();
-    dn.applyAxisAngle(d, (rnd() - 0.5) * 0.8);
-    addCard(bx, by, bz, d, dn, Lb, -0.16 * Lb, 0.40 * Lb, 1, 0.32, 0.92, flex, phase + 1.0, false);
-    // 上から見た扇カード: 一部の枝に（上・斜め上から見たときの厚み）
-    if (lod === 0 && !spire && rnd() < v.sideRatio) {
-      const w = w0.clone().applyAxisAngle(d, (rnd() - 0.5) * 1.2);
-      addCard(bx, by, bz, d, w, Lb * 0.95, -0.32 * Lb, 0.32 * Lb, cellTop, 0.14, 0.86, flex, phase, false);
+    // 枝 1 本を「大きな 1 枚のカード」で表すと、10〜40m で紙を貼った棒に見える（批評 R3 の 3 位）。
+    // 面積 1/3 の小さなカードを 3 枚、枝に沿って位置をずらし、向きと捻りを変えて出す。
+    // 総面積はほぼ同じだが、輪郭が細かくなって「もじゃもじゃした枝」に見える
+    const nCards = lod === 0 ? (spire ? 2 : 4) : 1;
+    for (let ci = 0; ci < nCards; ci++) {
+      const along = nCards === 1 ? 0 : (0.02 + (0.86 / nCards) * ci) * Lb;
+      const len = nCards === 1 ? Lb : Lb * (0.52 + 0.24 * rnd()) * (1 - 0.10 * ci);
+      // 枝の向きから左右に振る（枝先が扇状に分かれる）
+      const yawOff = nCards === 1 ? 0 : (rnd() - 0.5) * 0.95;
+      const dc = d.clone().applyAxisAngle(up, yawOff).normalize();
+      // 幅方向は「下」。カードごとに捻りを変えて、平らな面が揃わないようにする
+      let dn = new THREE.Vector3().crossVectors(new THREE.Vector3().crossVectors(dc, up).normalize(), dc).normalize();
+      if (dn.y > 0) dn = dn.negate();
+      dn.applyAxisAngle(dc, (rnd() - 0.5) * (nCards === 1 ? 0.8 : 1.1));
+      const cell = nCards === 1 ? 1 : ci === 1 ? (rnd() < 0.5 ? 0 : 3) : 1;
+      const v0 = cell === 1 ? 0.32 : 0.14, v1 = cell === 1 ? 0.92 : 0.86;
+      addCard(
+        bx + d.x * along, by + d.y * along, bz + d.z * along,
+        dc, dn, len, -0.26 * len, 0.58 * len, cell, v0, v1, flex, phase + 1.0 + ci * 2.1, false,
+      );
     }
   };
   for (let j = 0; j < nW; j++) {
     const u = nW > 1 ? j / (nW - 1) : 0;
     const tW = v.crownBase + spanT * u + (rnd() - 0.5) * 0.10;
     const L = v.lmax * H * (1 - 0.82 * Math.pow(u, 0.95));
-    const nB = lod === 0 ? v.perWhorl + (rnd() < 0.5 ? 1 : 0) : Math.max(4, Math.round(v.perWhorl * 0.44));
+    // 樹冠の「詰め物」: 段ごとに十字の縦カードを 2 枚、幹の周りに。
+    // 小さなカードを並べるだけだと枝の隙間に 1px の空が抜け、明るい空を背に白い点として読める。
+    // 枝より内側に置くので輪郭は変えず、隙間だけ塞ぐ
+    {
+      const a1 = axisAt(tW);
+      const hgt = (spanT * H) / Math.max(1, nW - 1) * (lod === 0 ? 1.5 : 1.7);
+      const wid = L * (lod === 0 ? 0.45 : 0.50);
+      for (let c2 = 0; c2 < 2; c2++) {
+        const aa = j * 1.13 + c2 * Math.PI * 0.5;
+        const wdir = new THREE.Vector3(Math.cos(aa), 0, Math.sin(aa));
+        addCard(a1.x, a1.y - hgt * 0.25, a1.z, up, wdir, hgt, -wid, wid, 2, 0.04, 0.96, 0.45 + 0.55 * tW, rnd() * 6.2832, true);
+      }
+    }
+    const nB = lod === 0 ? v.perWhorl + (rnd() < 0.5 ? 1 : 0) : Math.max(5, Math.round(v.perWhorl * 0.66));
     for (let b = 0; b < nB; b++) {
       // 黄金角で回して、段どうしの枝が同じ方位に並ばないようにする
       const az = j * 2.39996 + (b * Math.PI * 2) / nB + (rnd() - 0.5) * 0.9;
@@ -231,6 +255,7 @@ uniform vec4 uLod;      // x = r0, y = r1, z = 帯, w = 0: LOD0 / 1: LOD1 / 2: �
 uniform float uTreeH;
 uniform float uForceFlip;
 uniform float uLineMin;
+uniform float uReflect;   // 1 = 映り込みカメラ（近景 LOD0 は映さないので、LOD1 が 0m から受け持つ）
 varying vec4 vTree;     // fade, 裏返し, 種類, 個体シード
 varying vec3 vVegWorld;
 varying vec3 vConeN;
@@ -251,7 +276,7 @@ void veg_tree(out vec3 p, out vec3 n){
   float sw1 = uLod.y - uLod.z * lodJit;
   float fade = 1.0;
   if (uLod.w < 0.5) fade = step(dist, sw0);
-  else if (uLod.w < 1.5) fade = step(sw0, dist) * step(dist, sw1);
+  else if (uLod.w < 1.5) fade = mix(step(sw0, dist), 1.0, uReflect) * step(dist, sw1);
   vec3 lp = position;
   float hN = clamp(lp.y / uTreeH, 0.0, 1.0);
   vec2 wd = veg_windDir();
@@ -315,12 +340,8 @@ vec4 veg_treeAlbedo(out float relief){
   relief = 0.0;
   if (vTree.y > 0.5) return vec4(FLIP_LINE, 1.0);
   if (vTree.z < 0.5) return vec4(veg_bark(vBark, vTree.w, relief), 1.0);
+  // アルファのミップは textures.ts が被覆率を保つように作ってあるので、ここでは持ち上げない
   vec4 tex = texture2D(uNeedle, vTreeUv);
-  // ミップで平均されたアルファを持ち上げる。持ち上げないと遠くの枝が
-  // 半透明の膜になり、アルファ→カバレッジのディザが「網戸」として見える
-  vec2 duv = fwidth(vTreeUv) * uNeedleSize;
-  float ndLod = clamp(log2(max(max(duv.x, duv.y), 1.0)) - 0.4, 0.0, 3.0);
-  tex.a = clamp(tex.a * (1.0 + 0.34 * ndLod), 0.0, 1.0);
   vec3 tint = mix(vec3(1.02, 1.0, 0.88), vec3(0.88, 1.0, 1.10), vTree.w) * (0.86 + 0.28 * flip_hash11(vTree.w * 3.0 + 0.2));
   tint = mix(vec3(1.0), tint, uTintMix);
   return vec4(tex.rgb * tint, tex.a);
@@ -336,11 +357,13 @@ float veg_treeAO(){
 export type TreeMaterialOpts = { lod: 0 | 1 | 2; H: number; r0: number; r1: number; band: number };
 
 /** 木の材質（幹＋針葉カードを 1 つで）。 */
-export function makeTreeMaterial(env: Env, lighting: Lighting, needle: THREE.Texture, o: TreeMaterialOpts, msaa: boolean): THREE.MeshStandardMaterial {
-  const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0, side: THREE.DoubleSide, alphaTest: 0.4 });
+export function makeTreeMaterial(env: Env, lighting: Lighting, needle: THREE.Texture, o: TreeMaterialOpts, msaa: boolean, uReflect: THREE.IUniform<number> = { value: 0 }): THREE.MeshStandardMaterial {
+  const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0, side: THREE.DoubleSide, alphaTest: ALPHA_CUTOFF });
   // アルファ→カバレッジは近景（LOD0）で 4x MSAA のときだけ。
   // サンプル数が少ない／遠い枝では「網戸」のディザとして読めてしまう
-  mat.alphaToCoverage = msaa && o.lod === 0;
+  // アルファのミップを被覆率保存で作ったので中間値が減り、4x MSAA なら遠景でも
+  // カバレッジのディザが「網戸」に見えない。逆に切ると 1px の空の穴が点として残る
+  mat.alphaToCoverage = msaa;
   const uLod = { value: new THREE.Vector4(o.r0, o.r1, o.band, o.lod) };
   patchMaterial(
     mat,
@@ -352,6 +375,7 @@ export function makeTreeMaterial(env: Env, lighting: Lighting, needle: THREE.Tex
       shader.uniforms.uForceFlip = { value: 0 };
       shader.uniforms.uLineMin = { value: 0 };
       shader.uniforms.uTintMix = { value: 1 };
+      shader.uniforms.uReflect = uReflect;
       shader.uniforms.uNeedleSize = { value: needle.image ? (needle.image as HTMLCanvasElement).width : 512 };
       shader.vertexShader = replaceOnce(
         shader.vertexShader,
@@ -437,7 +461,7 @@ export function makeTreeMaterial(env: Env, lighting: Lighting, needle: THREE.Tex
 
 /** 影用（同じ風・同じ骨組み・同じアルファ） */
 export function makeTreeDepthMaterial(env: Env, needle: THREE.Texture, o: TreeMaterialOpts, ignoreFade = false): THREE.MeshDepthMaterial {
-  const mat = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, side: THREE.DoubleSide, alphaTest: 0.4 });
+  const mat = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, side: THREE.DoubleSide, alphaTest: ALPHA_CUTOFF });
   if (ignoreFade) mat.defines = { VEG_DEPTH_ALL: 1 };
   patchMaterial(
     mat,
@@ -449,6 +473,7 @@ export function makeTreeDepthMaterial(env: Env, needle: THREE.Texture, o: TreeMa
       shader.uniforms.uTreeH = { value: o.H };
       shader.uniforms.uForceFlip = { value: 0 };
       shader.uniforms.uLineMin = { value: 0 };
+      shader.uniforms.uReflect = { value: 0 };
       shader.vertexShader = replaceOnce(
         shader.vertexShader,
         "#include <common>",
@@ -482,11 +507,7 @@ export function makeTreeDepthMaterial(env: Env, needle: THREE.Texture, o: TreeMa
         `#ifndef VEG_DEPTH_ALL
         if (vTree.x < veg_ign(gl_FragCoord.xy)) discard;
         #endif
-        if (vTree.z > 0.5 && vTree.y < 0.5) {
-          vec2 duv = fwidth(vTreeUv) * uNeedleSize;
-          float ndLod = clamp(log2(max(max(duv.x, duv.y), 1.0)) - 0.4, 0.0, 3.0);
-          diffuseColor.a = clamp(texture2D(uNeedle, vTreeUv).a * (1.0 + 0.34 * ndLod), 0.0, 1.0);
-        }`,
+        if (vTree.z > 0.5 && vTree.y < 0.5) diffuseColor.a = texture2D(uNeedle, vTreeUv).a;`,
         "tree depth fs map",
       );
     },
