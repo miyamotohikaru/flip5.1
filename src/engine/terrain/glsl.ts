@@ -203,10 +203,12 @@ if (fFloor > 0.0005) {
   float fLitter = flip_vnoise(tXZ * 0.42 + 21.0);
   // 針葉のリター（赤茶）→ 腐植（黒に近い茶）。斑のスケールを変えて「絵の具」に見せない。
   // 彩度は落とさない: 灰色に寄せると（前回やっていた）AgX の脱色と合わさって「砂」に見える
-  vec3 duff = mix(vec3(0.074, 0.051, 0.023), vec3(0.028, 0.019, 0.011),
-                  smoothstep(0.18, 0.80, fLitter + 0.4 * tPatch));
-  // 苔とまばらな下草（濃い緑）が斑で混じる
-  duff = mix(duff, vec3(0.026, 0.046, 0.017), 0.85 * smoothstep(-0.35, 0.62, tMeso + 0.8 * tPatch + 0.5 * fLitter)); // 苔と下草の緑を厚めに（茶一色だと泥に見える）
+  // 針葉のリター（批評R3 指定の (0.20,0.16,0.08)）→ 腐植（黒に近い茶）。
+  // 明暗の比 5:1 を近距離で読ませるのが「林床」と「砂」の分かれ目
+  vec3 duff = mix(vec3(0.062, 0.047, 0.022), vec3(0.014, 0.010, 0.005),
+                  smoothstep(0.05, 0.90, fLitter + 0.45 * tPatch));
+  // 苔は斑で少しだけ。緑を混ぜすぎると R≈G のカーキ＝まさに「砂」の色になる（R2→R3 の失敗）
+  duff = mix(duff, vec3(0.022, 0.036, 0.014), 0.35 * smoothstep(0.18, 0.78, tMeso + 0.7 * tPatch + 0.5 * fLitter));
   duff *= 1.0 + 0.16 * tMacro;
   grass = mix(grass, duff, min(1.0, 2.5 * fFloor));
   // 樹冠の下は空が見えない。さらに λ12m の「木が混んで暗い溜まり」を作る
@@ -223,13 +225,35 @@ if (fFloor > 0.0005) {
 }
 // 中景（10〜60m）: 丈の高い草の群れ（2m）のやわらかい明暗
 if (tDist < 160.0 && uReflect < 0.5) grass *= 1.0 + 0.16 * flip_fbm(tXZ * 0.55 + 8.0, 2) * (1.0 - smoothstep(60.0, 160.0, tDist));
+// 林床の中景（5〜55m）: 落ち葉・小枝の斑（λ25cm / 8cm）。近景の針葉は 12m で消えるので、
+// ここが空くと 12〜50m の帯が「なめらかな砂の斜面」になる（批評R3 の「明るい砂」の主因）
+if (fFloor > 0.01 && tDist < 55.0 && uReflect < 0.5) {
+  float mFade = 1.0 - smoothstep(26.0, 55.0, tDist);
+  float l1 = flip_vnoise(tXZ * 4.0 + 31.0), l2 = flip_vnoise(tXZ * 12.0 + 47.0);
+  grass *= 1.0 + (0.72 * l1 + 0.46 * l2 - 0.59) * fFloor * mFade;
+}
 // 枯れ草・落ち葉のリター（株の間から見える地面）。λ 3.5m の斑で 70m まで。
 // これが無いと地面が「一色の緑の絵の具」になる
 if (tDist < 70.0 && uReflect < 0.5) {
   float lit = smoothstep(0.42, 0.86, flip_vnoise(tXZ * 0.29 + 17.0) + 0.45 * tPatch) * (1.0 - smoothstep(28.0, 70.0, tDist));
   grass = mix(grass, vec3(0.155, 0.125, 0.062), 0.5 * lit * (1.0 - fFloor)); // 林床は下の duff が持つ
 }
-vec3 dirt = vec3(0.105, 0.078, 0.052) * (1.0 + 0.2 * tMacro);
+vec3 dirt = vec3(0.105, 0.078, 0.052) * (1.0 + 0.2 * tMacro + 0.28 * tMeso + 0.20 * tPatch); // 遠景の土も無地にしない（焼いた場の使い回しでタップは増えない）
+// 斜面の土（批評R3 4位）: λ6m（振幅 0.35）と λ1.5m（振幅 0.2）の 2 段。
+// 一段だけだと「無地のエアブラシ」に見える。傾き 25°超には 0.6 倍の暗い縦筋（雨裂）
+vec2 dirtN = vec2(0.0);
+if (dirtM > 0.02 && tDist < 520.0) {
+  float dFade = 1.0 - smoothstep(260.0, 520.0, tDist);
+  vec3 d6 = tn_gnoised(tXZ * 0.17 + 29.0);
+  vec3 d15 = tn_gnoised(tXZ * 0.66 + 41.0);
+  dirt *= 1.0 + (0.35 * d6.x + 0.20 * d15.x) * dFade;
+  dirtN = (d6.yz * (0.17 * 0.55) + d15.yz * (0.66 * 0.09)) * dFade;
+  float steepD = smoothstep(0.09, 0.22, tSlope);
+  if (steepD > 0.01) {
+    float rill = 1.0 - abs(flip_gnoise(vec2(dot(tXZ, vec2(0.83, -0.55)) * 0.42, tH * 0.045) + 3.0));
+    dirt *= 1.0 - 0.40 * rill * rill * rill * steepD * dFade;
+  }
+}
 vec3 scree = vec3(0.19, 0.185, 0.175) * (0.85 + 0.3 * tMeso);
 vec3 rock = vec3(0.17, 0.155, 0.14) * (1.0 + 0.25 * tMacro);
 vec3 snow = vec3(0.60, 0.64, 0.71);
@@ -291,10 +315,14 @@ if (tNear > 0.0) {
   float grain = flip_vnoise(tXZ * 30.0 + 1.0);
   grass *= 1.0 + ((0.8 * blades - 0.4 + 0.5 * edge) * dNear0 + (0.4 * grain - 0.2) * dNear1) * gDet;
   // 土が透ける斑（房の間・踏み跡）
-  // 林床の細部: 針葉・小枝・落ち枝の粒（草の株・葉の模様の代わり。上の dome / grain を使い回す）
-  if (fFloor > 0.01) grass *= 1.0 + ((0.70 * dome - 0.34) * dNear2 + (0.55 * grain - 0.27) * dNear0) * fFloor;
+  // 林床の細部: 落ちた針葉・小枝・落ち枝。草の「葉の筋」と同じノイズ（blades / edge）を
+  // 色と強さだけ変えて使う（針葉は細長いので形はそのまま合う）。ここが平坦だと砂に見える
+  if (fFloor > 0.01) {
+    float needles = 1.6 * blades - 0.88 + 0.55 * edge; // 平均 0（明るさを上げずにコントラストだけ足す）
+    grass *= 1.0 + (0.80 * needles * dNear0 + (0.85 * dome - 0.42) * dNear2 + (0.75 * grain - 0.37) * dNear1) * fFloor;
+  }
   // 房の間の土（踏み跡）。林床では腐植の色（草地の土より暗い）
-  vec3 soil = mix(vec3(0.075, 0.055, 0.035), vec3(0.036, 0.028, 0.018), fFloor) * (0.8 + 0.4 * grain);
+  vec3 soil = mix(vec3(0.075, 0.055, 0.035), vec3(0.018, 0.013, 0.007), fFloor) * (0.8 + 0.4 * grain); // 林床の踏み跡は腐植と同じ暗さに
   float bare = smoothstep(0.58, 0.8, flip_vnoise(tXZ * 0.9 + 2.0)) * (1.0 - 0.7 * dome);
   grass = mix(grass, soil, 0.5 * bare * dNear1);
   // 砂: 粒と小石（水際ほど多い）
@@ -389,6 +417,7 @@ if (rockM > 0.01 || screeM > 0.06) {
   }
 }
 
+if (dirtM > 0.02 && (dirtN.x != 0.0 || dirtN.y != 0.0)) wN = normalize(wN - vec3(dirtN.x, 0.0, dirtN.y) * gN.y * dirtM);
 vec3 tCol = grass;
 tCol = mix(tCol, dirt, dirtM);
 tCol = mix(tCol, scree, screeM);
