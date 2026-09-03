@@ -36,7 +36,7 @@ const q = flag("q", null);
 const base = process.env.FLIP_URL ?? "http://localhost:3051";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const SHOT_NAMES = ["golden", "noon", "dawn", "cloudy", "rain", "storm", "night", "sunset_water", "forest", "ridge", "flip_half", "flip_full"];
+const SHOT_NAMES = ["golden", "noon", "dawn", "cloudy", "rain", "storm", "night", "sunset_water", "forest", "ridge", "noon_side", "cloudy_side", "flip_half", "flip_full"];
 let targets = [];
 if (flag("url")) targets = [{ name, url: String(flag("url")) }];
 else if (flag("all")) targets = SHOT_NAMES.map((s) => ({ name: `${name}_${s}`, url: `/?shot=${s}` }));
