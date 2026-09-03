@@ -97,7 +97,7 @@ float flip_heightPoint(vec2 xz){
 /** 針葉樹の天蓋のおおよその高さ（m）。林の密度 1 のところの木の高さ */
 #define FLIP_CANOPY 18.0
 /** 樹冠の真下で直達光をどれだけ遮るか（地形の tCanopy の 0.88 を引き継ぐ） */
-#define FLIP_UNDER_K 0.85
+#define FLIP_UNDER_K 0.60
 
 /**
  * 遠景の太陽の遮蔽（0 = 影, 1 = 日なた）。CSM のシャドウマップが届かない外側を埋める。
@@ -118,45 +118,51 @@ float flip_sunOcclusion(vec3 wp, vec3 sunDir, float camDist){
   float above = max(0.0, wp.y - ground);
   vec3 lifted = normalize(sunDir + vec3(0.0, above * 0.0033, 0.0));
   float vis = flip_terrainSunVis(wp.xz, lifted);
+  if (uSunOccParams.x < 0.5) return vis; // ?dbg=nosunocc
+
+  // 近景では CSM が本物の木の影を落とすので、林の「統計」は足さない。
+  // ここを切らないと、木が 1 本しかない開けた斜面まで一律に暗くなる（批評 R5 の cloudy_side）。
+  // 速さの面でも大きい: 手前の草（重ね描きが厚い）はここで抜けてレイマーチを 1 度も回さない。
+  float far = smoothstep(uSunOccParams.z, uSunOccParams.w, camDist);
+  if (far < 0.004) return vis;
+
   vec2 hxz = sunDir.xz;
   float hl = length(hxz);
   if (hl < 1e-4) return vis; // 真上の太陽（林は帯を落とさない）
   vec2 dir = hxz / hl;
   float tanE = sunDir.y / hl;
   float reach = clamp(FLIP_CANOPY / tanE, 14.0, 420.0);
-  // 太陽方向に 8 歩。天蓋が光線より上にある標本が 1 つでもあれば影（＝落ち影のマスク）。
-  // 密度をそのまま暗さにすると弱すぎるので、まず「林らしさ 0..1」に伸ばしてから使う。
-  //
-  // 天蓋を平らな板として扱うと、影が「幅も間隔も一定の平行リボン（畑の畝）」になる（批評 R4 の 4 番）。
-  // 木 1 本ごとの高さ（λ≈12m）と林の縁の凹凸（λ≈36m）で天蓋を波打たせ、
-  // さらに標本の位置を太陽と直角にずらして帯の縁をぎざぎざにする。
+
+  // 開けた場所はここで抜ける（2 タップだけ）。画面の大半がこの分岐で終わる
+  float gHere = texture2D(uSunVeg, wp.xz * uHeightmapInfo.y + 0.5).g;
+  float gMid = texture2D(uSunVeg, (wp.xz + dir * reach * 0.55) * uHeightmapInfo.y + 0.5).g;
+  if (max(gHere, gMid) < 0.10) return vis;
+
+  // ② 太陽方向に 6 歩。天蓋が光線より上にある標本が 1 つでもあれば影（＝落ち影のマスク）。
+  // 天蓋を平らな板として扱うと影が「幅も間隔も一定の畝」になるので、木 1 本ごと（λ≈12m）と
+  // 林分ごと（λ≈36m）のノイズで高さを波打たせ、標本を太陽と直角にずらして帯の縁をぎざぎざにする。
   vec2 perp = vec2(-dir.y, dir.x);
-  float wob = (flip_sunNoise(wp.xz * 0.07) - 0.5) * 11.0;   // 帯の縁の左右のずれ（m）
+  float wob = (flip_sunNoise(wp.xz * 0.07) - 0.5) * 11.0;
   float occ = 0.0;
-  for (int i = 1; i <= 8; i++){
-    float t = float(i) / 8.0;
+  for (int i = 1; i <= 6; i++){
+    float t = float(i) / 6.0;
     float d = reach * t;
     vec2 sxz = wp.xz + dir * d + perp * wob * t;
     float g = texture2D(uSunVeg, sxz * uHeightmapInfo.y + 0.5).g;
-    float cov = smoothstep(0.02, 0.20, g); // 林らしさ（疎林でも木の丈は同じ）
-    // 木 1 本ごとの丈のばらつき × 林分ごとのばらつき。縁の木は少し低い
+    float cov = smoothstep(0.12, 0.40, g); // 帯を落とすのは「林」だけ。まばらな木立では落とさない
     float hv = (0.45 + 1.1 * flip_sunNoise(sxz * 0.085)) * (0.75 + 0.5 * flip_sunNoise(sxz * 0.028 + 17.3));
     float canopy = flip_heightPoint(sxz) + FLIP_CANOPY * hv * mix(0.7, 1.0, cov);
     float ray = wp.y + d * tanE;
-    // 天蓋が光線より上にある分だけ効く（縁は 3m でぼかす）。影の先端 30% は薄い
-    float taper = 1.0 - 0.55 * smoothstep(0.35, 1.0, t);
+    float taper = 1.0 - 0.55 * smoothstep(0.35, 1.0, t); // 影の先端 30% は薄い
     occ = max(occ, cov * smoothstep(-3.0, 3.0, canopy - ray) * taper);
   }
-  // ③ 樹冠の下。地面（と草）から見て真上が林なら、距離に関係なく直達光は届かない。
-  // 太陽が低いほど斜めに抜けるので、遮蔽は太陽高度が高いほど強い。
-  // 梢の高さまで登ると効かなくなる（木そのものは暗くしない）。
-  float gHere = texture2D(uSunVeg, wp.xz * uHeightmapInfo.y + 0.5).g;
-  float covHere = smoothstep(0.02, 0.20, gHere);
+
+  // ③ 樹冠の真下（閉じた林だけ）。地面から見て真上が林なら直達光は届かない。
+  // 閾値を高くしてあるのは、疎林や単木の斜面まで一律に暗くしないため。
+  float covHere = smoothstep(0.25, 0.55, gHere);
   float under = covHere * (1.0 - smoothstep(0.0, FLIP_CANOPY * 0.9, above)) * (0.45 + 0.55 * sunDir.y);
-  // 近景は CSM が本物の落ち影を出すので帯（②）は徐々に効かせる（既定 25→120m）。
-  // uSunOccParams.x = 0（?dbg=nosunocc）なら林の遮蔽（②③）だけ切って山の影は残す
-  float band = uSunOccParams.y * smoothstep(uSunOccParams.z, uSunOccParams.w, camDist);
-  float shade = uSunOccParams.x * max(band * occ, FLIP_UNDER_K * under);
+
+  float shade = far * max(uSunOccParams.y * occ, FLIP_UNDER_K * under);
   return vis * (1.0 - shade);
 }
 #endif

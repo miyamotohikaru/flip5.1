@@ -161,7 +161,7 @@ export class Env {
     uSunVeg: { value: null as THREE.Texture | null },
     /** 遠景の遮蔽のつまみ（core/lighting.ts が入れる）。
      *  x = 林の帯を効かせるか 0/1（?dbg=nosunocc で 0）, y = 帯の強さ, z/w = 効き始める距離/効き切る距離（m） */
-    uSunOccParams: { value: new THREE.Vector4(1, 0.88, 25, 120) },
+    uSunOccParams: { value: new THREE.Vector4(1, 0.88, 35, 110) },
     // ---- 空モジュール（sky/）が毎フレーム値を入れる。他モジュールは flip_atmosphere チャンクの関数経由で使う ----
     /** 大気の透過率 LUT（Hillaire 2020。x = 視線の天頂角, y = 高度。RGBA16F 256×64） */
     uSkyTransLut: { value: null as THREE.Texture | null },
