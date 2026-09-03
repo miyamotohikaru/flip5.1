@@ -40,6 +40,48 @@ export const TREE_VARIANTS: TreeVariant[] = [
 
 export type TreeGeo = { geometry: THREE.BufferGeometry; H: number; radius: number; tris: number };
 
+/**
+ * 影だけの遠景プロキシ（幹の四角柱 ＋ 樹冠の円錐 = 16 三角形）。
+ * 100〜300m の木にも落ち影を出したいが、LOD1（88 三角形）を影のパスで何千本も描くと
+ * 予算を超える。この距離では影の輪郭しか読めないので、solid な円錐で足りる。
+ */
+export function buildShadowProxy(v: TreeVariant, radius: number): THREE.BufferGeometry {
+  const H = v.H;
+  const pos: number[] = [];
+  const idx: number[] = [];
+  const seg = 6;
+  // 幹（四角柱）
+  const r0 = 0.014 * H + 0.05;
+  const base = 0;
+  for (let ring = 0; ring < 2; ring++) {
+    const y = ring === 0 ? -0.3 : H * 0.98;
+    const rr = ring === 0 ? r0 : r0 * 0.35;
+    for (let k = 0; k < 4; k++) {
+      const a = (k / 4) * Math.PI * 2;
+      pos.push(Math.cos(a) * rr, y, Math.sin(a) * rr);
+    }
+  }
+  for (let k = 0; k < 4; k++) {
+    const a = base + k, b = base + ((k + 1) % 4), c = base + 4 + k, d = base + 4 + ((k + 1) % 4);
+    idx.push(a, c, b, b, c, d);
+  }
+  // 樹冠（円錐）: 枝の届く半径の 8 割
+  const cb = pos.length / 3;
+  const rc = radius * 0.8;
+  const yb = v.crownBase * H;
+  pos.push(0, H * 1.0, 0);
+  for (let k = 0; k < seg; k++) {
+    const a = (k / seg) * Math.PI * 2;
+    pos.push(Math.cos(a) * rc, yb, Math.sin(a) * rc);
+  }
+  for (let k = 0; k < seg; k++) idx.push(cb, cb + 1 + ((k + 1) % seg), cb + 1 + k);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  geo.setIndex(idx);
+  geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, H * 0.5, 0), Math.hypot(H * 0.55, rc));
+  return geo;
+}
+
 const CELL = 0.5; // 針葉アトラスは 2×2
 
 export function buildConifer(v: TreeVariant, lod: 0 | 1): TreeGeo {
@@ -202,9 +244,14 @@ void veg_tree(out vec3 p, out vec3 n){
   mat3 rotT = transpose(rot);
   float dist = distance(root.xz, uCamPos.xz);
   float seed = flip_hash12(floor(root.xz * 3.7 + 0.5));
+  // LOD の切り替え: 画素ごとのディザで溶かすと「網戸」に見えるので、木ごとに切り替え距離を
+  // ばらけさせて 1 本ずつパッと入れ替える。LOD0 と LOD1 の輪郭はほぼ同じなので飛びは目立たない
+  float lodJit = flip_hash11(seed * 31.0 + 5.0);
+  float sw0 = uLod.x - uLod.z * lodJit;
+  float sw1 = uLod.y - uLod.z * lodJit;
   float fade = 1.0;
-  if (uLod.w < 0.5) fade = 1.0 - smoothstep(uLod.x - uLod.z, uLod.x, dist);
-  else if (uLod.w < 1.5) fade = smoothstep(uLod.x - uLod.z, uLod.x, dist) * (1.0 - smoothstep(uLod.y - uLod.z, uLod.y, dist));
+  if (uLod.w < 0.5) fade = step(dist, sw0);
+  else if (uLod.w < 1.5) fade = step(sw0, dist) * step(dist, sw1);
   vec3 lp = position;
   float hN = clamp(lp.y / uTreeH, 0.0, 1.0);
   vec2 wd = veg_windDir();
@@ -244,6 +291,7 @@ void veg_tree(out vec3 p, out vec3 n){
 /** フラグメント: 樹皮と針葉の色（線形）。flip_noise / flip_flip の後に置く。 */
 export const TREE_FRAG_COLOR = /* glsl */ `
 uniform sampler2D uNeedle;
+uniform float uNeedleSize;   // 針葉アトラスの 1 辺（画素）
 uniform float uTreeH;
 varying vec4 vTree;
 varying vec3 vVegWorld;
@@ -268,6 +316,11 @@ vec4 veg_treeAlbedo(out float relief){
   if (vTree.y > 0.5) return vec4(FLIP_LINE, 1.0);
   if (vTree.z < 0.5) return vec4(veg_bark(vBark, vTree.w, relief), 1.0);
   vec4 tex = texture2D(uNeedle, vTreeUv);
+  // ミップで平均されたアルファを持ち上げる。持ち上げないと遠くの枝が
+  // 半透明の膜になり、アルファ→カバレッジのディザが「網戸」として見える
+  vec2 duv = fwidth(vTreeUv) * uNeedleSize;
+  float ndLod = clamp(log2(max(max(duv.x, duv.y), 1.0)) - 0.4, 0.0, 3.0);
+  tex.a = clamp(tex.a * (1.0 + 0.34 * ndLod), 0.0, 1.0);
   vec3 tint = mix(vec3(1.02, 1.0, 0.88), vec3(0.88, 1.0, 1.10), vTree.w) * (0.86 + 0.28 * flip_hash11(vTree.w * 3.0 + 0.2));
   tint = mix(vec3(1.0), tint, uTintMix);
   return vec4(tex.rgb * tint, tex.a);
@@ -285,7 +338,9 @@ export type TreeMaterialOpts = { lod: 0 | 1 | 2; H: number; r0: number; r1: numb
 /** 木の材質（幹＋針葉カードを 1 つで）。 */
 export function makeTreeMaterial(env: Env, lighting: Lighting, needle: THREE.Texture, o: TreeMaterialOpts, msaa: boolean): THREE.MeshStandardMaterial {
   const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0, side: THREE.DoubleSide, alphaTest: 0.4 });
-  mat.alphaToCoverage = msaa;
+  // アルファ→カバレッジは近景（LOD0）で 4x MSAA のときだけ。
+  // サンプル数が少ない／遠い枝では「網戸」のディザとして読めてしまう
+  mat.alphaToCoverage = msaa && o.lod === 0;
   const uLod = { value: new THREE.Vector4(o.r0, o.r1, o.band, o.lod) };
   patchMaterial(
     mat,
@@ -297,6 +352,7 @@ export function makeTreeMaterial(env: Env, lighting: Lighting, needle: THREE.Tex
       shader.uniforms.uForceFlip = { value: 0 };
       shader.uniforms.uLineMin = { value: 0 };
       shader.uniforms.uTintMix = { value: 1 };
+      shader.uniforms.uNeedleSize = { value: needle.image ? (needle.image as HTMLCanvasElement).width : 512 };
       shader.vertexShader = replaceOnce(
         shader.vertexShader,
         "#include <common>",
@@ -388,6 +444,7 @@ export function makeTreeDepthMaterial(env: Env, needle: THREE.Texture, o: TreeMa
     env,
     (shader) => {
       shader.uniforms.uNeedle = { value: needle };
+      shader.uniforms.uNeedleSize = { value: needle.image ? (needle.image as HTMLCanvasElement).width : 512 };
       shader.uniforms.uLod = { value: new THREE.Vector4(o.r0, o.r1, o.band, o.lod) };
       shader.uniforms.uTreeH = { value: o.H };
       shader.uniforms.uForceFlip = { value: 0 };
@@ -414,6 +471,7 @@ export function makeTreeDepthMaterial(env: Env, needle: THREE.Texture, o: TreeMa
         `#include <common>
         ${VEG_FRAG_DITHER}
         uniform sampler2D uNeedle;
+        uniform float uNeedleSize;
         varying vec4 vTree;
         varying vec2 vTreeUv;`,
         "tree depth fs common",
@@ -424,7 +482,11 @@ export function makeTreeDepthMaterial(env: Env, needle: THREE.Texture, o: TreeMa
         `#ifndef VEG_DEPTH_ALL
         if (vTree.x < veg_ign(gl_FragCoord.xy)) discard;
         #endif
-        if (vTree.z > 0.5 && vTree.y < 0.5) diffuseColor.a = texture2D(uNeedle, vTreeUv).a;`,
+        if (vTree.z > 0.5 && vTree.y < 0.5) {
+          vec2 duv = fwidth(vTreeUv) * uNeedleSize;
+          float ndLod = clamp(log2(max(max(duv.x, duv.y), 1.0)) - 0.4, 0.0, 3.0);
+          diffuseColor.a = clamp(texture2D(uNeedle, vTreeUv).a * (1.0 + 0.34 * ndLod), 0.0, 1.0);
+        }`,
         "tree depth fs map",
       );
     },

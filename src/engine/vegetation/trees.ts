@@ -11,24 +11,26 @@ import { LAYER } from "../core/pipeline";
 import { patchMaterial, replaceOnce } from "../core/patch";
 import type { QualitySettings } from "../core/quality";
 import { WORLD } from "../core/heightfield";
-import { buildConifer, makeTreeDepthMaterial, makeTreeMaterial, TREE_VARIANTS, type TreeGeo } from "./conifer";
+import { buildConifer, buildShadowProxy, makeTreeDepthMaterial, makeTreeMaterial, TREE_VARIANTS, type TreeGeo } from "./conifer";
 import { ImpostorAtlas, impostorQuad, makeImpostorMaterial } from "./impostor";
 import { forEachInRadius, scatterTrees, type Scatter } from "./placement";
 import { makeNeedleAtlas } from "./textures";
 import { stampTreeRoots, type VegMap } from "./vegmap";
 import { VEG_VERT_COMMON } from "./shaders";
 
-type Tier = { r0: number; r1: number; band: number; capNear: number; capMid: number; cell: number; impCell: number; chunk: number };
+type Tier = { r0: number; r1: number; band: number; capNear: number; capMid: number; cell: number; impCell: number; chunk: number;
+  /** 影だけ落とす遠景プロキシの半径と上限（r1 の外側 〜 shadowR） */
+  shadowR: number; capShadow: number };
 function tierSettings(q: QualitySettings): Tier {
   switch (q.tier) {
     case "low":
-      return { r0: 24, r1: 80, band: 2.5, capNear: 90, capMid: 320, cell: 10, impCell: 128, chunk: 1024 };
+      return { r0: 22, r1: 62, band: 5, capNear: 90, capMid: 260, cell: 10, impCell: 128, chunk: 512, shadowR: 160, capShadow: 700 };
     case "mid":
-      return { r0: 34, r1: 100, band: 3, capNear: 140, capMid: 500, cell: 9, impCell: 192, chunk: 1024 };
+      return { r0: 32, r1: 70, band: 7, capNear: 130, capMid: 300, cell: 10, impCell: 224, chunk: 768, shadowR: 200, capShadow: 550 };
     case "ultra":
-      return { r0: 65, r1: 170, band: 4.5, capNear: 320, capMid: 1100, cell: 7.5, impCell: 256, chunk: 1024 };
+      return { r0: 65, r1: 170, band: 10, capNear: 320, capMid: 1100, cell: 7.5, impCell: 256, chunk: 1024, shadowR: 330, capShadow: 2400 };
     default:
-      return { r0: 44, r1: 120, band: 4, capNear: 220, capMid: 800, cell: 8, impCell: 256, chunk: 1024 };
+      return { r0: 44, r1: 104, band: 9, capNear: 220, capMid: 640, cell: 8, impCell: 256, chunk: 1024, shadowR: 280, capShadow: 1000 };
   }
 }
 
@@ -45,14 +47,19 @@ export class Trees {
   near: THREE.InstancedMesh[] = [];
   mid: THREE.InstancedMesh[] = [];
   litter: THREE.InstancedMesh;
+  /** 影だけの遠景プロキシ（主パスでは count=0 なので描画されない） */
+  shadowFar: THREE.InstancedMesh[] = [];
   chunks: THREE.InstancedMesh[] = [];
+  /** チャンクの全インスタンス数と中心・半径（距離で間引くため） */
+  private chunkInfo: { full: number; cx: number; cz: number; r: number }[] = [];
+  private impFar = 1000;
   atlas: ImpostorAtlas;
   tier: Tier;
   private lastBuild = new THREE.Vector3(1e9, 0, 1e9);
   private cascadeIndex = new Map<THREE.Camera, number>();
   private trigger: THREE.Mesh | null = null;
   /** 三角形の目安（LOD0/LOD1 の 1 本あたり） */
-  stats = { trees: 0, near: 0, mid: 0, lod0Tris: 0, lod1Tris: 0 };
+  stats = { trees: 0, near: 0, mid: 0, far: 0, lod0Tris: 0, lod1Tris: 0, proxyTris: 0 };
 
   constructor(parent: THREE.Object3D, public env: Env, public lighting: Lighting, public q: QualitySettings, public vegmap: VegMap) {
     const t = (this.tier = tierSettings(q));
@@ -64,12 +71,15 @@ export class Trees {
       t.band = 0.001;
     }
     for (let i = 0; i < lighting.csm.lights.length; i++) this.cascadeIndex.set(lighting.csm.lights[i].shadow.camera, i);
-    const msaa = q.msaaSamples > 0;
-    this.needle = makeNeedleAtlas(q.tier === "low" ? 192 : q.tier === "mid" ? 256 : 384);
+    const msaa = q.msaaSamples >= 4;
+    // 影プロキシ用（色は書かない。影のパスでは three が深度マテリアルに差し替える）
+    const shadowProxyMat = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
+    this.needle = makeNeedleAtlas(q.tier === "low" ? 192 : q.tier === "mid" ? 320 : 384);
     // 形
     for (const v of TREE_VARIANTS) this.geos.push({ lod0: buildConifer(v, 0), lod1: buildConifer(v, 1) });
     this.stats.lod0Tris = this.geos[0].lod0.tris;
     this.stats.lod1Tris = this.geos[0].lod1.tris;
+    this.stats.proxyTris = 16;
     // 配置
     this.scatter = scatterTrees(env.heightmap, vegmap, t.cell, TREE_VARIANTS.length);
     this.stats.trees = this.scatter.count;
@@ -106,6 +116,27 @@ export class Trees {
       };
       this.near.push(near);
       this.mid.push(mid);
+
+      // 影だけの遠景プロキシ。count は既定 0（＝主パス・映り込みでは 1 本も描かれない）で、
+      // 影のパスの間だけ onBeforeShadow で本数を入れる
+      const proxy = new THREE.InstancedMesh(buildShadowProxy(TREE_VARIANTS[v], g.lod0.radius), shadowProxyMat, t.capShadow);
+      proxy.count = 0;
+      proxy.frustumCulled = false;
+      proxy.castShadow = true;
+      proxy.receiveShadow = false;
+      proxy.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      proxy.matrixAutoUpdate = false;
+      let proxyN = 0;
+      proxy.onBeforeShadow = (_r, _o, _c, cam) => {
+        // 近カスケードは LOD1 が影を落とすので、遠カスケードだけ
+        proxy.count = (this.cascadeIndex.get(cam) ?? 0) >= 1 ? proxyN : 0;
+      };
+      proxy.onAfterShadow = () => {
+        proxy.count = 0;
+      };
+      Object.defineProperty(proxy.userData, "setCount", { value: (n: number) => (proxyN = n), writable: true });
+      parent.add(proxy);
+      this.shadowFar.push(proxy);
     }
 
     // 落ち葉の円（近景の木だけ）
@@ -120,7 +151,10 @@ export class Trees {
 
     // 遠景: インポスター（チャンク）
     this.atlas = new ImpostorAtlas(this.geos.map((g) => g.lod0), t.impCell, this.needle);
-    const impMat = makeImpostorMaterial(env, lighting, this.atlas, { r1: t.r1, band: t.band, far: q.treeDistance, farBand: q.treeDistance * 0.12 }, msaa);
+    // 遠景ビルボードの視程。品質段階の treeDistance は空気遠近のための値なので、
+    // ここでは「木が 3px 未満になる距離」で頭打ちにする（1 本 2 三角形でも万単位で効く）
+    const impFar = Math.min(q.treeDistance, q.tier === "low" ? 900 : q.tier === "mid" ? 1250 : 2100);
+    const impMat = makeImpostorMaterial(env, lighting, this.atlas, { r1: t.r1, band: t.band, far: impFar, farBand: impFar * 0.12 }, msaa);
     const quad = impostorQuad();
     const n = Math.ceil(WORLD.size / t.chunk);
     const sc = this.scatter;
@@ -131,8 +165,12 @@ export class Trees {
       const cz = Math.min(n - 1, Math.floor((sc.z[i] + WORLD.half) / t.chunk));
       buckets[cx * n + cz].push(i);
     }
+    this.impFar = impFar;
     for (const list of buckets) {
       if (list.length === 0) continue;
+      // 距離で count を減らして間引くので、並びを決定的にばらけさせておく
+      // （前から N 本だけ描いても、林の中で偏らないように）
+      list.sort((a, b) => (Math.imul(a, 2654435761) >>> 8) - (Math.imul(b, 2654435761) >>> 8));
       const geo = new THREE.InstancedBufferGeometry();
       geo.index = quad.index;
       geo.setAttribute("position", quad.getAttribute("position"));
@@ -163,6 +201,7 @@ export class Trees {
       mesh.visible = false; // アトラスが焼けてから
       parent.add(mesh);
       this.chunks.push(mesh);
+      this.chunkInfo.push({ full: list.length, cx: sphere.center.x, cz: sphere.center.z, r: sphere.radius });
     }
 
     // アトラスを焼く引き金（描画の中で renderer を得る）
@@ -280,26 +319,53 @@ export class Trees {
 
   update() {
     const cam = this.env.cameraPos;
+    this.updateImpostorChunks(cam.x, cam.z);
     const dx = cam.x - this.lastBuild.x, dz = cam.z - this.lastBuild.z;
     if (dx * dx + dz * dz < 6 * 6) return;
     this.lastBuild.copy(cam);
     this.rebuildLists(cam.x, cam.z);
   }
 
+  /**
+   * 遠景のビルボードは 1 本 2 三角形でも本数が万単位になり、しかも映り込みでもう一度描かれる。
+   * チャンク（512m）ごとに「視程の外なら描かない」「遠いチャンクは本数を減らす」で submit 自体を減らす。
+   * 減らした分は表示側で少し大きくして密度を保つ（impostor.ts の uImp.z を見た拡大）。
+   */
+  private updateImpostorChunks(cx: number, cz: number) {
+    if (!this.atlas.baked) return;
+    const far = this.impFar;
+    for (let i = 0; i < this.chunks.length; i++) {
+      const c = this.chunks[i], info = this.chunkInfo[i];
+      const d = Math.max(0, Math.hypot(info.cx - cx, info.cz - cz) - info.r);
+      if (d > far) {
+        c.visible = false;
+        continue;
+      }
+      c.visible = true;
+      const t = Math.min(1, Math.max(0, (d - far * 0.06) / (far * 0.55)));
+      const frac = 1 - 0.85 * t * t * (3 - 2 * t);
+      c.count = Math.max(1, Math.ceil(info.full * frac));
+    }
+  }
+
   private rebuildLists(cx: number, cz: number) {
     const t = this.tier;
     const sc = this.scatter;
     const V = TREE_VARIANTS.length;
-    const nearList: number[][] = [], midList: number[][] = [];
+    const nearList: number[][] = [], midList: number[][] = [], farList: number[][] = [];
     for (let v = 0; v < V; v++) {
       nearList.push([]);
       midList.push([]);
+      farList.push([]);
     }
     const margin = 8;
-    forEachInRadius(sc, cx, cz, t.r1 + margin, (i, d) => {
+    // 影は r1 の内側を LOD1 が、外側 shadowR までを円錐プロキシが受け持つ。
+    // これが無いと 100m 先の林が影を落とさず、中景が「均一に明るい模型」に見える
+    forEachInRadius(sc, cx, cz, t.shadowR, (i, d) => {
       const v = sc.v[i];
       if (d < t.r0 + margin) nearList[v].push(i);
-      midList[v].push(i); // 中景は影も受け持つので 0〜r1 の全部を入れる
+      if (d < t.r1 + margin) midList[v].push(i); // 中景は影も受け持つので 0〜r1 の全部
+      else farList[v].push(i);
     });
     let litterN = 0;
     for (let v = 0; v < V; v++) {
@@ -324,11 +390,26 @@ export class Trees {
       };
       fill(this.near[v], nearList[v], t.capNear, true);
       fill(this.mid[v], midList[v], t.capMid, false);
+      // 影プロキシ: count は 0 のまま（影のパスでだけ本数が入る）
+      const proxy = this.shadowFar[v];
+      const fl = farList[v];
+      if (fl.length > t.capShadow) {
+        fl.sort((a, b) => Math.hypot(sc.x[a] - cx, sc.z[a] - cz) - Math.hypot(sc.x[b] - cx, sc.z[b] - cz));
+        fl.length = t.capShadow;
+      }
+      for (let k = 0; k < fl.length; k++) {
+        this.composeMatrix(fl[k], _m);
+        proxy.setMatrixAt(k, _m);
+      }
+      proxy.instanceMatrix.needsUpdate = true;
+      (proxy.userData.setCount as (n: number) => void)(fl.length);
+      proxy.count = 0;
     }
     this.litter.count = litterN;
     this.litter.instanceMatrix.needsUpdate = true;
     this.stats.near = nearList.reduce((a, b) => a + b.length, 0);
     this.stats.mid = midList.reduce((a, b) => a + b.length, 0);
+    this.stats.far = farList.reduce((a, b) => a + b.length, 0);
   }
 }
 

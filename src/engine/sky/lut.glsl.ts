@@ -113,8 +113,8 @@ void flip_scatterMarch(vec3 o, vec3 d, float tMax, int N, out vec3 L, out vec3 T
   T = vec3(1.0); L = vec3(0.0);
   float cS = dot(d, uSunDirK), cM = dot(d, uMoonDirK);
   // 位相 g: 黄昏の前方散乱（橙の帯）を出すため 0.76 → 0.82
-  float phRs = flip_phaseR(cS), phMs = flip_phaseMie(cS, 0.82);
-  float phRm = flip_phaseR(cM), phMm = flip_phaseMie(cM, 0.82);
+  float phRs = flip_phaseR(cS), phMs = flip_phaseMie(cS, 0.86);
+  float phRm = flip_phaseR(cM), phMm = flip_phaseMie(cM, 0.86);
   float tPrev = 0.0;
   for (int i = 0; i < 48; i++){
     if (i >= N) break;
