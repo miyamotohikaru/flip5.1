@@ -28,12 +28,14 @@ float cl_heightGrad(float hf, float type, float undul){
 float cl_density(vec3 p, float hf, vec4 w, bool detail){
   float cov = cl_coverage(w);
   if (cov <= 0.002) return 0.0;
-  // 雲底のうねり（嵐・雨）。天気マップの細かいむら（w.b、λ≈3km）と、
-  // 3D ノイズ λ≈300m の 2 オクターブ（detail の R/G）で底を上下させ、暗い塊とすき間を作る
+  // 雲底のうねり（嵐・雨）。**水平位置だけの関数にすること。**
+  // ここを 3D ノイズにすると「底の高さ」ではなく密度そのものが 3D で穴だらけになり、
+  // 空一面に 40〜70px の白い玉が並ぶ（ラウンド3で実際にそうなった）。
+  // 天気マップの細かいむら（w.b、λ≈3km）と、同じマップを 11 倍の uv で引いた λ≈300m の 2 段。
   float undul = 0.0;
   if (uCloudShape.z > 0.001){
-    vec3 dn = texture(uNoiseDetail, (p + uWindOffset) * (1.0 / 300.0)).rgb;
-    undul = uCloudShape.z * ((w.b - 0.5) * 1.1 + (dn.r - 0.5) * 1.0 + (dn.g - 0.5) * 0.55);
+    float fine = cl_weather(p.xz * 11.0).b;
+    undul = uCloudShape.z * ((w.b - 0.5) * 1.0 + (fine - 0.5) * 1.2);
   }
   float hg = cl_heightGrad(hf, w.g, undul);
   if (hg <= 0.002) return 0.0;
@@ -228,7 +230,10 @@ void main(){
           // 上からの空の光は、上に積もる雲の厚さで弱まる（薄いところ・端が明るい）
           float odUp = 0.0;
           {
-            float du = (top - base) * 0.16;
+            // 歩幅はその雲自身の厚み（層雲は薄く積雲は高い）に合わせる。
+            // 固定だと層雲では雲の上まで飛び越してしまい、薄い所と厚い所の差が出ない
+            float topF = mix(0.30, 1.0, clamp(w.g + uCloudShape.x, 0.0, 1.0)) * uCloudShape.y;
+            float du = (top - base) * topF * 0.28;
             for (int k = 1; k <= 3; k++){
               vec3 q = p + vec3(0.0, du * float(k), 0.0);
               float hq = hf + du * float(k) / (top - base);

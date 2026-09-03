@@ -67,7 +67,10 @@ void main(){
   vec3 V = normalize(uCamPos - world);
   float NdotV = max(dot(tn, V), 0.0);
   float fres = pow(1.0 - NdotV, 4.0);
-  vec3 sheen = uSkyAmbient * 0.045 * fres * wet;
+  // 濡れた砂は水膜が空を映すので、乾いた砂より青みが乗って赤みが落ちる。
+  // かすめる角度だけでなく真下を見たときも少し乗る（地形の砂のアルベドが暖色なので、
+  // 暗くするだけだと帯が赤紫のかぶりに見える）
+  vec3 sheen = uSkyAmbient * (0.042 + 0.10 * fres) * wet;
   vec3 H = normalize(V + uSunDir);
   float spec = pow(max(dot(tn, H), 0.0), 180.0) * 0.06 * wet * step(0.0, uSunDir.y);
   sheen += uSunColor * spec;

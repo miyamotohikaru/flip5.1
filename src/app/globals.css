@@ -360,19 +360,30 @@ html:has(.log), body:has(.log) { overflow: auto; }
 .lab-body { flex: 1 1 auto; overflow-y: auto; overscroll-behavior: contain; padding: 4px 16px 16px; }
 .lab-group h3 { margin: 16px 0 2px; font-family: var(--font-mono); font-size: 10px; font-weight: 400; letter-spacing: 0.22em; color: var(--ink-faint); }
 
-.lab-row { padding: 8px 0 9px; border-bottom: 1px solid rgba(242, 239, 232, 0.07); }
+.lab-row { padding: 6px 0 7px; border-bottom: 1px solid rgba(242, 239, 232, 0.07); }
+
+/* いま動かしているつまみの式（見出しの下に固定。行は伸び縮みしない） */
+.lab-focus {
+  flex: none; padding: 10px 16px 11px; border-bottom: 1px solid var(--line);
+  background: rgba(140, 217, 255, 0.045);
+}
+.lab-focus-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 4px; font-size: 12.5px; letter-spacing: 0.05em; }
+.lab-focus-head b { font-family: var(--font-mono); font-size: 13px; font-weight: 600; color: var(--accent); font-variant-numeric: tabular-nums; }
+.lab-focus .lab-formula { margin-top: 0; font-size: 11px; }
+.lab-focus.hot { background: rgba(255, 184, 71, 0.07); }
 .lab-label { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 12.5px; letter-spacing: 0.04em; cursor: pointer; }
 .lab-label b { font-family: var(--font-mono); font-size: 11.5px; font-weight: 500; color: var(--ink-dim); font-variant-numeric: tabular-nums; transition: color 0.2s; }
 .lab-row.moved .lab-label b { color: var(--accent); }
+.lab-row.hot .lab-label span { color: var(--accent); }
 .lab-formula { margin-top: 5px; font-family: var(--font-mono); font-size: 10.5px; line-height: 1.5; color: var(--formula-dim); white-space: pre-wrap; word-break: break-word; }
 .lab-formula em {
   font-style: normal; padding: 0 3px; border-radius: 3px;
   color: var(--formula); background: rgba(140, 217, 255, 0.1);
   transition: background 0.25s ease, color 0.25s ease, box-shadow 0.25s ease;
 }
-.lab-row.hot .lab-formula em { color: #1a1000; background: var(--accent); box-shadow: 0 0 14px rgba(255, 184, 71, 0.55); }
+.lab-focus.hot .lab-formula em { color: #1a1000; background: var(--accent); box-shadow: 0 0 14px rgba(255, 184, 71, 0.55); }
 .lab-live { margin-top: 3px; font-family: var(--font-mono); font-size: 10.5px; line-height: 1.5; color: var(--ink-dim); font-variant-numeric: tabular-nums; }
-.lab-row.hot .lab-live { color: var(--ink); }
+.lab-focus.hot .lab-live { color: var(--ink); }
 .lab-src { margin-top: 2px; font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.04em; color: rgba(242, 239, 232, 0.28); }
 
 .lab input[type="range"], .hud .row.time input[type="range"] { touch-action: none; }
@@ -394,6 +405,26 @@ html:has(.log), body:has(.log) { overflow: auto; }
 .lab-bake, .seedfin-bake { flex: none; padding: 7px 16px 9px; border-bottom: 1px solid var(--line); font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.08em; color: var(--accent); }
 .lab-bake i, .seedfin-bake i { display: block; height: 2px; margin-top: 5px; border-radius: 2px; background: var(--accent); transform-origin: 0 50%; transition: transform 0.25s linear; }
 .seedfin-bake { padding: 8px 0 0; border: 0; }
+
+/* 前後比べ: 動かし始めた瞬間の画面を左半分に重ねる（毎フレームは描かない・静止画 1 枚） */
+.lab-ab {
+  /* HUD（z 10）より下に置く。左半分の HUD が消えないように */
+  position: fixed; inset: 0; z-index: 9; pointer-events: none;
+  opacity: 0; transition: opacity 0.18s ease;
+}
+.lab-ab.on { opacity: 1; }
+.lab-ab canvas {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  clip-path: inset(0 50% 0 0);
+}
+.lab-ab-line { position: absolute; top: 0; bottom: 0; left: 50%; width: 0; border-left: 1px solid rgba(255, 184, 71, 0.9); box-shadow: 0 0 12px rgba(255, 184, 71, 0.5); }
+.lab-ab-line span {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  padding: 3px 9px; border-radius: 999px; background: rgba(4, 8, 20, 0.72);
+  font-size: 11px; letter-spacing: 0.16em; color: var(--accent);
+}
+.lab-ab-line .l { right: 10px; }
+.lab-ab-line .r { left: 10px; }
 
 /* ── 締め（これ全部、この数ひとつから）──────── */
 .seedfin { margin-top: 24px; padding: 16px 0 4px; border-top: 1px solid var(--line); text-align: center; }
@@ -435,6 +466,8 @@ html:has(.log), body:has(.log) { overflow: auto; }
   .lab input[type="range"]::-moz-range-thumb { width: 20px; height: 20px; }
   /* 携帯では下中央の「裏返す」と重ならないように、開いている間は隠す */
   .lab-open .flip-thumb { display: none; }
+  /* 前後比べの「前／後」は引き出しに隠れない高さへ */
+  .lab-ab-line span { top: 22%; }
 }
 @media (prefers-reduced-motion: reduce) {
   .lab { animation-duration: 0.01ms; }

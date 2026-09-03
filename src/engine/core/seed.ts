@@ -117,6 +117,16 @@ export function subFloat(key: SeedKey, i = 0): number {
 }
 
 /**
+ * 用途ごとの「振れ幅つきの値」。**既定のシードでは neutral**（＝今の見た目のまま）を返し、
+ * ほかのシードでは lo..hi の決定的な値になる。
+ * 「この世界は湖が広い」「この世界は山が近い」を、種ひとつから決めるための道具。
+ */
+export function seedPick(key: SeedKey, i: number, lo: number, hi: number, neutral = 1): number {
+  if (current === DEFAULT_SEED) return neutral;
+  return lo + (hi - lo) * subFloat(key, i + 1000);
+}
+
+/**
  * 用途ごとの「ノイズ座標のずらし量」。**既定のシードでは 0**（＝今の見た目のまま）。
  * ほかのシードでは 0..1000 の決定的な実数になる。
  * 「noise(x·k + 5.3)」のような手で置いた定数に足して使うと、シードで模様が丸ごと変わる。

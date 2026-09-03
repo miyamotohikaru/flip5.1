@@ -431,12 +431,14 @@ void main(){
       float foamN = flip_vfbm(vWorld.xz * 4.5 + vec2(uTime * 0.12, 0.0), 3);
       float foamN2 = flip_vnoise(vWorld.xz * 14.0 - vec2(0.0, uTime * 0.25));
       float m = clamp(foamCrest * 1.6 + foamShore, 0.0, 1.0);
-      // 穴のある泡（閾値を高く、飽和させない）
-      float foamTex = smoothstep(0.78 - 0.34 * m, 0.94 - 0.24 * m, foamN * 0.8 + foamN2 * 0.2 + 0.10 * m);
-      // 画素より細かい泡は「薄い膜」ではなく消す（残すと白い煙になる）。横方向の足跡で測る
-      float texFade = 1.0 - smoothstep(0.10, 0.45, fpW);
-      float foam = min(m * foamTex * texFade, 0.6);
-      foam *= 1.0 - smoothstep(80.0, 300.0, dist);
+      // 泡は「閾値で切り出した白い島」ではなく連続の濃淡にする（硬い縁だと白い紙片が並んで見える）。
+      // 縁は画素 3 つぶん相当ぼかす（ノイズの特徴長 ≈ 0.22m あたりの変化量で閾値の幅を広げる）
+      float f = foamN * 0.8 + foamN2 * 0.2 + 0.22 * m;
+      float fw = clamp(3.0 * fpW / 0.22, 0.0, 0.30);
+      float foamTex = smoothstep(0.55 - fw, 0.95 + fw, f);
+      // 濃さは 0.5 まで。1 画素で泡の粒が解けなくなる 30m 以遠は出さない
+      float foam = min(m * foamTex, 0.5);
+      foam *= 1.0 - smoothstep(12.0, 30.0, dist);
       vec3 foamCol = (sunL * max(dot(N, uSunDir), 0.0) * 0.85 + uSkyAmbient * 0.9) / PI;
       col = mix(col, foamCol, foam);
       // 岸ぎわは透ける（水深 0 で湖底そのもの）

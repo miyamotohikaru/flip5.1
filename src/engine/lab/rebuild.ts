@@ -11,6 +11,7 @@ import type { World } from "../world";
 import { bakeHeightmapAsync } from "../controls/bake";
 import { setTerrainTune } from "../core/height";
 import { WORLD, startPosition, type Heightmap } from "../core/heightfield";
+import { worldShape } from "../core/height";
 import { getSeed, setSeed } from "../core/seed";
 import { Vegetation } from "../vegetation";
 import { LAB, type LabKey, type LabValues } from "./store";
@@ -49,6 +50,9 @@ export class Lab {
     const u = this.world.env.uniforms;
     (u.uLabSky.value as THREE.Vector4).set(LAB.skyMie, LAB.skyRayleigh, LAB.skyOzone, 1);
     (u.uLabVeg.value as THREE.Vector4).set(LAB.vegGrass, 1, 1, 1);
+    // 世界の体格（シードで決まる）。材質が読む: 雪線・岩の露出・草の乾き
+    const S = worldShape();
+    (u.uSeedWorld.value as THREE.Vector4).set(S.snow, S.rock, S.dry, 0);
   }
 
   /** スライダーが動いた。dragging = 指を置いたまま（＝粗焼きでよい） */
@@ -98,6 +102,7 @@ export class Lab {
     const w = this.world;
     w.sky.reseed();
     w.water.sim.reseed();
+    this.applyUniforms(); // 雪線・岩・草の色も新しい世界のものに
     this.syncUrl();
     await this.requestBake("full", true);
   }

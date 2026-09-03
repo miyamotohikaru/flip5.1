@@ -36,11 +36,13 @@ const q = flag("q", null);
 const base = process.env.FLIP_URL ?? "http://localhost:3051";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const SHOT_NAMES = ["golden", "noon", "dawn", "cloudy", "rain", "storm", "night", "sunset_water", "forest", "ridge", "noon_side", "cloudy_side", "flip_half", "flip_full"];
+const SHOT_NAMES = ["golden", "noon", "dawn", "cloudy", "rain", "storm", "night", "sunset_water", "forest", "ridge", "noon_side", "cloudy_side", "storm_live", "flip_half", "flip_full"];
+// 時間を止めずに撮る定点（src/engine/core/params.ts の live）。待ち時間をその秒数に延ばす
+const LIVE_WAIT = { storm_live: 8500 };
 let targets = [];
 if (flag("url")) targets = [{ name, url: String(flag("url")) }];
-else if (flag("all")) targets = SHOT_NAMES.map((s) => ({ name: `${name}_${s}`, url: `/?shot=${s}` }));
-else targets = [{ name, url: `/?shot=${flag("shot", "golden")}` }];
+else if (flag("all")) targets = SHOT_NAMES.map((s) => ({ name: `${name}_${s}`, url: `/?shot=${s}`, wait: LIVE_WAIT[s] }));
+else targets = [{ name, url: `/?shot=${flag("shot", "golden")}`, wait: LIVE_WAIT[String(flag("shot", "golden"))] }];
 
 const browser = await puppeteer.launch({
   executablePath: CHROME,
@@ -62,7 +64,7 @@ for (const t of targets) {
   const t0 = Date.now();
   await page.goto(url, { waitUntil: "networkidle0", timeout: 120000 });
   await page.waitForFunction(() => window.__flip && window.__flip.ready, { timeout: 120000 });
-  await sleep(wait);
+  await sleep(flag("wait") ? wait : (t.wait ?? wait));
   const stats = await page.evaluate(() => {
     const w = window.__flip;
     return { frameMs: w.stats.frameMs, calls: w.stats.drawCalls, tris: w.stats.triangles, tier: w.stats.tier, size: `${w.stats.width}x${w.stats.height}` };

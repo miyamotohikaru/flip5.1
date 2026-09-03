@@ -392,6 +392,7 @@ export class Grass {
           "#include <common>",
           `#include <common>
           #include <flip_noise>
+        #include <flip_height>
           #include <flip_atmosphere>
           #include <flip_flip>
           varying vec4 vGrass;

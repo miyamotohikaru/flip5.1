@@ -6,6 +6,10 @@ import { WORLD, sampleHeightmap, type Heightmap } from "../core/heightfield";
 import { forestDensity, sampleVegMap, type VegMap } from "./vegmap";
 import { SHOTS } from "../core/params";
 import { LAB } from "../lab/store";
+import { worldShape } from "../core/height";
+
+/** 世界の体格（参照は変わらない） */
+const SHAPE = worldShape();
 
 export type Scatter = {
   count: number;
@@ -93,7 +97,7 @@ export function scatterTrees(hm: Heightmap, vm: VegMap, cell: number, variants: 
       const seed = hash2(i, j, 104);
       const fd = sampleVegMap(vm, x, z, 1);
       // 大きさ: 0.6〜1.3 倍。密な林ほど高い。森林限界に向かって低くなる
-      let s = 0.6 + 0.7 * Math.pow(hash2(i, j, 105), 1.15);
+      let s = (0.6 + 0.7 * Math.pow(hash2(i, j, 105), 1.15)) * SHAPE.treeSize;
       s *= 0.86 + 0.24 * fd;
       s *= 1 - 0.42 * smoothstep(240, 380, h);
       b.x.push(x);

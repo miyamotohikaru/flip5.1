@@ -47,6 +47,7 @@ uniform float uSaturation;
 uniform float uContrast;
 uniform float uPivot;
 uniform float uLift;
+uniform float uChromaBack;
 uniform vec3 uShadowTint;
 uniform vec3 uHighlightTint;
 uniform vec2 uSplit;
@@ -336,8 +337,15 @@ void main(){
   c = max(c, vec3(0.0));
   if (!(dot(c, vec3(1.0)) < 1.0e12)) c = vec3(0.0);
 
-  // トーンマップ
+  // トーンマップ。AgX は白側で色が抜ける（黄昏の橙が白いクリームになる／露出を上げるほど淡くなる）。
+  // 明るさは AgX のまま、色の比だけトーンマップ前に戻す＝色相を変えずに彩度だけ返す
+  vec3 pre = c;
   c = post_agx(c);
+  if (uChromaBack > 0.0) {
+    float lb = post_luma(pre), la = post_luma(c);
+    vec3 keep = clamp(pre * (la / max(lb, 1e-4)), 0.0, 1.0);
+    c = mix(c, keep, uChromaBack * smoothstep(0.03, 0.40, la));
+  }
   // グレーディング
   if (uGradeOn > 0.5) c = gradeColor(c);
   // ビネット
@@ -391,6 +399,8 @@ export function gradeUniforms(): Record<string, THREE.IUniform> {
     uPivot: { value: 0.42 },
     /** 暗部の持ち上げ（ガンマ空間）。影に空の環境光を残す */
     uLift: { value: 0.03 },
+    /** AgX で抜けた色をどれだけ戻すか 0..1（色相は変えない） */
+    uChromaBack: { value: 0.35 },
     uShadowTint: { value: new THREE.Vector3(0.92, 0.96, 1.1) },
     uHighlightTint: { value: new THREE.Vector3(1.06, 1.01, 0.94) },
     uSplit: { value: new THREE.Vector2(0.35, 0.35) },

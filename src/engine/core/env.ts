@@ -156,6 +156,9 @@ export class Env {
      * 「木の下なのに草原の色」になる）。植生モジュールが焼いた直後に入れる。
      */
     uVegMap: { value: null as THREE.Texture | null },
+    /** 遠景の太陽の遮蔽（flip_sunOcclusion）が読む植生マップ。core/lighting.ts が uVegMap を毎フレーム挿す
+     *  （草・小石のシェーダが頂点側で uVegMap を自分で宣言しているので、名前を分けて二重宣言を避ける） */
+    uSunVeg: { value: null as THREE.Texture | null },
     // ---- 空モジュール（sky/）が毎フレーム値を入れる。他モジュールは flip_atmosphere チャンクの関数経由で使う ----
     /** 大気の透過率 LUT（Hillaire 2020。x = 視線の天頂角, y = 高度。RGBA16F 256×64） */
     uSkyTransLut: { value: null as THREE.Texture | null },
@@ -178,6 +181,11 @@ export class Env {
     uLabSky: { value: new THREE.Vector4(1, 1, 1, 1) },
     /** 植生: x = 草の密度の倍率, yzw = 予備 */
     uLabVeg: { value: new THREE.Vector4(1, 1, 1, 1) },
+    /**
+     * 世界の体格（core/height.ts の worldShape()）のうち、材質が読むもの。シードで決まる。
+     * x = 雪線のずれ(m), y = 岩の露出の倍率, z = 草の乾きのずれ, w = 予備。既定のシードでは (0, 1, 0, 0)
+     */
+    uSeedWorld: { value: new THREE.Vector4(0, 1, 0, 0) },
   };
 
   setWeather(name: WeatherPresetName) {
