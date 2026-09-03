@@ -44,6 +44,7 @@ uniform float uAutoRef;
 uniform vec2 uAutoRange;
 uniform float uWarmth;
 uniform float uSaturation;
+uniform vec3 uNeutral;
 uniform float uContrast;
 uniform float uPivot;
 uniform float uLift;
@@ -181,6 +182,10 @@ vec3 gradeColor(vec3 c){
   // 彩度
   l = post_luma(c);
   c = mix(vec3(l), c, uSaturation);
+  // 天気ごとの白バランス（いまは嵐だけ）。嵐の空は雨のカーテンの散乱と
+  // 大気の緑の吸収でマゼンタに転ぶ。輝度を変えずに中性へ寄せる。
+  // 他の天気では uNeutral = (1,1,1) なので 1 画素も動かない
+  c *= uNeutral;
   return c;
 }
 
@@ -394,6 +399,8 @@ export function gradeUniforms(): Record<string, THREE.IUniform> {
     uAutoRange: { value: new THREE.Vector2(0.7, 1.45) },
     uWarmth: { value: 0 },
     uSaturation: { value: 0.96 },
+    /** 天気ごとの白バランス（嵐のマゼンタを中性へ）。既定は無変換 */
+    uNeutral: { value: new THREE.Vector3(1, 1, 1) },
     uContrast: { value: 1.04 },
     /** コントラストの軸（ガンマ空間）。屋外の中間調 */
     uPivot: { value: 0.42 },

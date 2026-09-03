@@ -178,7 +178,8 @@ export class Post {
     u.uWarmth.value = clamp(warmth, -1, 1);
     // 夜は彩度を大きく落とす（プルキンエ現象＝暗いと錐体が働かず色が抜ける）。
     // 草の緑が読めるのが「青い昼」に見える一番の原因だった
-    u.uSaturation.value = 0.97 + 0.30 * golden - 0.5 * night + 0.22 * storm - 0.05 * cloud * (1 - storm);
+    // 雨は彩度を上げる（灰色一色にしない）。嵐には掛けない＝嵐は中性に寄せるのが目標なので
+    u.uSaturation.value = 0.97 + 0.30 * golden - 0.5 * night + 0.22 * storm + 0.52 * rain * (1 - storm) - 0.05 * cloud * (1 - storm);
     // 黒を締める（夜明けの紫灰の一色フィルターを避ける）。夜は締めない（暗部が全部つぶれる）
     u.uContrast.value = 1.1 + 0.05 * golden - 0.16 * night - 0.1 * storm;
     // 影の青みは控えめに（朝夕が「Instagram のフィルター」にならないように）
@@ -236,8 +237,19 @@ export class Post {
     // 暗部の持ち上げ（影に空の環境光を残す）。夜だけは持ち上げない（空が乳白色になる）
     u.uLift.value = this.dbg.has("nograde") ? 0 : THREE.MathUtils.lerp(0.024, 0.004, night);
     u.uPivot.value = 0.42;
+    // 嵐だけ白バランスで中性に寄せる（批評R6: 非閃光フレームの空の R−G を ±4 へ）。
+    // 空担当がオゾンを落とすと晴天の薄明の青紫まで失うため、post 側で嵐だけ補正する。
+    // smoothstep で立ち上げるので、rain プリセット（storm 0.15）はほぼ素通し
+    // 閃光の瞬間は雷光（青白い）が照明なのでマゼンタは出ない。掛けると逆に緑に転ぶので外す
+    const flash = clamp(env.lightning.flash, 0, 1);
+    const sN = this.dbg.has("nograde") ? 0 : smoothstep(0.35, 0.9, storm) * (1 - smoothstep(0.10, 0.45, flash));
+    (u.uNeutral.value as THREE.Vector3).set(
+      THREE.MathUtils.lerp(1, 0.867, sN),
+      THREE.MathUtils.lerp(1, 1.050, sN),
+      THREE.MathUtils.lerp(1, 0.988, sN),
+    );
     // AgX の白側の脱色を戻す。露出を上げるほど色が抜けるので、黄昏と嵐で多めに
-    u.uChromaBack.value = this.dbg.has("nograde") ? 0 : clamp(0.55 + 0.3 * golden + 0.3 * storm, 0, 0.9);
+    u.uChromaBack.value = this.dbg.has("nograde") ? 0 : clamp(0.55 + 0.3 * golden + 0.3 * storm + 0.35 * rain * (1 - storm), 0, 0.9);
     if (dbg.has("nobloom")) u.uBloomStrength.value = 0;
     if (dbg.has("noao")) u.uAoStrength.value = 0;
     if (dbg.has("nolens")) u.uDropRain.value = 0;
