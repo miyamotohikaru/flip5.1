@@ -281,13 +281,18 @@ void veg_grass(out vec3 p, out vec3 n){
   float fm = veg_flipMask(root);
   float flipped = step(flip_hash12(cw * 0.53 + k * 3.19 + 2.0), fm) * step(0.001, fm);
   // 数式ビューでは 6 本に 1 本だけを線にする（白い針の塊にしない）
-  float lineKeep = step(flip_hash12(cw * 1.91 + k * 5.31 + 4.0), 0.17);
+  float lineKeep = step(flip_hash12(cw * 1.91 + k * 5.31 + 4.0), 0.10);
   vec3 up = vec3(0.0, 1.0, 0.0);
   if (flipped > 0.5) {
     if (lineKeep < 0.5) { p = root; n = up; vGrass = vec4(t, rnd, 0.0, 1.0); vBlade = vec4(0.0); vVegWorld = p; return; }
-    // 数式ビュー: 1本ずつが「向きと長さのベクトル」= 根元から先端への直線
+    // 数式ビュー: 1本ずつが「風のベクトル」。向きを揃えないと全方向のひっかき傷に見える。
+    // 長さは実際の草の 1/3、太さの向きは画面に正対させる（どの線も同じ太さで読める）
     float lw = 0.005 + dist * 0.0013;
-    p = root + side * (position.x * lw) + up * (H * t * (1.0 - 0.4 * latLen * latLen)) + lat * H * t;
+    vec3 toCam = uCamPos - root;
+    vec3 sideV = normalize(cross(up, toCam) + vec3(1e-5, 0.0, 0.0));
+    vec3 lean = vec3(wd.x, 0.0, wd.y) * (0.30 + 0.45 * gust);
+    float HL = H * 0.34;
+    p = root + sideV * (position.x * lw) + up * (HL * t) + lean * HL * t;
     n = up;
   } else {
     // 根元は細く、中ほどで最も太く、先は尖る（帯ではなく葉身に見せる）

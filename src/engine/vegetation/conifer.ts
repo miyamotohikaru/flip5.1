@@ -39,7 +39,7 @@ export const TREE_VARIANTS: TreeVariant[] = [
   { H: 10, crownBase: 0.03, lmax: 0.22, whorls: 8, perWhorl: 10, sideRatio: 0.55, seed: 4 },
 ];
 
-export type TreeGeo = { geometry: THREE.BufferGeometry; H: number; radius: number; tris: number };
+export type TreeGeo = { geometry: THREE.BufferGeometry; H: number; radius: number; topY: number; tris: number };
 
 /**
  * 影だけの遠景プロキシ（幹の四角柱 ＋ 樹冠の円錐 = 16 三角形）。
@@ -89,6 +89,7 @@ export function buildConifer(v: TreeVariant, lod: 0 | 1): TreeGeo {
   const pos: number[] = [], nrm: number[] = [], uv: number[] = [], data: number[] = [], axis: number[] = [], dir: number[] = [];
   const idx: number[] = [];
   let rc = 0;
+  let maxR = 0, topY = 0;
   const rnd = () => hash2(rc++, v.seed * 31 + lod * 7, 5);
   const H = v.H;
   const r0 = 0.011 * H + 0.04;
@@ -135,6 +136,8 @@ export function buildConifer(v: TreeVariant, lod: 0 | 1): TreeGeo {
     const corners: [number, number][] = [[0, vA], [1, vA], [0, vB], [1, vB]];
     for (const [u, vv] of corners) {
       const px = bx + d.x * u * L + w.x * vv, py = by + d.y * u * L + w.y * vv, pz = bz + d.z * u * L + w.z * vv;
+      maxR = Math.max(maxR, Math.hypot(px, pz));
+      topY = Math.max(topY, py);
       pos.push(px, py, pz);
       nrm.push(n.x, n.y, n.z);
       const tv = (vv - vA) / (vB - vA);
@@ -148,9 +151,37 @@ export function buildConifer(v: TreeVariant, lod: 0 | 1): TreeGeo {
   };
 
   const up = new THREE.Vector3(0, 1, 0);
+
+  // ---- 下枝の枯れ枝（樹冠の下、幹の 5〜30% のあたりに 5〜8 本）
+  // 森の針葉樹は下枝が枯れて残る。これが無いと幹が「つるつるの棒」に見える
+  if (lod === 0) {
+    const nDead = 5 + Math.floor(rnd() * 4);
+    for (let b = 0; b < nDead; b++) {
+      const t = 0.05 + (Math.max(v.crownBase, 0.26) - 0.05) * ((b + 0.25 + 0.5 * rnd()) / nDead);
+      const a0 = axisAt(t), rt = radiusAt(t);
+      const az = rnd() * Math.PI * 2;
+      const dr = ((28 + 30 * rnd()) * Math.PI) / 180; // 下向きに垂れる
+      const len = (0.45 + 0.9 * rnd()) * v.lmax * H;
+      const d0 = new THREE.Vector3(Math.cos(az) * Math.cos(dr), -Math.sin(dr), Math.sin(az) * Math.cos(dr)).normalize();
+      const w = new THREE.Vector3().crossVectors(d0, up).normalize();
+      const w1 = rt * 0.45, w2 = rt * 0.12;
+      const bx = a0.x + Math.cos(az) * rt * 0.7, by = a0.y, bz = a0.z + Math.sin(az) * rt * 0.7;
+      const start = pos.length / 3;
+      const n0 = new THREE.Vector3().crossVectors(w, d0).normalize();
+      for (const [uu, ww] of [[0, -w1], [0, w1], [1, -w2], [1, w2]] as [number, number][]) {
+        pos.push(bx + d0.x * uu * len + w.x * ww, by + d0.y * uu * len + w.y * ww, bz + d0.z * uu * len + w.z * ww);
+        nrm.push(n0.x, n0.y, n0.z);
+        uv.push(uu, ww);
+        data.push(0, 0.25 + 0.4 * t, rnd() * 6.2832, 0);
+        axis.push(bx + d0.x * uu * len, by + d0.y * uu * len, bz + d0.z * uu * len);
+        dir.push(d0.x, d0.y, d0.z);
+      }
+      idx.push(start, start + 2, start + 1, start + 1, start + 2, start + 3);
+    }
+  }
+
   const nW = lod === 0 ? v.whorls : Math.max(4, Math.round(v.whorls * 0.58));
   const top = 0.88;
-  let maxR = 0;
   // 1 段の枝を丸ごと 1 つの高さに置くと「皿」に見える。段の高さ（±0.05H）と
   // 枝ごとの高さ（±0.05H）を別々に散らして、段の境目を溶かす。
   const spanT = top - v.crownBase;
@@ -191,19 +222,6 @@ export function buildConifer(v: TreeVariant, lod: 0 | 1): TreeGeo {
     const u = nW > 1 ? j / (nW - 1) : 0;
     const tW = v.crownBase + spanT * u + (rnd() - 0.5) * 0.10;
     const L = v.lmax * H * (1 - 0.82 * Math.pow(u, 0.95));
-    // 樹冠の「詰め物」: 段ごとに十字の縦カードを 2 枚、幹の周りに。
-    // 小さなカードを並べるだけだと枝の隙間に 1px の空が抜け、明るい空を背に白い点として読める。
-    // 枝より内側に置くので輪郭は変えず、隙間だけ塞ぐ
-    {
-      const a1 = axisAt(tW);
-      const hgt = (spanT * H) / Math.max(1, nW - 1) * (lod === 0 ? 1.5 : 1.7);
-      const wid = L * (lod === 0 ? 0.45 : 0.50);
-      for (let c2 = 0; c2 < 2; c2++) {
-        const aa = j * 1.13 + c2 * Math.PI * 0.5;
-        const wdir = new THREE.Vector3(Math.cos(aa), 0, Math.sin(aa));
-        addCard(a1.x, a1.y - hgt * 0.25, a1.z, up, wdir, hgt, -wid, wid, 2, 0.04, 0.96, 0.45 + 0.55 * tW, rnd() * 6.2832, true);
-      }
-    }
     const nB = lod === 0 ? v.perWhorl + (rnd() < 0.5 ? 1 : 0) : Math.max(5, Math.round(v.perWhorl * 0.66));
     for (let b = 0; b < nB; b++) {
       // 黄金角で回して、段どうしの枝が同じ方位に並ばないようにする
@@ -221,7 +239,8 @@ export function buildConifer(v: TreeVariant, lod: 0 | 1): TreeGeo {
       const Ls = v.lmax * H * 0.30 * (1 - 0.6 * s);
       for (let b = 0; b < nb; b++) {
         const az = s * 1.7 + (b * Math.PI * 2) / nb + (rnd() - 0.5) * 0.6;
-        branch(t0, 1.0, Ls * (1.4 + 0.4 * rnd()), az, 1.0, true);
+        // LOD1 は梢が 1 段しかないので、ここで長い枝を出すと「きのこの傘」になる
+        branch(t0, 1.0, Ls * (lod === 0 ? 1.4 + 0.4 * rnd() : 0.55), az, 1.0, true);
       }
     }
     // 先端の一本（頂芽）
@@ -239,9 +258,10 @@ export function buildConifer(v: TreeVariant, lod: 0 | 1): TreeGeo {
   geo.setAttribute("aDir", new THREE.Float32BufferAttribute(dir, 3));
   geo.setIndex(idx);
   const radius = Math.max(maxR, 0.5);
-  geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, H * 0.5, 0), Math.hypot(H * 0.55, radius));
-  geo.boundingBox = new THREE.Box3(new THREE.Vector3(-radius, -0.5, -radius), new THREE.Vector3(radius, H * 1.05, radius));
-  return { geometry: geo, H, radius, tris: idx.length / 3 };
+  const topOut = Math.max(topY, H);
+  geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, topOut * 0.5, 0), Math.hypot(topOut * 0.55, radius));
+  geo.boundingBox = new THREE.Box3(new THREE.Vector3(-radius, -0.5, -radius), new THREE.Vector3(radius, topOut, radius));
+  return { geometry: geo, H, radius, topY: topOut, tris: idx.length / 3 };
 }
 
 // ---------------------------------------------------------------- GLSL
@@ -291,6 +311,20 @@ void veg_tree(out vec3 p, out vec3 n){
   float fm = veg_flipMask(root);
   float flipped = max(step(flip_hash11(seed * 13.0 + 0.5), fm) * step(0.001, fm), uForceFlip);
   if (flipped > 0.5) {
+    // 数式ビュー: 骨組み（幹 1 本＋輪生の線）。カードを全部線にすると「白い粒の雲」になるので、
+    // 枝は 1/7 だけ残す（1 本あたり 50 本前後の線）
+    float isTrunk = step(aData.x, 0.5);
+    float keepLine = max(isTrunk, step(flip_hash11(dot(aAxis, vec3(12.9898, 78.233, 37.719)) + seed * 3.0), 0.145));
+    if (keepLine < 0.5) {
+      p = aAxis;
+      n = vec3(0.0, 1.0, 0.0);
+      vTree = vec4(fade, 1.0, aData.x, seed);
+      vVegWorld = (im * vec4(p, 1.0)).xyz;
+      vTreeUv = uv;
+      vConeN = vec3(0.0, 0.0, 1.0);
+      vBark = p;
+      return;
+    }
     vec3 camL = rotT * (cameraPosition - root) / scl;
     vec3 toCam = normalize(camL - aAxis + vec3(1e-4, 0.0, 0.0));
     vec3 wdir = normalize(cross(aDir, toCam) + vec3(1e-4, 0.0, 1e-4));

@@ -12,7 +12,7 @@ export const IMP_AZ = 8;
 export const IMP_ROWS = 2;
 const IMP_ELEV = [0, (35 * Math.PI) / 180];
 
-export type ImpostorFrame = { W: number; Hf: number };
+export type ImpostorFrame = { W: number; Hf: number; below: number };
 
 export class ImpostorAtlas {
   albedo: THREE.WebGLRenderTarget;
@@ -47,7 +47,9 @@ export class ImpostorAtlas {
     this.albedo = mk(true);
     this.normal = mk(true);
     this.skeleton = mk(true);
-    for (const g of geos) this.frames.push({ W: g.radius * 2.15, Hf: g.H * 1.04 });
+    // 枠は「実際に置いた頂点」から決める。カードの伸ばし方を変えると枠からはみ出して、
+    // 遠景の木が上と横を切られた矩形になる
+    for (const g of geos) this.frames.push({ W: g.radius * 2.12, Hf: g.topY + g.H * 0.06, below: g.H * 0.04 });
   }
 
   /** 描く。主描画の途中（onBeforeRender）から呼ばれるので、状態を全部戻す。 */
@@ -67,6 +69,10 @@ export class ImpostorAtlas {
     const prevShadowAuto = renderer.shadowMap.autoUpdate;
     renderer.shadowMap.autoUpdate = false;
 
+    // setViewport / setScissor は CSS 画素で受け取り、内部で devicePixelRatio を掛ける。
+    // 携帯（DPR 2〜3）では、そのまま渡すとコマが 2〜3 倍の大きさで焼かれて隣の段へはみ出し、
+    // 木が「上を切った矩形」になっていた（携帯だけ木が黒い板になる原因）
+    const pr = renderer.getPixelRatio();
     const scene = new THREE.Scene();
     const mat = makeBakeMaterial(this.needle);
     const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 400);
@@ -107,12 +113,12 @@ export class ImpostorAtlas {
             const rootY = -g.H * 0.5 * Math.cos(el);
             cam.left = -fr.W / 2;
             cam.right = fr.W / 2;
-            cam.bottom = rootY - g.H * 0.02;
+            cam.bottom = rootY - fr.below;
             cam.top = cam.bottom + fr.Hf;
             cam.updateProjectionMatrix();
             cam.updateMatrixWorld();
-            renderer.setViewport(cx, cy, this.cellW, this.cellH);
-            renderer.setScissor(cx, cy, this.cellW, this.cellH);
+            renderer.setViewport(cx / pr, cy / pr, this.cellW / pr, this.cellH / pr);
+            renderer.setScissor(cx / pr, cy / pr, this.cellW / pr, this.cellH / pr);
             renderer.setScissorTest(true);
             renderer.render(scene, cam);
           }
@@ -141,6 +147,7 @@ function makeBakeMaterial(needle: THREE.Texture): THREE.ShaderMaterial {
     uTreeH: { value: 1 },
     uLod: { value: new THREE.Vector4(1e6, 1e6, 1, 2) },
     uForceFlip: { value: 0 },
+    uReflect: { value: 0 },
     uLineMin: { value: 0.20 },  // 骨組みを焼くときは太めに（縮小で線が消えて「白い粒」になるため）
     uTintMix: { value: 0 },   // 焼き込みは無彩の（個体の色味を掛けない）アルベド。色味は表示側で掛ける
     uCamPos: { value: new THREE.Vector3() },
@@ -197,7 +204,7 @@ export function makeImpostorMaterial(env: Env, lighting: Lighting, atlas: Impost
   // 遠景のビルボードでカバレッジ・ディザを使うと「網戸」になる
   mat.alphaToCoverage = false;
   void msaa;
-  const frames = atlas.frames.map((f) => new THREE.Vector4(f.W, f.Hf, 0, 0));
+  const frames = atlas.frames.map((f) => new THREE.Vector4(f.W, f.Hf, f.below, 0));
   while (frames.length < 4) frames.push(new THREE.Vector4(1, 1, 0, 0));
   patchMaterial(
     mat,
@@ -252,12 +259,12 @@ export function makeImpostorMaterial(env: Env, lighting: Lighting, atlas: Impost
         vec2 wd = veg_windDir();
         float gust = veg_gust(root.xz);
         float sway = (0.004 + 0.010 * uWind.z) * gust * Hh * position.y * position.y;
-        vec3 wp = root + right * (position.x * W) + vec3(0.0, position.y * Hh - 0.02 * Hh / 1.04, 0.0) + vec3(wd.x, 0.0, wd.y) * sway;
+        vec3 wp = root + right * (position.x * W) + vec3(0.0, position.y * Hh - fr.z * scl, 0.0) + vec3(wd.x, 0.0, wd.y) * sway;
         float az = atan(tc.y, tc.x) - yaw;
         float cellF = fract(az / 6.2831853) * ${IMP_AZ}.0;
         float c0 = floor(cellF);
         float el = atan(cameraPosition.y - (root.y + 0.5 * Hh), dc);
-        float rowBlend = smoothstep(0.36, 0.78, el);
+        float rowBlend = smoothstep(0.55, 1.05, el);
         float fm = veg_flipMask(root);
         float flipped = step(flip_hash11(seed * 13.0 + 0.5), fm) * step(0.001, fm);
         // 数式ビュー: 遠くの木を全部「骨組み」で描くと白い粒の雲になる。3 本に 1 本だけ残す
