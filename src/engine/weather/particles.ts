@@ -158,6 +158,16 @@ void main(){
   // 揺らいだ「今いる場所」で陸かどうかを見る。置いた場所が岸でも、
   // ±1.1m の揺らぎで水の上へはみ出すと「湖面に浮かぶ光の玉」になる
   on *= step(uWxLake + 0.05, flip_height(center.xz));
+  // さらに「画面の中で湖に重なる」個体も消す。陸にいても、カメラから見て背景が湖だと
+  // 水面に浮かぶ光の玉に見える（批評が 4 ラウンド指摘しているのはこれ）。
+  // 視線をそのまま伸ばして湖面に当たる点を調べ、そこが水なら消す
+  {
+    vec3 vdir = normalize(center - uCamPos);
+    float tw = (uWxLake - uCamPos.y) / min(vdir.y, -1e-4);
+    vec2 hitXZ = (uCamPos + vdir * tw).xz;
+    float behind = step(distance(center, uCamPos) + 0.5, tw) * step(vdir.y, -1e-4);
+    on *= 1.0 - behind * step(flip_height(hitXZ), uWxLake - 0.05);
+  }
   // 明滅: 虫ごとに周期も点灯の長さも違う。素早く点いてゆっくり消える
   float period = 1.5 + 3.4 * aSeed.y;
   float bp = fract(t / period + aSeed.x);

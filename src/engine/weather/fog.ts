@@ -31,7 +31,15 @@ float wx_noise3(vec3 p){ return 0.7 * flip_vnoise(p) + 0.3 * flip_vnoise(p.xz * 
 // 霧・雨に入ってくる「空の光」。晴れならその向きの空の色、曇り・嵐では雲を透けた光。
 // flip_skyColor は雲の無い空を返すので、そのまま使うと嵐でも明るい空色の板になって雲の構造が消える。
 // uSkyAmbient は空の照度の半分（空担当が雲を織り込んで更新する）→ 平均放射輝度 = uSkyAmbient * 2/π
-vec3 wx_skyLit(vec3 skyH){ return mix(skyH, uSkyAmbient * 0.64, smoothstep(0.35, 1.0, uCloud)); }
+vec3 wx_skyLit(vec3 skyH){
+  vec3 c = mix(skyH, uSkyAmbient * 0.64, smoothstep(0.35, 1.0, uCloud));
+  // 嵐の夕方は uSkyAmbient がほぼ黒（1e-4 台）で、そのわずかな色かぶりが
+  // 雨のカーテン全体の色になる（露出 12 倍で増幅されて空がマゼンタに転ぶ）。
+  // 暗いときほど色を捨てて明るさだけを残す
+  float y = dot(c, vec3(0.2126, 0.7152, 0.0722));
+  float neutral = 1.0 - smoothstep(0.002, 0.05, y);
+  return mix(c, vec3(y), 0.35 + 0.6 * neutral);
+}
 
 // 霧の密度（0..1 相当）。湖面すれすれの薄い層（場所ごとに厚さの違う「塊」）＋谷底＋斜面を這う霧＋細かいむら
 // fp = その標本の「1画素の footprint（m）」。fp より細かいむらは平らにならす（＝手前でだけ細かい）。
@@ -77,11 +85,13 @@ vec3 stepLight(vec3 p, vec3 rd, vec3 skyH){
   float cs = dot(rd, uSunDir);
   vec3 sun = uSunColor * (wx_phaseHG(cs, 0.6) * 0.75 + 0.06) * sunUp;
   // 霧の粒は空全体の光を散らすので、地平の空より少し明るく白い
-  vec3 amb = mix(uSkyAmbient * 0.6, wx_skyLit(skyH), 0.65) * 1.35 + uGroundAmbient * 0.15;
+  // 地面の照り返しも「明るさだけ」を取る（1e-4 台の色かぶりが霧全体の色になるのを防ぐ）
+  float gy = dot(uGroundAmbient, vec3(0.2126, 0.7152, 0.0722));
+  vec3 amb = mix(vec3(dot(uSkyAmbient, vec3(0.2126, 0.7152, 0.0722))) * 0.6, wx_skyLit(skyH), 0.65) * 1.35 + vec3(gy) * 0.15;
   vec3 moon = uMoonColor * (wx_phaseHG(dot(rd, uMoonDir), 0.5) * 0.7 + 0.1) * 2.0;
   vec3 lp = uLightningPos + vec3(0.0, uWxCloudBase * 0.45, 0.0);
   float dl = distance(p, lp);
-  vec3 flash = vec3(0.8, 0.86, 1.0) * uLightning * 0.22 / (1.0 + dl * dl / (500.0 * 500.0));
+  vec3 flash = vec3(0.94, 0.96, 1.0) * uLightning * 0.22 / (1.0 + dl * dl / (500.0 * 500.0));
   return sun + amb + moon + flash;
 }
 
@@ -170,10 +180,12 @@ void main(){
     float flashDir = (0.02 + 0.28 * pow(max(dot(rd, toBolt), 0.0), 8.0)) * attBolt;
     // 雨のカーテンが空の 2 倍より明るくならないよう頭を打つ
     vec3 lit = wx_skyLit(skyH);
-    vec3 fl = min(vec3(0.8, 0.86, 1.0) * uLightning * flashDir, lit * 2.0 + 0.005);
+    vec3 fl = min(vec3(0.94, 0.96, 1.0) * uLightning * flashDir, lit * 2.0 + 0.005);
     // 雨のカーテンは「そこに届いている空の光」で光る（空より明るくならない）
     // 下を向いた視線ほど地面の照り返しを拾う（カーテンの下側が地面の色に寄る）
-    vec3 vcol = lit * 0.92 + uSkyAmbient * 0.06 + uGroundAmbient * (0.04 + 0.10 * max(-rd.y, 0.0)) + fl;
+    float sy = dot(uSkyAmbient, vec3(0.2126, 0.7152, 0.0722));
+    float gy2 = dot(uGroundAmbient, vec3(0.2126, 0.7152, 0.0722));
+    vec3 vcol = lit * 0.92 + vec3(sy) * 0.06 + vec3(gy2) * (0.04 + 0.10 * max(-rd.y, 0.0)) + fl;
     L += vcol * (1.0 - Tv) * T;
     T *= Tv;
     odTotal += odv;

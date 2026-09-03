@@ -10,8 +10,12 @@ import { heightAt } from "../core/heightfield";
 import { WX_COMMON } from "./glsl";
 import type { Weather } from "./index";
 
-/** 落雷スロットの長さ（秒）。1スロットに最大1回 */
-const SLOT = 3.4;
+/**
+ * 落雷スロットの長さ（秒）。1スロットに最大1回。
+ * 12.5 秒に 1 回・前後 4 秒のばらつき ＝ 実際の間隔 8.5〜16.5 秒（空振りの回を挟むと 25 秒）。
+ * 3〜4 秒に 1 回だと「定点撮影がいつ撮っても閃光の瞬間」になり、嵐の空を代表しなくなる（批評R6）。
+ */
+const SLOT = 12.5;
 /** 稲妻の最大線分数 */
 const MAX_SEG = 640;
 
@@ -24,11 +28,11 @@ type Strike = {
 /** スロット k に落雷があるか・いつか（決定的） */
 function strikeOf(k: number, storm: number): Strike | null {
   if (storm < 0.5) return null;
-  const p = 0.8 * Math.min(1, (storm - 0.5) / 0.4 + 0.2);
-  const forced = k === 0; // 開始直後（定点撮影の t=0 でも稲妻が見える）
-  if (!forced && hash2(k, 11) > p) return null;
-  // 定点撮影（freeze で t=0）でも「伸びきった稲妻＋強い閃光」が写るよう、最初の1回だけ 22ms 前に落とす
-  const offset = forced ? -0.022 : hash2(k, 23) * SLOT * 0.85;
+  // 空振りは作らない（2 回続けて空振りすると 25 秒も光らず「嵐に見えない」）
+  const p = Math.min(1, (storm - 0.5) / 0.4 + 0.2);
+  if (hash2(k, 11) > p) return null;
+  // スロットの真ん中 ±4 秒。t=0 付近に寄せると定点（freeze=1）が毎回閃光の瞬間になるので寄せない
+  const offset = SLOT * 0.5 + (hash2(k, 23) - 0.5) * 8.0;
   const n = 1 + Math.floor(hash2(k, 31) * 3);
   const strokes: Strike["strokes"] = [];
   let d = 0;
@@ -36,6 +40,9 @@ function strikeOf(k: number, storm: number): Strike | null {
     if (j > 0) d += 0.07 + 0.14 * hash2(k, 41 + j);
     strokes.push({ delay: d, amp: j === 0 ? 1 : 0.45 + 0.4 * hash2(k, 51 + j), tau: 0.045 + 0.05 * hash2(k, 61 + j) });
   }
+  // 余韻: 本物の落雷は放電路が 1 秒ほど薄く光って消える。
+  // これがあると「稲妻が見える窓」が 0.4 秒 → 1.2 秒になり、撮影のタイミングにも強い
+  strokes.push({ delay: d + 0.05, amp: 0.17, tau: 0.30 + 0.12 * hash2(k, 71) });
   return { slot: k, ts: k * SLOT + offset, strokes };
 }
 
@@ -144,7 +151,10 @@ void main(){
   // 広い光を強くしすぎるとリボンの四角がそのまま白い塊として見える
   float core = exp(-x * x * 90.0);
   float glow = exp(-x * 5.0) * 0.010 + exp(-x * 1.8) * 0.0025;
-  float i = (core * 4.0 + glow * 6.0) * mix(0.35, 1.0, vW) * uBoltFlash * vVis;
+  // 放電路そのものは、空全体の明るさ（uBoltFlash）が落ちても目に残る。
+  // そのまま掛けると閃光の 0.4 秒しか稲妻が見えず、撮影も観客も見逃す
+  float bf = pow(clamp(uBoltFlash, 0.0, 1.0), 0.45);
+  float i = (core * 4.0 + glow * 6.0) * mix(0.35, 1.0, vW) * bf * vVis;
   vec3 col = mix(vec3(0.7, 0.8, 1.0), vec3(1.0, 0.98, 1.0), core) * i;
   vec4 aer = flip_aerial(vWorld);
   col *= aer.a;
@@ -340,7 +350,7 @@ export class LightningFx {
     const kNow = Math.floor(t / SLOT);
     let flash = 0;
     let active: Strike | null = null;
-    for (const k of [kNow - 1, kNow]) {
+    for (const k of [kNow - 1, kNow, kNow + 1]) {
       if (k < 0) continue;
       const s = strikeOf(k, storm);
       if (!s) continue;

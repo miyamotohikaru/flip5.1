@@ -54,8 +54,11 @@ export const SHOTS: ShotDef[] = [
   { name: "ridge", desc: "尾根から谷を見下ろす", hour: 10.0, weather: "clear", pos: [start.x - 900, start.z + 700], look: [60, -10] },
   { name: "noon_side", desc: "真昼・太陽が横から当たる草地", hour: 12.2, weather: "clear", pos: [start.x + 260, start.z + 350], look: [100, 2] },
   { name: "cloudy_side", desc: "曇りの午後・木の近く", hour: 14.5, weather: "cloudy", pos: [start.x + 430, start.z + 470], look: [128, 3] },
-  // 動くもの（雨・粒子・稲光）は時間を止めた定点では隠れてしまうので、流したまま撮る1枚
-  { name: "storm_live", desc: "嵐・時間を止めず8秒後（雨と粒子の動きを見る）", hour: 18.2, weather: "storm", pos: [start.x - 300, start.z + 260], look: [45, 8], live: 8 },
+  // 動くもの（雨・粒子・稲光）は時間を止めた定点では隠れてしまうので、流したまま撮る2枚。
+  // 稲光は 12.5 秒に 1 回（落雷は t=3.6 / 19.6 / 32.9 …秒）。
+  // storm_live は「閃光の無いふつうの嵐」を、storm_bolt は「落雷の瞬間」を代表する
+  { name: "storm_live", desc: "嵐・時間を止めず11秒後（閃光の無い嵐の空）", hour: 18.2, weather: "storm", pos: [start.x - 300, start.z + 260], look: [45, 8], live: 11 },
+  { name: "storm_bolt", desc: "嵐・落雷の瞬間（3.7秒後）", hour: 18.2, weather: "storm", pos: [start.x - 300, start.z + 260], look: [45, 8], live: 3.8 },
   { name: "flip_half", desc: "裏返しの波が半分まで来たところ", hour: 17.4, weather: "clear", pos: [start.x, start.z], look: [0, 4], flip: 1, flipRadius: 260 },
   { name: "flip_full", desc: "全部が数式になった状態", hour: 17.4, weather: "clear", pos: [start.x, start.z], look: [0, 4], flip: 1, flipRadius: 6000 },
 ];
