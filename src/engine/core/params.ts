@@ -28,6 +28,12 @@ export type ShotDef = {
   look: [number, number];
   flip?: number;
   flipRadius?: number;
+  /**
+   * 時間を止めずに撮る定点（秒）。雨・雪・粒子・稲光のような「動くもの」は freeze=1 の
+   * 定点だけでは破綻が構造的に隠れるので、入場から live 秒だけ流してから撮る。
+   * tools/shoot.mjs はこの秒数を待ち時間に使う。
+   */
+  live?: number;
 };
 
 const start = startPosition();
@@ -48,6 +54,8 @@ export const SHOTS: ShotDef[] = [
   { name: "ridge", desc: "尾根から谷を見下ろす", hour: 10.0, weather: "clear", pos: [start.x - 900, start.z + 700], look: [60, -10] },
   { name: "noon_side", desc: "真昼・太陽が横から当たる草地", hour: 12.2, weather: "clear", pos: [start.x + 260, start.z + 350], look: [100, 2] },
   { name: "cloudy_side", desc: "曇りの午後・木の近く", hour: 14.5, weather: "cloudy", pos: [start.x + 430, start.z + 470], look: [128, 3] },
+  // 動くもの（雨・粒子・稲光）は時間を止めた定点では隠れてしまうので、流したまま撮る1枚
+  { name: "storm_live", desc: "嵐・時間を止めず8秒後（雨と粒子の動きを見る）", hour: 18.2, weather: "storm", pos: [start.x - 300, start.z + 260], look: [45, 8], live: 8 },
   { name: "flip_half", desc: "裏返しの波が半分まで来たところ", hour: 17.4, weather: "clear", pos: [start.x, start.z], look: [0, 4], flip: 1, flipRadius: 260 },
   { name: "flip_full", desc: "全部が数式になった状態", hour: 17.4, weather: "clear", pos: [start.x, start.z], look: [0, 4], flip: 1, flipRadius: 6000 },
 ];
@@ -89,7 +97,8 @@ export function parseParams(search: string): Params {
       p.shot = s;
       p.auto = true;
       p.nohud = q.get("nohud") !== "0";
-      p.freeze = q.get("freeze") !== "0";
+      // live の定点は既定で時間を流す（?freeze=1 で明示的に止められる）
+      p.freeze = s.live !== undefined ? q.get("freeze") === "1" : q.get("freeze") !== "0";
       p.hour = s.hour;
       p.weather = s.weather;
       p.pos = [s.pos[0], s.pos[1], s.pos[2]];
