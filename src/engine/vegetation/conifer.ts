@@ -142,7 +142,9 @@ export function buildConifer(v: TreeVariant, lod: 0 | 1): TreeGeo {
       const u = (t - v.crownBase) / Math.max(tTop - v.crownBase, 1e-3);
       const a0 = axisAt(t);
       // 枝の届く半径のおおよそ 0.6 倍（いちばん上は 0 に絞る）
-      const rr = v.lmax * H * (1 - 0.62 * Math.pow(u, 0.8)) * 0.32 * (1 - Math.pow(u, 6));
+      // 枝は 50〜66° 垂れるので、樹冠の**水平**の届きは枝長のおよそ半分しかない。
+      // 殻はそのさらに 3 割 = 枝長の 0.14 倍。これ以上大きいと殻自身が輪郭として読める
+      const rr = v.lmax * H * (1 - 0.62 * Math.pow(u, 0.8)) * 0.14 * (1 - Math.pow(u, 6));
       for (let k = 0; k <= shellSeg; k++) {
         const a = (k / shellSeg) * Math.PI * 2;
         const ca = Math.cos(a), sa = Math.sin(a);
@@ -354,9 +356,9 @@ void veg_tree(out vec3 p, out vec3 n){
   float backdrop = 0.0;
   if (uLod.w < 0.5) fade = step(dist, sw0);
   else if (uLod.w < 1.5) fade = uReflect * step(dist, sw1);
-  // 樹冠の内側の殻は 9m より近いと「のっぺりした緑の壁」として見えてしまう。
+  // 樹冠の内側の殻は 14m より近いと「のっぺりした緑の壁」として見えてしまう。
   // 近景では畳む（近くは葉の枚数が足りているので隙間も自然に見える）
-  if (aData.x > 1.5 && dist < 9.0) {
+  if (aData.x > 1.5 && dist < 14.0) {
     p = aAxis;
     n = vec3(0.0, 1.0, 0.0);
     vTree = vec4(fade, 0.0, aData.x, seed);
@@ -444,7 +446,7 @@ vec4 veg_treeAlbedo(out float relief){
   if (vTree.y > 0.5) return vec4(FLIP_LINE, 1.0);
   if (vTree.z > 1.5) {
     // 樹冠の内側の殻。葉の 0.35 倍の暗さ（葉の隙間から見える「奥の影」）
-    vec3 deep = vec3(0.017, 0.039, 0.018) * (0.8 + 0.4 * flip_hash11(vTree.w * 5.0 + 1.0));
+    vec3 deep = vec3(0.030, 0.066, 0.030) * (0.8 + 0.4 * flip_hash11(vTree.w * 5.0 + 1.0));
     return vec4(deep, 1.0);
   }
   if (vTree.z < 0.5) return vec4(veg_bark(vBark, vTree.w, relief), 1.0);
