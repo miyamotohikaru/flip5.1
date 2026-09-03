@@ -5,7 +5,7 @@
 import sys, os, glob
 from PIL import Image, ImageDraw
 
-ORDER = ["golden", "noon", "dawn", "cloudy", "rain", "storm", "night", "sunset_water", "forest", "ridge", "storm_live", "noon_side", "cloudy_side", "flip_half", "flip_full"]
+ORDER = ["golden", "noon", "dawn", "cloudy", "rain", "storm", "night", "sunset_water", "forest", "ridge", "storm_live", "storm_bolt", "noon_side", "cloudy_side", "flip_half", "flip_full"]
 OUT = "shots"
 
 def load(prefix, name):
