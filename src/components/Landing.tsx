@@ -23,8 +23,9 @@ export default function Landing({ phase, progress, heightmapRes, isMobile, onEnt
 
   return (
     <div className={`landing ${phase === "in" ? "hidden" : ""}`} aria-hidden={phase === "in"}>
+      {/* 作者の指示（2026-09-03）で「こす.くま ／ ふりっぷ」の肩書きは外した。そこまで主張しない */}
       <div className="landing-head">
-        <span>こす.くま ／ ふりっぷ</span>
+        <span />
         <span className="landing-latin">MATHSCAPE</span>
       </div>
 
@@ -75,7 +76,7 @@ export default function Landing({ phase, progress, heightmapRes, isMobile, onEnt
             <>WASD 歩く ／ ドラッグで見回す ／ F 裏返す ／ P 写真</>
           )}
         </span>
-        <span className="landing-credit">制作: こす.くま × Claude Fable 5.1</span>
+        {/* 作者の指示（2026-09-03）で制作クレジットは外した。「この風景について」の中には残してある */}
       </div>
     </div>
   );
