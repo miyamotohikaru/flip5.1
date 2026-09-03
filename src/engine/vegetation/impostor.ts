@@ -397,7 +397,7 @@ export function makeImpostorMaterial(env: Env, lighting: Lighting, atlas: Impost
           float L = clamp(log2(max(max(tx.x, tx.y), 1.0)), 0.0, 5.0);
           // 縮小するほどミップの平均でアルファが痩せ、枝の間に空が 1px 抜ける。
           // しきい値を LOD に応じて下げて被覆を戻す（原寸では 0.5 のまま＝輪郭は太らない）
-          float th = 0.5 - 0.20 * L;
+          float th = 0.5 - 0.07 * L;
           return clamp((a - th) * (1.0 + 0.45 * L) + 0.5, 0.0, 1.0);
         }
         vec4 veg_impSample(sampler2D t){
