@@ -319,7 +319,7 @@ export class Sky {
     // 実験室の「雲量」「雲の高さ」はここに掛かる（既定は 1 ＝ 変化なし）
     // 下限 0.45 =「晴れでも晴天積雲がいくつか浮く」。日没に下面が橙に染まる雲が要る。
     // 下限なので曇り・雨・嵐の雲量は変わらない
-    const cov = (Math.max(0.16 + 1.0 * Math.pow(w.cloud, 1.05), 0.45) - 0.20 * w.storm) * LAB.skyCloud;
+    const cov = (Math.max(0.16 + 1.0 * Math.pow(w.cloud, 1.05), 0.55) - 0.20 * w.storm) * LAB.skyCloud;
     const base = (1900 - 900 * w.storm - 250 * w.rain) * LAB.skyCloudBase;
     const top = base + 1500 + 800 * w.cloud + 1500 * w.storm;
     const sigma = 0.03 + 0.025 * w.storm;
