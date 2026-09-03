@@ -6,7 +6,7 @@
 // 葉幅は 1〜3cm（本物のイネ科は 3〜8mm。遠い環だけ画素より細くならないよう太くする）。
 // 林の中（vegmap の G が濃いところ）では、草の代わりに下草（シダ）と落ち葉を生やして「森の床」にする。
 // 風は uWind と突風ノイズ。影は落とす（近い環の手前 25% だけ、第1カスケードだけ）。
-// 裏返し: 6 本に 1 本だけを線にして、残りは畳む（白い針の塊にしない）。
+// 裏返し: 36 本に 1 本だけを線にして、残りは畳む（白いひっかき傷の塊にしない）。
 import * as THREE from "three";
 import type { Env } from "../core/env";
 import type { Lighting } from "../core/lighting";
@@ -291,18 +291,21 @@ void veg_grass(out vec3 p, out vec3 n){
   float tt = t * t;
   float fm = veg_flipMask(root);
   float flipped = step(flip_hash12(cw * 0.53 + k * 3.19 + 2.0), fm) * step(0.001, fm);
-  // 数式ビューでは 6 本に 1 本だけを線にする（白い針の塊にしない）
-  float lineKeep = step(flip_hash12(cw * 1.91 + k * 5.31 + 4.0), 0.165);
+  // 数式ビューでは **36 本に 1 本**だけを線にする。
+  // 「6 本に 1 本」は R2 の指示だが、当時すでに 10 本に 1 本まで間引いてあったので
+  // 0.10 → 0.165 は**密にする変更**になり、白いひっかき傷が 20% 増えた（批評R7 の 8 番 1・退行）。
+  // 目標は数字で決める: 下 1/3 の明るい画素を現在の 1/6 以下（＝ 1% 台）
+  float lineKeep = step(flip_hash12(cw * 1.91 + k * 5.31 + 4.0), 0.0275);
   vec3 up = vec3(0.0, 1.0, 0.0);
   if (flipped > 0.5) {
     if (lineKeep < 0.5) { p = root; n = up; vGrass = vec4(t, rnd, 0.0, 1.0); vBlade = vec4(0.0); vVegWorld = p; return; }
     // 数式ビュー: 1本ずつが「風のベクトル」。向きを揃えないと全方向のひっかき傷に見える。
     // 長さは実際の草の 1/3、太さの向きは画面に正対させる（どの線も同じ太さで読める）
-    float lw = 0.005 + dist * 0.0013;
+    float lw = 0.0035 + dist * 0.00095;
     vec3 toCam = uCamPos - root;
     vec3 sideV = normalize(cross(up, toCam) + vec3(1e-5, 0.0, 0.0));
     vec3 lean = vec3(wd.x, 0.0, wd.y) * (0.30 + 0.45 * gust);
-    float HL = H * 0.34;
+    float HL = H * 0.30;
     p = root + sideV * (position.x * lw) + up * (HL * t) + lean * HL * t;
     n = up;
   } else {

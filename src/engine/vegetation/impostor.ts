@@ -295,6 +295,11 @@ export function makeImpostorMaterial(env: Env, lighting: Lighting, atlas: Impost
   // （批評 R6 の「1〜3km は胡椒」「空を横切る 1px の点線」の正体）。
   // 4x MSAA のカバレッジに落とすと、被覆 3 割は 1/4 の被覆として空と混ざる
   mat.alphaToCoverage = msaa;
+  // three の alphatest_fragment は ALPHA_TO_COVERAGE でも `smoothstep(alphaTest, alphaTest+fwidth(a), a)`
+  // ＝ ほぼ 2 値に戻してしまう（ミップで平均されたアルファは画素間でなだらかなので fwidth が小さい）。
+  // 被覆率をカバレッジへ渡すために、このチャンクは自前のものに差し替える（下の "imp fs alphatest"）。
+  // MSAA が無い段（low / mid）は画面ディザで確率的に間引く
+  mat.defines = { ...(mat.defines ?? {}), VEG_IMP_A2C: msaa ? 1 : 0 };
   const frames = atlas.frames.map((f) => new THREE.Vector4(f.W, f.Hf, f.below, 0));
   while (frames.length < 4) frames.push(new THREE.Vector4(1, 1, 0, 0));
   patchMaterial(
@@ -352,10 +357,10 @@ export function makeImpostorMaterial(env: Env, lighting: Lighting, atlas: Impost
         vec2 tc = toCam2 / dc;
         vec3 right = vec3(-tc.y, 0.0, tc.x);
         // 幅だけ木ごとに ±22% 振る。同じ輪郭が等間隔に並ぶと「胡椒の粒」に見える
-        float W = fr.x * scl * (0.78 + 0.44 * flip_hash11(seed * 23.0 + 9.0));
+        float W = fr.x * scl * (0.70 + 0.66 * flip_hash11(seed * 23.0 + 9.0));
         float Hh = fr.y * scl;
         // 遠いほど横に広げて、隣の木と輪郭がつながった「林の塊」にする（1 本ずつ立てない）
-        W *= 1.0 + 0.55 * vImpFar;
+        W *= 1.0 + 0.85 * vImpFar;
         vec2 wd = veg_windDir();
         float gust = veg_gust(root.xz);
         float sway = (0.004 + 0.010 * uWind.z) * gust * Hh * position.y * position.y;
@@ -418,23 +423,28 @@ export function makeImpostorMaterial(env: Env, lighting: Lighting, atlas: Impost
         // 4 コマを必ず引いて混ぜる。**条件分岐の中で texture2D を呼ばない**こと:
         // 分岐の中では導関数が未定義になり、GPU が最も粗いミップを選んで
         // 木が「50×90px のぼやけた矩形」に化ける（批評 R2 の 4 位の原因）
-        // ミップで平均されたアルファを 0.5 の等値線まわりで鋭くする。
-        // これをやらないと、縮小するほど木が太って最後はコマ全体が不透明な矩形になる
-        float veg_impSharpen(float a){
+        // アトラスのミップは**被覆率そのもの**（焼いたアルファは 2 値なので、単純平均＝被覆率）。
+        //
+        // 原寸（L=0）では 2 値なので 0.5 の等値線で鋭くしてよい。
+        // **縮小したら鋭くしてはいけない。** 鋭くすると、樹冠の薄い縁（＝下ほど広がる裾、
+        // 尖った梢、張り出した枝）が全部しきい値を割って消え、残るのは幹まわりの濃い芯だけになる。
+        // それが 400m〜1.5km の木を「頭が平らで、上から下まで同じ幅で、等間隔に並んだ緑の杭」に
+        // 変えていた（統合担当の 1 位／批評R7 の 7 番「明るい緑の角棒」）。
+        // 縮小したぶんは被覆率のままアルファ→カバレッジに渡す。被覆 3 割の樹冠は
+        // 「3 割の濃さの塊」として空や地形と混ざり、隣の木と輪郭がつながって林の塊になる。
+        float veg_impCoverage(float a){
           vec2 tx = fwidth(vImp2.xy) * uAtlasCell;
-          // **上限は 2.5 段まで。** 5 段まで許すと、木がコマの 1/32 に縮んだとき
-          // しきい値 0.15・コントラスト 3.25 倍になり、被覆 3 割の板がまるごと不透明になる。
-          // それが 2km の林を「空にかかった膜と点線」に変えていた（批評 R6 の 2 位）
-          float L = clamp(log2(max(max(tx.x, tx.y), 1.0)), 0.0, 2.5);
-          // 縮小するほどミップの平均でアルファが痩せ、枝の間に空が 1px 抜ける。
-          // しきい値を LOD に応じて下げて被覆を戻す（原寸では 0.5 のまま＝輪郭は太らない）
-          float th = 0.5 - 0.055 * L;
-          // **しきい値のまわりで smoothstep**。前は「0.5 へ寄せる」式だったので、
-          // ほぼ透明な画素（a=0.1）まで 0.37 に持ち上がってアルファテストを通り、
-          // 2km の林が空にうっすらした膜を張っていた（批評 R6 の「胡椒」の正体）。
-          // 遠いほど幅を広げて、縁を 4x MSAA のカバレッジに渡す
-          float w = 0.10 + 0.30 * vImpFar;
-          return smoothstep(th - w, th + w, a);
+          // 4 段（コマの 1/16）まで見る。ここを 2.5 段で止めると、遠景で L が飽和して
+          // 「鋭くする」側が効きっぱなしになる
+          float L = clamp(log2(max(max(tx.x, tx.y), 1.0)), 0.0, 4.0);
+          float sharp = smoothstep(0.42, 0.58, a);
+          // 焼いた樹冠はカードの隙間が多く、被覆率がそのままだと遠景の木が背景に溶けて
+          // 「幽霊」になる。本物の針葉樹の樹冠は奥行きがあって 8〜9 割の光を止めるので、
+          // 「重なった層」として被覆率を持ち上げる（1-(1-a)^n）。**縁の薄いところは薄いまま**なので
+          // 細り・尖った梢は消えない
+          float cov = 1.0 - pow(1.0 - a, 2.4);
+          // L=0.7（1.6 テクセル/画素）から L=2（4 テクセル/画素）にかけて被覆率へ渡す
+          return mix(sharp, cov, smoothstep(0.7, 2.0, L));
         }
         vec4 veg_impSample(sampler2D t){
           vec2 u00 = veg_impUv(vImp.x, 0.0);
@@ -461,19 +471,35 @@ export function makeImpostorMaterial(env: Env, lighting: Lighting, atlas: Impost
         `{
           if (vImp2.w > 0.5) {
             vec4 sk = veg_impSample(uAtlasS);
-            diffuseColor = vec4(FLIP_LINE * (0.35 + 0.65 * sk.a), veg_impSharpen(sk.a));
+            diffuseColor = vec4(FLIP_LINE * (0.35 + 0.65 * sk.a), veg_impCoverage(sk.a));
           } else {
             vec4 alb = veg_impSample(uAtlasA);
-            alb.a = veg_impSharpen(alb.a);
+            alb.a = veg_impCoverage(alb.a);
             vec4 nrm = veg_impSample(uAtlasN);
             vec3 tint = mix(vec3(1.08, 1.0, 0.78), vec3(0.82, 1.0, 1.2), vSeed) * (0.8 + 0.4 * flip_hash11(vSeed * 3.0 + 0.2));
-            // 遠景の林は「上から陽の当たる樹冠の塊」。1 本ずつの黒い点にしない
-            diffuseColor = vec4(alb.rgb * tint * (1.0 + 0.55 * vImpFar), alb.a);
+            // 遠景の林は「上から陽の当たる樹冠の塊」。ただし**地形より明るくしない**。
+            // 明るくすると遠いほど目立って「緑のクレヨンで引いた線」になる（批評R7 の 7 番②）
+            diffuseColor = vec4(alb.rgb * tint * (1.0 - 0.10 * vImpFar), alb.a);
             vec3 nl = nrm.xyz * 2.0 - 1.0;
             impN = normalize(vRight * nl.x + vec3(0.0, 1.0, 0.0) * nl.y + vFace * nl.z);
           }
         }`,
         "imp fs map",
+      );
+      // three の alphatest_fragment を外して、被覆率をそのままカバレッジに渡す。
+      // これが無いと 400m 以遠の樹冠が「濃い芯だけ残った緑の杭」になる
+      shader.fragmentShader = replaceOnce(
+        shader.fragmentShader,
+        "#include <alphatest_fragment>",
+        `#if VEG_IMP_A2C
+        // アルファ→カバレッジ（4x MSAA）。被覆 0.3 の樹冠は 0.3 の濃さで背景と混ざる
+        if (diffuseColor.a < 0.03) discard;
+        #else
+        // MSAA が無い段は画面ディザで確率的に間引く（2 値のしきい値だと輪郭が痩せる）
+        if (diffuseColor.a < 0.03 + 0.94 * veg_ign(gl_FragCoord.xy + vec2(vSeed * 37.0))) discard;
+        diffuseColor.a = 1.0;
+        #endif`,
+        "imp fs alphatest",
       );
       shader.fragmentShader = replaceOnce(
         shader.fragmentShader,
