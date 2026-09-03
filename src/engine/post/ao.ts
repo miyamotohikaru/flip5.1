@@ -1,8 +1,9 @@
 // アンビエントオクルージョン（GTAO: Jimenez et al. 2016 の水平線積分）。high 以上のみ。
 //   - 半分解像度。深度から法線を再構成（左右上下の差分のうち小さい側を選ぶ＝縁で割れない）
-//   - 2 方向 × 両側 4 歩（16 サンプル）。方向と歩幅の開始を画素ごとにずらす（IGN、時間で変えない＝ちらつかない）
-//   - 深度を見るバイラテラルぼかし 2 回（水平・垂直）。G に線形深度を持ち、合成側の深度付きアップサンプルに使う
-//   - 遠く（> 170m）では消える。空（深度 1.0）は 1
+//   - 3 方向 × 両側 4 歩（24 サンプル）。方向と歩幅の位相は 4×4 のタイルで一巡（デインターリーブ）
+//   - 深度を見る 4 タップの箱ぼかし 2 回（水平・垂直）＝ 4×4。位相が 1 回ずつ入るのでノイズが消える。
+//     G に線形深度を持ち、合成側の深度付きアップサンプルに使う
+//   - 遠く（> 48m）では消える（それ以上は板と粗い面に反応して矩形になる）。空（深度 1.0）は 1
 import * as THREE from "three";
 import type { Pipeline } from "../core/pipeline";
 import { fsMaterial, makeRT, POST_COMMON } from "./pass";
@@ -57,8 +58,14 @@ void main(){
   radiusPx = clamp(radiusPx, 1.5, 48.0);
   vec2 radiusUv = radiusPx / uHalfRes;
 
-  float noise = post_ign(gl_FragCoord.xy);
-  float jitter = post_ign(gl_FragCoord.yx + vec2(17.0, 31.0));
+  // 方向と歩幅の位相を 4×4 のタイルで一巡させる（デインターリーブ）。
+  //   以前は post_ign(xy) と post_ign(yx)＝転置 を使っていたので 2 つが相関し、
+  //   縦横に揃った「矩形タイル」の模様になっていた（批評 R2 の新規破綻 7 の正体）。
+  //   4×4 で一巡させておけば、後段の 4×4 の箱ぼかしで位相がちょうど 1 回ずつ現れて完全に平均される。
+  vec2 tile = mod(gl_FragCoord.xy, 4.0);
+  float ti = tile.y * 4.0 + tile.x;            // 0..15
+  float noise = (ti + 0.5) / 16.0;             // 方向の位相
+  float jitter = fract(ti * 0.6180339887);     // 歩幅の位相（黄金比でばらす）
   float visibility = 0.0;
   const int DIRS = 3;
   const int STEPS = 4;
@@ -108,6 +115,9 @@ void main(){
 }
 `;
 
+// ノイズ落とし。位相が 4×4 で一巡するので、-1,0,+1,+2 の 4 タップ（横 → 縦）で
+// ちょうど 4×4 の箱になり、16 の位相が 1 回ずつ入って完全に平均される。
+// 重みは深度差で落とす（縁で AO が滲まないように）。以前の 7 タップのガウスより軽い。
 const BLUR_FRAG = /* glsl */ `
 uniform sampler2D tSrc;
 uniform vec2 uDir;
@@ -115,18 +125,14 @@ varying vec2 vUv;
 void main(){
   vec2 c = texture2D(tSrc, vUv).rg;
   float z0 = c.g;
-  float sum = c.r, tw = 1.0;
-  for (int i = 1; i <= 3; i++) {
-    float fi = float(i);
-    float gw = exp(-fi * fi * 0.28);
-    vec2 a = texture2D(tSrc, vUv + uDir * fi).rg;
-    vec2 b = texture2D(tSrc, vUv - uDir * fi).rg;
-    float wa = gw * exp(-abs(a.g - z0) / (z0 * 0.06 + 0.05));
-    float wb = gw * exp(-abs(b.g - z0) / (z0 * 0.06 + 0.05));
-    sum += a.r * wa + b.r * wb;
-    tw += wa + wb;
+  float sum = 0.0, tw = 0.0;
+  for (int i = -1; i <= 2; i++) {
+    vec2 s = texture2D(tSrc, vUv + uDir * float(i)).rg;
+    float w = exp(-abs(s.g - z0) / (z0 * 0.06 + 0.05));
+    sum += s.r * w;
+    tw += w;
   }
-  gl_FragColor = vec4(sum / tw, z0, 0.0, 1.0);
+  gl_FragColor = vec4(tw > 1e-4 ? sum / tw : c.r, z0, 0.0, 1.0);
 }
 `;
 
@@ -153,9 +159,12 @@ export class AO {
         uFar: { value: 9000 },
         // 半径 1.5m。株の根元・幹の接地の「濃い影」を作るのに 0.6m 以上が要る（批評ラウンド1）
         uRadius: { value: 1.5 },
-        // 遠くの木の接地まで残す（30〜60m だと中景の幹が浮く）
-        uFalloffStart: { value: 70 },
-        uFalloffEnd: { value: 170 },
+        // 近景だけに掛ける。45m より遠いと、深度バッファに写っているのが
+        // 木のインポスター（板）と粗いクリップマップの面なので、AO がそれを律儀に遮蔽して
+        // 「矩形のタイル継ぎ目」に見える（批評 R2 の新規破綻 7 の正体）。
+        // 中景〜遠景の陰りは CSM の落ち影の仕事にする
+        uFalloffStart: { value: 20 },
+        uFalloffEnd: { value: 48 },
       },
       AO_FRAG,
     );
