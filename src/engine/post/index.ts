@@ -230,12 +230,14 @@ export class Post {
     //   夜・嵐: env.exposure が上限に張り付いて「青い昼」「白飛びした灰色」になる。
     //       ここは追従の強さを 1 に上げて「狙った明るさ」に合わせ切る（空側の上限が 30 でも 6 でも同じ絵になる）。
     const dark = Math.max(night, 0.85 * storm);
-    u.uAutoRef.value = THREE.MathUtils.lerp(0.34, 0.011, night);
-    u.uAutoStrength.value = dbg.has("noauto") ? 0 : THREE.MathUtils.lerp(0.5, 1.0, dark);
-    (u.uAutoRange.value as THREE.Vector2).set(THREE.MathUtils.lerp(0.7, 0.15, dark), THREE.MathUtils.lerp(2.55, 30, dark));
+    u.uAutoRef.value = THREE.MathUtils.lerp(0.38, 0.075, night);
+    u.uAutoStrength.value = dbg.has("noauto") ? 0 : THREE.MathUtils.lerp(0.70, 1.0, dark);
+    (u.uAutoRange.value as THREE.Vector2).set(THREE.MathUtils.lerp(0.7, 0.15, dark), THREE.MathUtils.lerp(12.0, 30, dark));
     // 暗部の持ち上げ（影に空の環境光を残す）。夜だけは持ち上げない（空が乳白色になる）
     u.uLift.value = this.dbg.has("nograde") ? 0 : THREE.MathUtils.lerp(0.024, 0.004, night);
     u.uPivot.value = 0.42;
+    // AgX の白側の脱色を戻す。露出を上げるほど色が抜けるので、黄昏と嵐で多めに
+    u.uChromaBack.value = this.dbg.has("nograde") ? 0 : clamp(0.3 + 0.25 * golden + 0.25 * storm, 0, 0.8);
     if (dbg.has("nobloom")) u.uBloomStrength.value = 0;
     if (dbg.has("noao")) u.uAoStrength.value = 0;
     if (dbg.has("nolens")) u.uDropRain.value = 0;
