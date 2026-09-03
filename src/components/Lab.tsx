@@ -16,11 +16,12 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { World } from "@/engine/world";
 import { LAB, LAB_DEFAULTS, type LabKey } from "@/engine/lab/store";
 import {
-  LAB_BY_ID, LAB_GROUPS, LAB_PARAMS, posToValue, splitFormula, valueToPos,
+  LAB_BY_ID, LAB_GROUPS, LAB_PARAMS, posToValue, valueToPos,
   type LabGroup, type LabParam,
 } from "@/engine/lab/params";
 import type { LabStatus } from "@/engine/lab/rebuild";
 import SeedFinale from "./SeedFinale";
+import { FormulaSvg } from "@/blackboard/render";
 
 type Props = {
   world: World | null;
@@ -182,7 +183,7 @@ export default function Lab({ world, open, onClose, sourceLines, isMobile }: Pro
             <section key={g.id} className="lab-group">
               <h3>{g.label}</h3>
               {(groups.get(g.id) ?? []).map((p) => (
-                <Row key={p.id} p={p} v={vals[p.id]} hot={hot === p.id} onChange={change} />
+                <Row key={p.id} p={p} v={vals[p.id]} hot={shown === p.id} onChange={change} />
               ))}
             </section>
           ))}
@@ -196,7 +197,6 @@ export default function Lab({ world, open, onClose, sourceLines, isMobile }: Pro
 
 /** いま動かしているつまみの式。**位置は動かさない**（行が伸び縮みすると、指の下でつまみが逃げる） */
 function Focus({ p, v, live, hot }: { p: LabParam; v: number; live: string | null; hot: boolean }) {
-  const [pre, term, post] = useMemo(() => splitFormula(p.formula), [p.formula]);
   const shownVal = p.unit === "°" ? `${v > 0 ? "+" : ""}${v.toFixed(0)}°` : `×${v.toFixed(2)}`;
   return (
     <div className={`lab-focus ${hot ? "hot" : ""}`}>
@@ -204,11 +204,7 @@ function Focus({ p, v, live, hot }: { p: LabParam; v: number; live: string | nul
         <span>{p.label}</span>
         <b>{shownVal}</b>
       </div>
-      <div className="lab-formula" aria-hidden>
-        {pre}
-        <em>{term}</em>
-        {post}
-      </div>
+      <FormulaSvg className="lab-formula" nodes={p.nodes} hot={["k"]} size={13.5} seed={19} grain={false} pad={3} />
       {live && <div className="lab-live">{live}</div>}
       <div className="lab-src" aria-hidden>
         {p.src}

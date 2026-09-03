@@ -2,6 +2,7 @@
 // 各つまみは engine/lab/store.ts の LAB の 1 項目と、実際のコードの 1 行に対応している。
 // 式の文面は `formula`。動かす項を 〔…〕 で囲む（UI がそこだけ光らせる。DOM は作り直さない）。
 import type { World } from "../world";
+import { E, type Node } from "../../data/formulas";
 import { LAB, LAB_DEFAULTS, type LabKey } from "./store";
 
 export type LabGroup = "terrain" | "sky" | "water" | "veg" | "audio";
@@ -21,8 +22,10 @@ export type LabParam = {
   log?: boolean;
   /** つまみの目盛りの単位（× の倍率なら "×"、角度なら "°"） */
   unit: string;
-  /** 実際に使っている式。動かす項を 〔…〕 で囲む */
+  /** 実際に使っている式。動かす項を 〔…〕 で囲む（読み上げ・控え用の文面） */
   formula: string;
+  /** 同じ式を、入口の黒板と同じ線文字で書くための木。動かす項の id は "k" */
+  nodes: Node[];
   /** 出典（実際のコード） */
   src: string;
   /** 「いま効いている値」を作る。世界が無ければ null（式だけ出す） */
@@ -46,6 +49,7 @@ export const LAB_PARAMS: LabParam[] = [
   {
     id: "terrainAmp", key: "terrain.amp", group: "terrain", label: "山脈の高さ", min: 0.3, max: 2.4, step: 0.01, unit: "×", log: true,
     formula: "amp = (320 + 360·n²) · massif(θ) · 〔A〕",
+    nodes: E(`amp = (320 + 360·n^{2})·\F{massif}{θ}·\t{k}{A}`),
     src: "core/height.ts heightAt() の mtn",
     live: (v, w) => `amp ≈ ${f(680 * v, 0)} m ／ 最高 ${w?.env.heightmap ? f(w.env.heightmap.max, 0) : "…"} m`,
     rebake: "terrain",
@@ -53,6 +57,7 @@ export const LAB_PARAMS: LabParam[] = [
   {
     id: "terrainRidge", key: "terrain.ridge", group: "terrain", label: "尾根の鋭さ", min: 0, max: 1.8, step: 0.01, unit: "×",
     formula: "m = round + (sharp − round) · s(x,z) · 〔R〕",
+    nodes: E(`m = round + (sharp - round)·s(x,z)·\t{k}{R}`),
     src: "core/height.ts ridgedBoth() の混ぜ方",
     live: (v) => `s·R = ${f(0.62 * v)} 〜 ${f(Math.min(1.6, 1.0 * v))}（0 = 丸い稜線／1 = 鋭い）`,
     rebake: "terrain",
@@ -60,6 +65,7 @@ export const LAB_PARAMS: LabParam[] = [
   {
     id: "terrainErode", key: "terrain.erode", group: "terrain", label: "侵食の強さ", min: 0, max: 4, step: 0.01, unit: "×",
     formula: "Σ aᵢ·nᵢ / (1 + 0.55·〔E〕·|Σ∇nᵢ|²)",
+    nodes: E(`\f{\S{i}{}{a_i·n_i}}{1 + 0.55·\t{k}{E}·|\S{i}{}{∇n_i}|^{2}}`),
     src: "core/height.ts erodedFbm()",
     live: (v) => `傾きの減衰 k = ${f(0.55 * v, 3)}`,
     rebake: "terrain",
@@ -69,30 +75,35 @@ export const LAB_PARAMS: LabParam[] = [
   {
     id: "skyMie", key: "sky.mie", group: "sky", label: "ミー散乱（もや）", min: 0.15, max: 6, step: 0.01, unit: "×", log: true,
     formula: "σs,Mie = 〔M〕 · 8.0e−3 · e^(−h/2.5) · K(λ)",
+    nodes: E(`σ_{s}^{M} = \t{k}{M}·8.0·10^{-3}·e^{-h/2.5km}·K(λ)`),
     src: "sky/atmosphere.glsl.ts flip_atmoMedium()",
     live: (v) => `σs = ${f(8.0 * v, 2)}e−3 /km`,
   },
   {
     id: "skyRayleigh", key: "sky.rayleigh", group: "sky", label: "レイリー散乱（青）", min: 0.2, max: 4, step: 0.01, unit: "×", log: true,
     formula: "σs,Ray = 〔R〕 · (5.8, 13.6, 33.1)e−3 · e^(−h/8)",
+    nodes: E(`σ_{s}^{R} = \t{k}{R}·(5.8, 13.6, 33.1)·10^{-3}·e^{-h/8km}`),
     src: "sky/atmosphere.glsl.ts flip_atmoMedium()",
     live: (v) => `σs = (${f(5.8 * v, 1)}, ${f(13.6 * v, 1)}, ${f(33.1 * v, 1)})e−3 /km`,
   },
   {
     id: "skyOzone", key: "sky.ozone", group: "sky", label: "オゾン層", min: 0, max: 4, step: 0.01, unit: "×",
     formula: "σa,O₃ = 〔O〕 · (0.65, 1.88, 0.09)·1.0e−3 · Λ(h)",
+    nodes: E(`σ_{a}(O_{3}) = \t{k}{O}·(0.65, 1.88, 0.09)·10^{-3}·\F{chappuis}{h}`),
     src: "sky/atmosphere.glsl.ts flip_atmoMedium()",
     live: (v) => `σa = ${f(1.88 * v, 2)}e−3 /km（緑）`,
   },
   {
     id: "skyCloud", key: "sky.cloud", group: "sky", label: "雲量", min: 0, max: 3, step: 0.01, unit: "×",
     formula: "cov = 〔C〕 · (0.16 + cloud^1.05 − 0.20·storm)",
+    nodes: E(`cov = \t{k}{C}·(0.16 + cloud^{1.05} - 0.20·storm)`),
     src: "sky/index.ts uCloudLayer.z",
     live: (v, w) => `cov = ${f((0.16 + Math.pow(w?.env.weather.cloud ?? 0.18, 1.05) - 0.2 * (w?.env.weather.storm ?? 0)) * v)}`,
   },
   {
     id: "skyCloudBase", key: "sky.base", group: "sky", label: "雲の高さ", min: 0.35, max: 2.8, step: 0.01, unit: "×", log: true,
     formula: "base = 〔B〕 · (1900 − 900·storm − 250·rain)",
+    nodes: E(`base = \t{k}{B}·(1900 - 900·storm - 250·rain) m`),
     src: "sky/index.ts uCloudLayer.x",
     live: (v, w) => `雲底 ${f((1900 - 900 * (w?.env.weather.storm ?? 0) - 250 * (w?.env.weather.rain ?? 0)) * v, 0)} m`,
   },
@@ -101,6 +112,7 @@ export const LAB_PARAMS: LabParam[] = [
   {
     id: "waterWind", key: "water.wind", group: "water", label: "風速", min: 0.15, max: 5, step: 0.01, unit: "×", log: true,
     formula: "Hs = 0.0025 + 0.0042·〔U〕²",
+    nodes: E(`H_s = 0.0025 + 0.0042·\t{k}{U}^{2}`),
     src: "water/wavesim.ts setWind()",
     live: (v, w) => {
       const U = Math.max((w?.env.weather.wind ?? 2) * v, 0.3);
@@ -110,6 +122,7 @@ export const LAB_PARAMS: LabParam[] = [
   {
     id: "waterPeriod", key: "water.period", group: "water", label: "波の周期", min: 0.25, max: 4, step: 0.01, unit: "×", log: true,
     formula: "λp = 〔P〕·(0.35 + 0.062·U²)  ,  T = √(2πλp/g)",
+    nodes: E(`λ_p = \t{k}{P}·(0.35 + 0.062U^{2}),   T = \r{2πλ_p/g}`),
     src: "water/wavesim.ts setWind()",
     live: (v, w) => {
       const U = Math.max((w?.env.weather.wind ?? 2) * LAB.waterWind, 0.3);
@@ -120,6 +133,7 @@ export const LAB_PARAMS: LabParam[] = [
   {
     id: "waterDir", key: "water.dir", group: "water", label: "うねりの向き", min: -180, max: 180, step: 1, unit: "°",
     formula: "S(k) ·= mix(0.03, 1, max(k̂·〔d̂〕, 0)^p)",
+    nodes: E(`S(k) ·= \F{mix}{0.03, 1, \F{max}{\c{k}·\t{k}{\c{d}}, 0}^{p}}`),
     src: "water/wavesim.ts SPECTRUM_FRAG",
     live: (v) => `風向から ${v > 0 ? "+" : ""}${v.toFixed(0)}°`,
   },
@@ -128,12 +142,14 @@ export const LAB_PARAMS: LabParam[] = [
   {
     id: "vegGrass", key: "veg.grass", group: "veg", label: "草の密度", min: 0, max: 2.5, step: 0.01, unit: "×",
     formula: "density ·= 〔G〕  ,  生える ⇔ density·fade > hash(cell)",
+    nodes: E(`density ·= \t{k}{G},    density·fade > \F{hash}{cell}`),
     src: "vegetation/grass.ts GRASS_PLACE",
     live: (v, w) => `上限 ${((w?.q.grassCount ?? 150000) / 1000).toFixed(0)}k 本 の ${f(Math.min(1, v) * 100, 0)}% まで`,
   },
   {
     id: "vegTree", key: "veg.tree", group: "veg", label: "木の密度", min: 0, max: 2.5, step: 0.02, unit: "×",
     formula: "生える ⇔ hash(i,j) < 〔T〕 · forest(x,z,h,nᵧ)",
+    nodes: E(`\F{hash}{i,j} < \t{k}{T}·\F{forest}{x,z,h,n_y}`),
     src: "vegetation/placement.ts scatterTrees()",
     live: (_v, w) => `いま ${(w?.vegetation?.trees?.stats.trees ?? 0).toLocaleString("ja-JP")} 本`,
     rebake: "trees",
@@ -143,12 +159,14 @@ export const LAB_PARAMS: LabParam[] = [
   {
     id: "audioGust", key: "audio.gust", group: "audio", label: "突風の変調の深さ", min: 0, max: 4, step: 0.01, unit: "×",
     formula: "g(t) = base + 〔D〕 · depth · gust(t)",
+    nodes: E(`g(t) = base + \t{k}{D}·depth·\F{gust}{t}`),
     src: "audio/wind.ts tick()（各帯の変調量）",
     live: (v) => `変調量 ×${f(v)}（0 で一定の「ゴー」、3 で息づく）`,
   },
   {
     id: "audioBand", key: "audio.band", group: "audio", label: "ざわめきの帯", min: 0.25, max: 4, step: 0.01, unit: "×", log: true,
     formula: "f_rustle = 〔F〕 · (1000 + 1200·w)",
+    nodes: E(`f_{rustle} = \t{k}{F}·(1000 + 1200w) Hz`),
     src: "audio/wind.ts tick()（bandpass の中心周波数）",
     live: (v, w) => {
       const ww = Math.min(1.25, (w?.env.weather.wind ?? 2) / 8);
@@ -158,6 +176,7 @@ export const LAB_PARAMS: LabParam[] = [
   {
     id: "audioRain", key: "audio.rain", group: "audio", label: "雨粒の密度", min: 0.25, max: 4, step: 0.01, unit: "×", log: true,
     formula: "粒/秒 = 〔ρ〕 · N / T   （N 粒の列を速さ ρ で回す）",
+    nodes: E(`rate = \t{k}{ρ}·\f{N}{T}`),
     src: "audio/rain.ts（rainGrains の列の再生速度）",
     live: (v) => `芯 ${f(3500 * v, 0)} 粒/秒 ／ 葉 ${f(90 * v, 0)} 粒/秒`,
   },
