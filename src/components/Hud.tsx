@@ -128,9 +128,11 @@ export default function Hud(p: HudProps) {
 
       {p.hint !== "off" && (
         <div className={`hud-hint ${p.hint === "fade" ? "fade" : ""}`} aria-hidden>
+          <span>
           {p.isMobile
             ? "左で歩く ／ 右で見回す"
             : "ドラッグで見回す ／ WASD 歩く ／ Shift 走る ／ F ふりっぷ ／ P 写真 ／ H 表示を消す"}
+          </span>
         </div>
       )}
 
