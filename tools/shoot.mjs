@@ -38,7 +38,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const SHOT_NAMES = ["golden", "noon", "dawn", "cloudy", "rain", "storm", "night", "sunset_water", "forest", "ridge", "noon_side", "cloudy_side", "storm_live", "storm_bolt", "flip_half", "flip_full"];
 // 時間を止めずに撮る定点（src/engine/core/params.ts の live）。待ち時間をその秒数に延ばす
-const LIVE_WAIT = { storm_live: 11000, storm_bolt: 2600 };
+// params.ts の live（秒）＋描画が落ち着くまでの余裕。**ここを params.ts と食い違わせない**
+// （storm_bolt を 2600ms で撮って落雷が写らず、批評が別フレームで採点する事故が起きた）
+const LIVE_WAIT = { storm_live: 11800, storm_bolt: 3850 };
 let targets = [];
 if (flag("url")) targets = [{ name, url: String(flag("url")) }];
 else if (flag("all")) targets = SHOT_NAMES.map((s) => ({ name: `${name}_${s}`, url: `/?shot=${s}`, wait: LIVE_WAIT[s] }));
