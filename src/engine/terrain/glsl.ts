@@ -157,8 +157,10 @@ if (tShore < 9.0 && tAbove < 3.5) { // 砂は tShore ≤ 6.5m・水面 +2.75m �
   bn1 = flip_gnoise(tXZ * 0.55 + 5.0);   // λ ≈ 1.8 m（縁のぎざぎざ）
   bn2 = flip_gnoise(tXZ * 0.17 + 11.0);  // λ ≈ 6 m（幅のうねり。25m だと遠景で幅が一定に見える）
   bn3 = flip_gnoise(tXZ * 0.055 + 17.0); // λ ≈ 18 m（浜と草の岸の入れ替わり）
-  // 幅 1〜3m を主に λ6m で揺らす。ときどき 0 以下＝砂の無い岸（草が水に落ちる）
-  float beachW = 0.35 + 3.0 * smoothstep(-1.0, 1.0, 1.35 * bn2 + 0.8 * bn3 + 0.55 * bn1 + 0.3 * tPatch) - 0.9 * smoothstep(0.1, 0.6, bn3);
+  // 幅 1〜3m を主に λ6m で揺らす。λ36m（焼いた場 tMeso）で「浜のある入り江」と
+  // 「草が水に落ちる岸」を数十 m 単位で切り替える（帯が途切れないと「プールの縁」になる）
+  float beachW = 0.35 + 3.0 * smoothstep(-1.0, 1.0, 1.35 * bn2 + 0.8 * bn3 + 0.55 * bn1 + 0.3 * tPatch)
+               - 0.9 * smoothstep(0.1, 0.6, bn3) - 2.4 * smoothstep(-0.30, 0.45, tMeso + 0.4 * tPatch);
   float beachEdge = 0.22 + 0.9 * smoothstep(-0.45, 0.45, bn2 + 0.7 * bn1); // 縁: 切り立つ所と砂が草に食い込む所
   float sandTop = 0.95 + 0.6 * bn2 + 0.35 * bn1;
   sandM = (1.0 - smoothstep(beachW - beachEdge, beachW + beachEdge, tShore + 0.45 * bn1))
@@ -166,10 +168,16 @@ if (tShore < 9.0 && tAbove < 3.5) { // 砂は tShore ≤ 6.5m・水面 +2.75m �
         * (1.0 - smoothstep(0.35, 0.6, tSlope));
   // 草が砂に舌のように食い込む（境が一本の弧だと「プールの縁」）
   sandM *= 1.0 - 0.85 * smoothstep(0.42, 0.78, flip_vnoise(tXZ * 0.55 + 13.0) + 0.35 * flip_vnoise(tXZ * 1.8 + 4.0) - 0.18);
+  // 幅 1〜3m の帯は 150m 先で 1px 未満。そのまま残すと「岸をなぞった 1 本の線」になるので薄める
+  float shoreFar = 1.0 - 0.6 * smoothstep(90.0, 320.0, tDist);
+  sandM *= shoreFar;
+  wetBand *= shoreFar;
   // 水際の濡れ: 高さで一律に切ると等高線の帯（＝プールの縁）になる。幅を 0.1〜0.9m に散らし、
   // 砂の帯とは別の位相にして「濡れ・砂利・草」の 3 本の平行線ができないようにする
   float wetTop = 0.14 + 0.75 * smoothstep(-0.7, 0.7, bn1 + 0.6 * bn2 - 0.4 * bn3);
   wetBand = 1.0 - smoothstep(-0.04, wetTop, tAbove);
+  // 高さだけで切ると等高線の帯になるので、水際からの「距離」でも減衰させる
+  wetBand *= 1.0 - smoothstep(0.0, 1.4 + 1.8 * (bn2 + 0.5 * bn1 + 0.5), tShore);
 }
 // 林の密度は植生マップ（G）＝木を実際に置いた密度を正とする。
 // 地形の焼いた場（tF.b）は別の乱数なので、それで判断すると「木の下なのに草原の色」になる。
@@ -253,7 +261,7 @@ if (snowM > 0.001) {
   snowM *= 0.55 + 0.45 * smoothstep(-0.60, 0.60, s0.x * 2.0 + 12.0 * sx + tMeso + 0.5 * tPatch);
 }
 // 砂利まじりの砂: 1〜3m の濃淡と、水際に近いほど暗く湿った砂利
-vec3 sand = vec3(0.215, 0.205, 0.175) * (1.0 + 0.1 * tMeso); // 高山湖の岸は灰色の砂利。黄色いと「砂浜」に見える
+vec3 sand = vec3(0.122, 0.113, 0.096) * (1.0 + 0.18 * tMeso); // 高山湖の岸は灰色の砂利。日なたの草より暗くする（明るいと岸を縁取る「線」になる）
 if (sandM > 0.001) {
   sand *= 0.8 + 0.4 * flip_vnoise(tXZ * 0.7 + 4.0);
   sand = mix(sand, vec3(0.16, 0.16, 0.15), 0.5 * smoothstep(0.55, 0.8, flip_vnoise(tXZ * 2.5 + 1.0)) * (1.0 - smoothstep(0.0, 6.0, tShore)));
@@ -263,7 +271,7 @@ if (sandM > 0.001) {
   if (tAbove < 0.1) {
     float dep = -tAbove;
     sand *= 0.80 + 0.45 * flip_fbm(tXZ * 0.16 + 7.0, 2) + 0.25 * flip_vnoise(tXZ * 0.045 + 12.0);
-    sand = mix(sand, vec3(0.070, 0.086, 0.062), smoothstep(0.2, 4.0, dep));
+    sand = mix(sand, vec3(0.070, 0.086, 0.062), smoothstep(0.5, 5.0, dep)); // 岸ぎわで急に暗くすると水際が線に見える
   }
 }
 vec3 wN = normalize(mix(gN, snowN, snowM));
@@ -394,7 +402,7 @@ tRough = mix(tRough, 0.80, snowM); // 0.55 は艶が出すぎて「メレンゲ�
 tRough = mix(tRough, 0.80, sandM);
 // 水際の濡れ・雨の濡れ・水たまり
 float wet = max(wetBand, uWetness * (1.0 - snowM));
-tCol *= 1.0 - 0.42 * wet;
+tCol *= 1.0 - 0.32 * wet; // 0.42 は水際に一定幅の暗い帯を作っていた
 tRough = mix(tRough, 0.32, wet);
 if (uWetness > 0.05) {
   float pud = smoothstep(0.58, 0.78, flip_fbm(tXZ * 0.11 + 1.0, 2) * 0.5 + 0.5 + 0.35 * (0.5 - tCav));
