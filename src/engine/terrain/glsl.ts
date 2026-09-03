@@ -197,12 +197,18 @@ vec4 tVeg = texture2D(uVegMap, tUv);
 float forest = tVeg.g;
 // 林床の効き。まばらな林（0.3 前後）では草が残り、密な林（0.8 超）で完全に腐植の床になる。
 // 縁は 13m/36m の斑で崩すので境界が線に見えない
-float fFloor = smoothstep(0.34, 0.94, forest + 0.14 * tPatch + 0.10 * tMeso);
+// 林の「密」の判定を上げる。植生マップの G は cloudy_side の開けた斜面でも 0.60〜0.69 あり、
+// 0.34 起点だと「木が 1 本しかないのに林床の色」になっていた（影担当の申し送り）
+float fFloorRaw = smoothstep(0.46, 0.92, forest + 0.14 * tPatch + 0.10 * tMeso);
+// 林床の「材質」は近景だけ。200m 先の林は樹冠しか見えないので、そこの地面を腐植の色にすると
+// 稜線に沿った暗い板（批評R4・R5 の「金床」）になる。境目を 70〜240m で溶かす
+float fFar = smoothstep(70.0, 240.0, tDist);
+float fFloor = fFloorRaw * (1.0 - fFar);
 
 // ---- 色（線形）----
 // 枯れ草の斑: 13m の斑は数百 m のゾーン（tMacro）の中でだけ強く出す（中景が迷彩に見えないように）
 float dryZone = smoothstep(-0.2, 0.5, tMacro);
-vec3 grass = mix(vec3(0.050, 0.115, 0.025), vec3(0.19, 0.165, 0.065), smoothstep(-0.25, 0.45, tPatch + 0.3 * tMeso) * (0.25 + 0.5 * dryZone) * (1.0 - 0.8 * forest)); // 林とその空地は湿っていて枯れない
+vec3 grass = mix(vec3(0.050, 0.115, 0.025), vec3(0.19, 0.165, 0.065), smoothstep(-0.25, 0.45, tPatch + 0.3 * tMeso) * (0.25 + 0.5 * dryZone) * (1.0 - smoothstep(0.12, 0.55, forest))); // 林とその空地は湿っていて枯れない（枯れ草の黄色が R/G を押し上げる）
 grass *= 1.0 + 0.30 * tMacro + 0.13 * tMeso; // 数百m と 36m のむら。一色の斜面は「ゴルフ場」に見える
 grass = mix(grass, vec3(0.19, 0.165, 0.06), smoothstep(250.0, 420.0, tH)); // 高山草地は黄ばむ
 // 林帯（10〜400m、緩斜面）: 木の下の暗い床。遠景では樹冠のざらつき
@@ -211,6 +217,8 @@ grass = mix(grass, vec3(0.19, 0.165, 0.06), smoothstep(250.0, 420.0, tH)); // �
 // 縁は植生マップの補間に 13m/36m の斑を足して崩すので、境界が線に見えない
 float tCanopy = 1.0; // 樹冠が直達光を遮る割合（1 = 素通り）
 vec3 tDuffCap = vec3(1.0); // 林床の地色の上限（明るい側の裾を切る）
+// 遠景の林の地面は「暗い板」でなく、樹冠の色へごく薄く寄せるだけにする
+if (fFar > 0.01) grass *= 1.0 - 0.16 * fFloorRaw * fFar;
 if (fFloor > 0.0005) {
   float fLitter = flip_vnoise(tXZ * 0.42 + 21.0);
   // 褪せた針葉のリター（灰茶。R/G ≈ 1.0）→ 腐植（ほぼ黒）。
@@ -260,7 +268,7 @@ if (tDist < 70.0 && uReflect < 0.5) {
   float lit = smoothstep(0.42, 0.86, flip_vnoise(tXZ * 0.29 + 17.0) + 0.45 * tPatch) * (1.0 - smoothstep(28.0, 70.0, tDist));
   grass = mix(grass, vec3(0.155, 0.125, 0.062), 0.5 * lit * (1.0 - smoothstep(0.10, 0.45, forest))); // 林床は duff が持つ（fFloor だと疎林で漏れる）
 }
-vec3 dirt = vec3(0.105, 0.078, 0.052) * (1.0 + 0.2 * tMacro + 0.28 * tMeso + 0.20 * tPatch); // 遠景の土も無地にしない（焼いた場の使い回しでタップは増えない）
+vec3 dirt = vec3(0.088, 0.084, 0.060) * (1.0 + 0.2 * tMacro + 0.28 * tMeso + 0.20 * tPatch); // 温帯の土は灰褐色。R/G 1.35 のオレンジだと地色が赤くなる。遠景も無地にしない（焼いた場の使い回し）
 // 斜面の土（批評R3 4位）: λ6m（振幅 0.35）と λ1.5m（振幅 0.2）の 2 段。
 // 一段だけだと「無地のエアブラシ」に見える。傾き 25°超には 0.6 倍の暗い縦筋（雨裂）
 vec2 dirtN = vec2(0.0);
