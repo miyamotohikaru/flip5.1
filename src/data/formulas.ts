@@ -179,7 +179,7 @@ const terrain: Formula[] = [
     area: "terrain",
     src: "src/engine/core/height.ts:211 heightAt(x, z)",
     body: E(`h(x,z) = \\t{base}{base}(x,z) + \\t{mtn}{mtn}(x,z) + \\t{fine}{fine}(x,z)`),
-    now: E(`h(\\v{x}{0}, \\v{z}{0}) = \\v{base}{1} + \\v{mtn}{1} + \\v{fine}{2} = \\v{h}{2} m`),
+    now: E(`h = base \\v{base}{1} + mtn \\v{mtn}{1} + fine \\v{fine}{2} = \\v{h}{2} m`),
     steps: [
       {
         note: "はじめ: ノイズをただ重ねた → 山が団子になった",
@@ -229,9 +229,9 @@ const sky: Formula[] = [
     id: "sky.scatter",
     title: "空の色（大気散乱）",
     area: "sky",
-    src: "src/engine/sky/lut.glsl.ts:112 flip_scatterMarch / atmosphere.glsl.ts:42 媒質",
+    src: "src/engine/sky/lut.glsl.ts:112 flip_scatterMarch / atmosphere.glsl.ts:42 medium",
     body: E(`L(ω) = \\I{0}{D}{T(0,s)·(σ^{R}(s)·p^{R}(θ) + σ^{M}(s)·p^{M}(θ))·E_☉ + T(0,s)·σ_s(s)·Ψ(s)}{s}`),
-    now: E(`θ = \\v{theta}{1}°,   p^{M}(θ) = \\v{pM}{4},   T(5km) = \\v{T}{2}`),
+    now: E(`θ \\v{theta}{1}° → p^{M} \\v{pM}{4},  T(5km) \\v{T}{2}`),
     steps: [
       { note: "透過率: 光が減る分（Beer–Lambert）", body: E(`T(a,b) = \\F{exp}{-\\I{a}{b}{σ_e(h(s))}{s}}`) },
       {
@@ -280,9 +280,9 @@ const water: Formula[] = [
     id: "water.wave",
     title: "湖の波",
     area: "water",
-    src: "src/engine/water/wavesim.ts:43 spectrum / :74 分散関係 / :78 h(k,t)",
+    src: "src/engine/water/wavesim.ts:43 spectrum / :74 dispersion / :78 h(k,t)",
     body: E(`h(x,t) = \\S{k}{}{\\c{h}(k,t)·e^{i k·x}}`),
-    now: E(`U = \\v{U}{1} m/s   h_s = \\v{hs}{3} m   λ_p = \\v{lp}{2} m`),
+    now: E(`wind \\v{U}{1} m/s → h_s \\v{hs}{3} m,  λ_p \\v{lp}{2} m`),
     steps: [
       { note: "風波のスペクトル（Phillips 型）", body: E(`S(k) = \\t{amp}{A}·\\f{e^{-k_p^{2}/k^{2}}}{k^{4}}·\\F{mix}{0.03, 1, (\\c{k}·\\c{w})^{p}}`) },
       { note: "2 cm 以下の波は表面張力で消える", body: E(`S  →  S·e^{-0.0004k^{2}}·(1 + k^{2}/k_t^{2})^{-1/2}`) },
@@ -301,7 +301,7 @@ const water: Formula[] = [
     id: "water.surface",
     title: "水面の反射",
     area: "water",
-    src: "src/engine/water/shaders.ts:335 フレネル / :187 GGX / :180 コースティクス",
+    src: "src/engine/water/shaders.ts:335 fresnel / :187 GGX / :180 caustics",
     body: E(`F(θ) = F_{0} + (1 - F_{0})(1 - N·V)^{5},   F_{0} = 0.02`),
     steps: [
       { note: "ギラつきは GGX。粗さは消えた波の分散", body: E(`D(H) = \\f{α^{2}}{π((N·H)^{2}(α^{2}-1) + 1)^{2}}`) },
@@ -322,7 +322,7 @@ const vegetation: Formula[] = [
     id: "veg.tree",
     title: "針葉樹",
     area: "vegetation",
-    src: "src/engine/vegetation/conifer.ts:55 幹 / :117 垂れ角 / :144 螺旋",
+    src: "src/engine/vegetation/conifer.ts:55 trunk / :117 droop / :144 spiral",
     body: E(`r(t) = r_{0}((1-t)^{0.85} + 0.015)(1 + 0.6e^{-30t}),   r_{0} = 0.011H + 0.04`),
     steps: [
       { note: "枝は黄金角 137.5° の螺旋に並ぶ", body: E(`φ_{j,b} = 2.39996·j + \\f{2πb}{n_B} + ε`) },
@@ -339,7 +339,7 @@ const vegetation: Formula[] = [
     id: "veg.grass",
     title: "草",
     area: "vegetation",
-    src: "src/engine/vegetation/grass.ts:52 葉の寸法 / :24 色",
+    src: "src/engine/vegetation/grass.ts:52 blade / :24 color",
     body: E(`w_leaf = 0.010 m,   h_tuft = 0.34(0.4 + 1.0ξ) m`),
     steps: [
       {
@@ -357,7 +357,7 @@ const audio: Formula[] = [
     id: "audio.bird",
     title: "鳥の声",
     area: "audio",
-    src: "src/engine/audio/birds.ts:148 スイープ / :156 ビブラート",
+    src: "src/engine/audio/birds.ts:148 sweep / :156 vibrato",
     body: E(`f(t) = f_{0}(f_{1}/f_{0})^{t/T} + D·\\F{sin}{2πrt}`),
     steps: [
       { note: "指数スイープ（耳は比で聞く）", body: E(`f(t) = f_{0}(f_{m}/f_{0})^{2t/T}   (t < T/2)`) },
@@ -383,7 +383,7 @@ const audio: Formula[] = [
     id: "audio.thunder",
     title: "雷",
     area: "audio",
-    src: "src/engine/audio/dsp.ts:266 包絡 / :146 インパルス応答",
+    src: "src/engine/audio/dsp.ts:266 envelope / :146 impulse response",
     body: E(`y(t) = (x * r)(t) = \\I{0}{t}{x(s)r(t-s)}{s}`),
     steps: [
       { note: "包絡: 1.5 乗で立ち、指数で減る", body: E(`E(t) = (t/a)^{1.5}   (t < a),   e^{-(t-a)/τ}   (t ≥ a)`) },
@@ -410,7 +410,7 @@ const core: Formula[] = [
     id: "core.pi",
     title: "円周率",
     area: "core",
-    src: "docs/critique/round1.md · シェーダの二重宣言",
+    src: "docs/critique/round1.md  PI redeclared in two shaders",
     body: E(`π = 3.14159265358979`),
     steps: [
       {

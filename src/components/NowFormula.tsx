@@ -100,11 +100,13 @@ export default function NowFormula({ world, active, compact }: Props) {
   if (!active || !f || !f.now) return null;
   return (
     <div className={`bbnow${show ? " show" : ""}${faint ? " faint" : ""}`} aria-hidden>
-      <div className="bbnow-head">
-        <span>いま計算していること — {f.title}</span>
+      <div className="bbnow-slate">
+        <div className="bbnow-head">
+          <span>いま計算していること — {f.title}</span>
+        </div>
+        <FormulaSvg nodes={f.now} size={compact ? 14 : 16.5} seed={11} values={values} grain={false} />
+        <div className="bbnow-src">{f.src}</div>
       </div>
-      <FormulaSvg nodes={f.now} size={compact ? 13 : 15} seed={11} values={values} grain={false} />
-      <div className="bbnow-src">{f.src}</div>
     </div>
   );
 }

@@ -17,10 +17,115 @@
   height: 100%;
 }
 
+/* 「黒板をぜんぶ見る」: 前面に出て、縦に流して読む */
+.bb.bb-full {
+  z-index: 34;
+  pointer-events: auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  background: #131d19;
+  animation: bb-in 0.32s ease both;
+}
+.bb.bb-full > svg {
+  width: 100%;
+  height: auto;
+}
+@keyframes bb-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.bb-close {
+  position: fixed;
+  z-index: 35;
+  top: calc(14px + var(--safe-t, 0px));
+  right: calc(16px + var(--safe-r, 0px));
+  appearance: none;
+  height: 34px;
+  padding: 0 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(226, 242, 232, 0.34);
+  background: rgba(12, 22, 18, 0.72);
+  color: rgba(233, 242, 234, 0.92);
+  font: inherit;
+  font-size: 13px;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.bb-close:hover {
+  border-color: rgba(226, 242, 232, 0.7);
+}
+
 /* 板の地。緑黒 ＋ むら（タイル1枚を敷き詰めるだけ。画面全体のフィルタは掛けない） */
 .bb-ground {
   fill: #16211c;
   transition: opacity 1.4s ease;
+}
+
+/* 拭き跡の横筋（板であることの手掛かり） */
+.bb-sweep {
+  opacity: 0.045;
+  stroke-linecap: round;
+}
+
+/* 木枠とチョーク受け（画像は使わない。全部 CSS のグラデーション） */
+.bb-frame {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+.bb-frame::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 13px solid #4a3524;
+  border-image: linear-gradient(150deg, #63482f 0%, #3a2917 34%, #5c4229 62%, #2e2011 100%) 1;
+  box-shadow: inset 0 0 0 2px rgba(0, 0, 0, 0.6), inset 0 0 60px rgba(0, 0, 0, 0.45);
+}
+.bb-tray {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 15px;
+  background: linear-gradient(180deg, #6a4c31 0%, #4a3420 45%, #2b1d10 100%);
+  box-shadow: 0 -3px 7px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 236, 205, 0.14);
+}
+.bb-chalk {
+  position: absolute;
+  bottom: 4px;
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(180deg, #f3f7ef, #c9d3c4);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+.bb-eraser {
+  position: absolute;
+  right: 11%;
+  bottom: 3px;
+  width: 42px;
+  height: 9px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #6d5a45 0%, #4b3a29 55%, #d9e2d5 55%, #b9c6b6 100%);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+}
+@media screen and (max-width: 620px) {
+  .bb-frame::before {
+    border-width: 9px;
+  }
+  .bb-tray {
+    height: 12px;
+  }
+  .bb-eraser {
+    width: 32px;
+    height: 7px;
+  }
 }
 
 .bb path {
@@ -30,7 +135,7 @@
 }
 /* チョークの粉（フィルタ無し。太く薄い線を1本重ねるだけ） */
 .bb-dust {
-  opacity: 0.075;
+  opacity: 0.09;
 }
 
 /* 書き取り: stroke-dashoffset を 0 へ。JS では毎フレーム触らない */
@@ -58,7 +163,7 @@
 
   /* 黒板消しで拭いた筋 */
 .bb-wipe {
-  opacity: 0.12;
+  opacity: 0.2;
   stroke-linecap: round;
 }
 
@@ -72,12 +177,12 @@
     opacity: 1;
   }
   to {
-    opacity: 0.44;
+    opacity: 0.72;
   }
 }
 .bb-still .bb-fail .bb-line > g:not(.bb-struck) {
   animation: none;
-  opacity: 0.44;
+  opacity: 0.72;
 }
 
 /* 項の光り（実験室のスライダーから） */
@@ -89,25 +194,29 @@
 .bb-note {
   font-family: var(--font-jp, sans-serif);
   font-size: 10.8px;
-  fill: rgba(206, 228, 215, 0.34);
-  letter-spacing: 0.02em;
+  /* 和文は線文字を作れないのでシステムフォント。ただし塗りはチョークの粒（板の上の字に見せる） */
+  fill: url(#bbChalkDim);
+  fill-opacity: 0.85;
+  letter-spacing: 0.03em;
 }
 .bb-head {
   font-family: var(--font-jp, sans-serif);
   font-size: 15px;
-  fill: rgba(226, 242, 232, 0.72);
+  fill: url(#bbChalk);
   letter-spacing: 0.24em;
 }
 .bb-src {
   font-family: var(--font-mono, monospace);
   font-size: 9.5px;
-  fill: rgba(200, 224, 210, 0.26);
+  fill: url(#bbChalkDim);
+  fill-opacity: 0.5;
   letter-spacing: 0.01em;
 }
 .bb-title {
   font-family: var(--font-jp, sans-serif);
   font-size: 13px;
-  fill: rgba(226, 242, 232, 0.5);
+  fill: url(#bbChalkDim);
+  fill-opacity: 0.8;
   letter-spacing: 0.3em;
 }
 
@@ -126,17 +235,18 @@ body.bb-on .loading-log {
   }
   .bb-fail .bb-line > g:not(.bb-struck) {
     animation: none;
-    opacity: 0.44;
+    opacity: 0.72;
   }
 }
 
-/* 世界の中の隅「いま計算していること」 */
+/* 世界の中の隅「いま計算していること」。
+   黒板と同じチョークの字を、小さな石板の上に。printf に見せない */
 .bbnow {
   position: fixed;
   z-index: 11;
   left: calc(var(--gutter, 22px) + var(--safe-l, 0px));
-  bottom: calc(20px + var(--safe-b, 0px));
-  max-width: min(46vw, 460px);
+  bottom: calc(60px + var(--safe-b, 0px));
+  max-width: min(34vw, 420px);
   pointer-events: none;
   opacity: 0;
   transform: translateY(6px);
@@ -147,40 +257,53 @@ body.bb-on .loading-log {
   transform: none;
 }
 .bbnow.faint {
-  opacity: 0.34;
+  opacity: 0.5;
+}
+.bbnow-slate {
+  padding: 7px 12px 5px;
+  border-radius: 7px;
+  border: 1px solid rgba(198, 224, 208, 0.16);
+  background: linear-gradient(180deg, rgba(13, 24, 19, 0.62), rgba(9, 17, 13, 0.72));
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
 }
 .bbnow-head {
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
-  display: flex;
-  gap: 10px;
-  align-items: baseline;
   font-size: 11px;
-  letter-spacing: 0.14em;
-  color: rgba(226, 242, 232, 0.5);
-  margin-bottom: 2px;
+  letter-spacing: 0.12em;
+  color: rgba(233, 245, 235, 0.72);
+  margin-bottom: 1px;
 }
 .bbnow-src {
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
   font-family: var(--font-mono, monospace);
-  font-size: 9.5px;
+  font-size: 10px;
   letter-spacing: 0;
-  color: rgba(200, 224, 210, 0.3);
+  color: rgba(214, 236, 222, 0.46);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  margin-top: 1px;
 }
 .bbnow svg {
   display: block;
   max-width: 100%;
   height: auto;
-  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.7)) drop-shadow(0 0 6px rgba(0, 0, 0, 0.45));
 }
 @media screen and (max-width: 620px) {
   .bbnow {
     max-width: calc(100vw - 32px);
-    bottom: calc(96px + var(--safe-b, 0px));
+    bottom: calc(108px + var(--safe-b, 0px));
   }
   .bbnow-head {
-    font-size: 10px;
+    font-size: 10.5px;
   }
+}
+
+/* 入口のボタンが 3 つになるので、狭い画面では折り返す */
+body.bb-on .landing-actions {
+  flex-wrap: wrap;
+  row-gap: 10px;
+}
+body.bb-on .landing-actions .about-link {
+  white-space: nowrap;
 }

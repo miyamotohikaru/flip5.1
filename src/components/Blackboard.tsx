@@ -2,20 +2,63 @@
 // 入口の黒板（ガリレオ演出）。読み込みの待ち時間に、世界を作っている式が書かれていく。
 // 手書きフォントのファイルは使わない ― 字はすべて src/blackboard/strokefont.ts のポリライン。
 //
-// 版: 入口の言葉（Landing）が載る所は避けて書く。空いている場所（desktop は右の段 → 左の段、
-//     携帯は上の帯 → 下の帯）の順に埋める。入口の言葉と重なる行は薄く（黒板の「前の書き込み」に見える）。
+// 2 つの姿:
+//   通常  … 入口の言葉（Landing）を避けて空いた所から書く。**全 6 分野を 12〜15 秒で書き終える**
+//   ぜんぶ … 「黒板をぜんぶ見る」を押したとき。前面に出て、導出を全部・書き終わった姿で並べる（縦に流す）
 //
 // 軽さの約束（docs/ARCHITECTURE.md「訪れる人の端末を重くしない」）:
 //   ・feTurbulence はタイル 2 枚だけ。画面全体には掛けない
 //   ・書き取りは CSS。JS は「次の行を出す」瞬間しか動かない（1 行につき setState 1 回）
-//   ・書き終わった行は数本の <path> に畳む
+//   ・書き終わった行は数本の <path> に畳む（生きた <path> は 150 本を超えない）
 //   ・入場したら DOM ごと外す（世界の描画には 1 円も払わせない）
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import "@/blackboard/blackboard.css";
-import { ChalkDefs, ChalkLine, inkDuration, inkOfNodes, type InkLine } from "@/blackboard/render";
-import { boardScript, type Cue } from "@/blackboard/script";
-import { hash2 } from "@/engine/core/noise";
+import { ChalkDefs, ChalkLine, inkDuration, inkOfNodes, inkOfText, type InkLine } from "@/blackboard/render";
+import { handLine } from "@/blackboard/strokefont";
+import { boardScript, boardScriptFull, type Cue } from "@/blackboard/script";
 import { E } from "@/data/formulas";
+import { hash2 } from "@/engine/core/noise";
+
+type Props = {
+  phase: "loading" | "ready" | "in";
+  isMobile: boolean;
+  /** 「黒板をぜんぶ見る」で前面に出ているか */
+  full?: boolean;
+  onClose?: () => void;
+};
+
+type Placed = {
+  cue: Cue;
+  line?: InkLine;
+  x: number;
+  y: number;
+  size: number;
+  at: number;
+  dur: number;
+  back?: boolean;
+  note?: string[];
+  /** その行が入っている段の幅（出典行を収めるのに使う） */
+  colW: number;
+  tilt?: number;
+  ink?: number;
+};
+
+type Rect = { x: number; y: number; w: number; h: number };
+/** dim = 入口の言葉の裏。**章の見出しはここには置かない**（重なって両方読めなくなる） */
+type Region = Rect & { dim?: boolean };
+type Opts = { off: boolean; hold: boolean; all: boolean; still: boolean; pen: number; font: boolean; fullp: boolean };
+
+const PAD = 42;
+/**
+ * ペンの速さ（em に対する倍率）。全 6 分野が 12〜15 秒で書き終わる速さ。
+ * 速いが「書いている」のは見える（1 行 1.2〜1.6 秒）。
+ */
+const PEN = 50;
+const GAP_LINE = 130;
+const GAP_HEAD = 90;
+const GAP_FAIL = 280;
+const NOTE_DESKTOP = 10.2;
+const NOTE_NARROW = 11.5;
 
 /** 字形と組みの見本（?bbfont=1）。開発用。 */
 const SPECIMEN: Cue[] = [
@@ -30,41 +73,6 @@ const SPECIMEN: Cue[] = [
   { k: "line", nodes: E(`\\f{a + b}{c^{2} - d}  \\S{i=0}{N-1}{x_i}  \\I{0}{D}{f(s)}{s}  \\F{clamp}{x, 0, 1}`), note: "分数・Σ・∫・関数" },
   { k: "line", nodes: E(`\\c{k}·\\c{w}  x^{2}_{i}  \\t{hot}{term}`), note: "ハット・上下付き・項" },
 ];
-
-type Props = {
-  phase: "loading" | "ready" | "in";
-  isMobile: boolean;
-};
-
-type Placed = {
-  cue: Cue;
-  line?: InkLine;
-  x: number;
-  y: number;
-  size: number;
-  at: number;
-  dur: number;
-  /** 入口の言葉と重なる → 薄く */
-  back?: boolean;
-  note?: string[];
-  /** 行の傾き（度）。人は水平に書けない */
-  tilt?: number;
-  /** チョークの濃さ（0.9〜1.0） */
-  ink?: number;
-};
-
-type Rect = { x: number; y: number; w: number; h: number };
-type Opts = { off: boolean; hold: boolean; all: boolean; still: boolean; pen: number; font: boolean };
-
-const PAD = 42;
-/** ペンの速さ（em に対する倍率）。おおよそ 5 文字/秒 */
-const PEN = 16;
-const GAP_LINE = 320;
-const GAP_HEAD = 220;
-const GAP_FAIL = 700;
-/** 添え書きの大きさ（版面の単位）。携帯は版面が小さいので少し大きく取る */
-const NOTE_DESKTOP = 10.2;
-const NOTE_NARROW = 11.5;
 
 function param(name: string): string | null {
   if (typeof location === "undefined") return null;
@@ -81,7 +89,7 @@ function wrapNote(s: string, colW: number, noteSize: number): string[] {
   return [a, rest.length <= per ? rest : rest.slice(0, per - 1) + "…"];
 }
 
-export default function Blackboard({ phase, isMobile }: Props) {
+export default function Blackboard({ phase, isMobile, full = false, onClose }: Props) {
   const [vp, setVp] = useState({ w: 1440, h: 900 });
   const [shown, setShown] = useState(0);
   const [gone, setGone] = useState(false);
@@ -98,6 +106,7 @@ export default function Blackboard({ phase, isMobile }: Props) {
       still,
       pen: Number(param("bbpen")) || PEN,
       font: param("bbfont") === "1",
+      fullp: param("bbfull") === "1", // 撮影・共有用に「ぜんぶ見る」を直接開く
     });
   }, []);
 
@@ -108,42 +117,77 @@ export default function Blackboard({ phase, isMobile }: Props) {
     return () => window.removeEventListener("resize", on);
   }, []);
 
-  // ---- 版を組む（画面の大きさが変わったときだけ）
+  // Esc で「ぜんぶ見る」を閉じる
+  useEffect(() => {
+    if (!full || !onClose) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [full, onClose]);
+
+  // ---- 版を組む（画面の大きさ・姿が変わったときだけ）
   const plan = useMemo(() => {
     const pen = opts?.pen ?? PEN;
+    const wide = full || !!opts?.font || !!opts?.fullp; // 見本も「ぜんぶ見る」と同じ版面で組む
     const aspect = vp.w / Math.max(1, vp.h);
     const narrow = aspect < 1.15;
     const VW = narrow ? 440 : 1000;
-    const VH = Math.round(VW / Math.max(0.34, aspect));
-    const size = narrow ? 17 : 13.5;
+    const VHview = Math.round(VW / Math.max(0.34, aspect));
+    const size = wide ? (narrow ? 19 : 15) : narrow ? 15.5 : 13;
     const noteSize = narrow ? NOTE_NARROW : NOTE_DESKTOP;
     const pad = narrow ? 26 : PAD;
 
-    // 入口の言葉が載る所（実測: desktop は左 0〜44%・上下 26〜68%、携帯は中ほど）
+    // 入口の言葉が載る所（実測: desktop は左 0〜45%・上下 26.5〜69%、携帯は中ほど）
     const landing: Rect = narrow
-      ? { x: 0, y: VH * 0.245, w: VW, h: VH * 0.45 }
-      : { x: 0, y: VH * 0.265, w: VW * 0.45, h: VH * 0.425 };
+      ? { x: 0, y: VHview * 0.245, w: VW, h: VHview * 0.45 }
+      : { x: 0, y: VHview * 0.265, w: VW * 0.45, h: VHview * 0.425 };
 
-    // 空いている所から順に埋める（いま書いている行がいつも見える所に来るように）。
-    // 携帯は空きが少ないので 1 段で通し、入口の言葉と重なる行だけ薄くする
-    const regions: Rect[] = narrow
-      ? [{ x: pad, y: 58, w: VW - pad * 2, h: VH - 58 - 92 }]
-      : [
-          { x: VW * 0.5, y: PAD, w: VW * 0.965 - VW * 0.5, h: VH - PAD * 2 },
-          { x: PAD, y: 34, w: VW * 0.44 - PAD, h: landing.y - 34 - 8 },
-          { x: PAD, y: landing.y + landing.h + 14, w: VW * 0.44 - PAD, h: VH - (landing.y + landing.h) - PAD - 30 },
-        ];
+    let regions: Region[];
+    if (wide) {
+      // 前面。入口を避ける必要は無いので、画面いっぱいを「見開き」にして、
+      // 足りなければ下へ次の見開きを継ぎ足す（縦に流して読む）
+      const cols = narrow ? 1 : 2;
+      const gap = 46;
+      const colW = (VW - pad * 2 - gap * (cols - 1)) / cols;
+      const top = narrow ? 68 : 72;
+      const pageH = VHview;
+      regions = [];
+      for (let p = 0; p < 8; p++) {
+        for (let c = 0; c < cols; c++) {
+          regions.push({ x: pad + c * (colW + gap), y: p * pageH + top, w: colW, h: pageH - top - 34 });
+        }
+      }
+    } else if (narrow) {
+      regions = [
+        { x: pad, y: 62, w: VW - pad * 2, h: landing.y - 62 - 8 },
+        { x: pad, y: landing.y + landing.h + 10, w: VW - pad * 2, h: VHview - (landing.y + landing.h) - 10 - 74 },
+        { x: pad, y: landing.y + landing.h * 0.34, w: VW - pad * 2, h: landing.h * 0.66 - 8, dim: true },
+      ];
+    } else {
+      regions = [
+        { x: VW * 0.5, y: 38, w: VW * 0.965 - VW * 0.5, h: VHview - 38 - 36 },
+        { x: PAD, y: 34, w: VW * 0.44 - PAD, h: landing.y - 34 - 6 },
+        { x: PAD, y: landing.y + landing.h + 10, w: VW * 0.44 - PAD, h: VHview - (landing.y + landing.h) - 10 - 38 },
+        { x: PAD, y: landing.y + landing.h * 0.42, w: VW * 0.42 - PAD, h: landing.h * 0.58 - 8, dim: true },
+      ];
+    }
 
-    const cues = opts?.font ? SPECIMEN : boardScript(24);
+    const cues = opts?.font ? SPECIMEN : wide ? boardScriptFull() : boardScript(24);
     const placed: Placed[] = [];
     let ri = 0;
     let y = regions[0].y;
-    let t = 700;
+    let t = 200;
+    let bottom = 0;
     for (const cue of cues) {
       if (ri >= regions.length) break;
       const R = regions[ri];
       if (cue.k === "head") {
-        const h = 31;
+        const h = wide ? 40 : 29;
         // 見出しだけが段の底に取り残されないよう、次の 1 行ぶんの余りも見る
         if (y + h + 46 > R.y + R.h) {
           ri++;
@@ -151,8 +195,11 @@ export default function Blackboard({ phase, isMobile }: Props) {
           y = regions[ri].y;
         }
         const RR = regions[ri];
-        placed.push({ cue, x: RR.x, y: y + 12, size, at: t, dur: 240, back: overlaps({ x: RR.x, y, w: 150, h }, landing) });
+        // 携帯は入口の言葉の裏に章を置かない（重なって両方読めなくなる）。desktop は題字を外してあるので置ける
+        if (RR.dim && narrow) break;
+        placed.push({ cue, x: RR.x, y: y + (wide ? 16 : 12), size, at: t, dur: 240, colW: RR.w });
         y += h;
+        bottom = Math.max(bottom, y);
         t += GAP_HEAD;
         continue;
       }
@@ -160,7 +207,7 @@ export default function Blackboard({ phase, isMobile }: Props) {
       if (ln.w > R.w) ln = inkOfNodes(cue.nodes, size * (R.w / ln.w), placed.length + 1);
       const note = cue.note ? wrapNote(cue.note, R.w, noteSize) : undefined;
       const noteH = note ? note.length * (noteSize + 2.5) + 2 : 0;
-      const h = ln.asc + ln.desc + noteH + (cue.src ? 11 : 0) + 9;
+      const h = ln.asc + ln.desc + noteH + (cue.src ? (wide ? 17 : 13) : 0) + (wide ? 15 : 7);
       if (y + h > R.y + R.h) {
         ri++;
         if (ri >= regions.length) break;
@@ -168,11 +215,11 @@ export default function Blackboard({ phase, isMobile }: Props) {
       }
       const RR = regions[ri];
       const dur = inkDuration(ln, size * pen);
-      const box: Rect = { x: RR.x, y: y, w: ln.w, h };
       const k = placed.length;
       placed.push({
         cue,
         line: ln,
+        colW: RR.w,
         tilt: (hash2(k, 3, 61) - 0.5) * 1.1,
         ink: 0.9 + hash2(k, 5, 17) * 0.1,
         x: RR.x + hash2(k, 7, 29) * size * 0.5,
@@ -181,18 +228,21 @@ export default function Blackboard({ phase, isMobile }: Props) {
         at: t,
         dur,
         note,
-        back: overlaps(box, landing),
+        back: !!RR.dim,
       });
       y += h;
+      bottom = Math.max(bottom, y);
       t += dur + (cue.failed ? GAP_FAIL : GAP_LINE);
     }
-    return { VW, VH, placed, noteSize };
-  }, [vp.w, vp.h, isMobile, opts?.pen, opts?.font]);
+    // 「ぜんぶ見る」は中身の高さぶんだけ縦に伸ばす（それを縦に流して読む）
+    const VH = wide ? Math.max(VHview, Math.ceil(bottom + 40)) : VHview;
+    return { VW, VH, VHview, placed, noteSize, total: t };
+  }, [vp.w, vp.h, isMobile, opts?.pen, opts?.font, full]);
 
   // ---- 1 行ずつ出す（rAF も setInterval も使わない。行ごとに setTimeout 1 回）
   useEffect(() => {
     if (!opts) return;
-    if (opts.off || opts.all) {
+    if (opts.off || opts.all || full || opts.font || opts.fullp) {
       setShown(plan.placed.length);
       return;
     }
@@ -208,7 +258,7 @@ export default function Blackboard({ phase, isMobile }: Props) {
     };
     timer = window.setTimeout(tick, plan.placed[0]?.at ?? 0);
     return () => window.clearTimeout(timer);
-  }, [plan, opts]);
+  }, [plan, opts, full]);
 
   // ---- 入口の暗幕は黒板があるとき弱める（globals.css は書き換えない）
   useEffect(() => {
@@ -226,27 +276,55 @@ export default function Blackboard({ phase, isMobile }: Props) {
   }, [out]);
 
   if (!opts || opts.off || gone) return null;
+  const wide = full || opts.font || opts.fullp;
 
-  // 書き進むほど板が薄くなる（式が風景になる）
+  // 書き進むほど板が薄くなる（式が風景になる）。ぜんぶ見るときは薄くしない
   const prog = plan.placed.length ? shown / plan.placed.length : 0;
-  const ground = 0.975 - 0.105 * Math.min(1, prog * 1.2) - (phase === "loading" ? 0 : 0.03);
+  const ground = full ? 1 : 0.985 - 0.105 * Math.min(1, prog * 1.2) - (phase === "loading" ? 0 : 0.03);
 
   return (
-    <div className={`bb${out ? " bb-out" : ""}${opts.still ? " bb-still" : ""}`} aria-hidden>
-      <svg viewBox={`0 0 ${plan.VW} ${plan.VH}`} preserveAspectRatio="xMidYMid slice">
+    <div
+      className={`bb${out ? " bb-out" : ""}${opts.still ? " bb-still" : ""}${wide ? " bb-full" : ""}`}
+      aria-hidden={!full}
+      role={full ? "dialog" : undefined}
+      aria-label={full ? "黒板 — 世界の作り方" : undefined}
+    >
+      <svg viewBox={`0 0 ${plan.VW} ${plan.VH}`} preserveAspectRatio={wide ? "xMidYMin meet" : "xMidYMid slice"}>
         <ChalkDefs />
-        <g style={{ opacity: ground }}>
-          <rect className="bb-ground" width={plan.VW} height={plan.VH} />
-          <rect width={plan.VW} height={plan.VH} fill="url(#bbBoard)" opacity="0.8" />
+        <g>
+          <rect className="bb-ground" width={plan.VW} height={plan.VH} opacity={ground} />
+          <rect width={plan.VW} height={plan.VH} fill="url(#bbBoard)" opacity={0.8 * ground} />
           {/* 前の授業の消し跡（放射グラデーション＝フィルタ無しで縁が柔らかい） */}
-          <ellipse cx={plan.VW * 0.28} cy={plan.VH * 0.34} rx={plan.VW * 0.3} ry={plan.VH * 0.15} fill="url(#bbSmear)" />
-          <ellipse cx={plan.VW * 0.74} cy={plan.VH * 0.7} rx={plan.VW * 0.24} ry={plan.VH * 0.12} fill="url(#bbSmear)" />
-          <ellipse cx={plan.VW * 0.5} cy={plan.VH * 0.1} rx={plan.VW * 0.36} ry={plan.VH * 0.07} fill="url(#bbSmear)" opacity="0.7" />
+          <ellipse cx={plan.VW * 0.28} cy={plan.VHview * 0.34} rx={plan.VW * 0.3} ry={plan.VHview * 0.15} fill="url(#bbSmear)" />
+          <ellipse cx={plan.VW * 0.74} cy={plan.VHview * 0.7} rx={plan.VW * 0.24} ry={plan.VHview * 0.12} fill="url(#bbSmear)" />
+          <ellipse cx={plan.VW * 0.5} cy={plan.VHview * 0.1} rx={plan.VW * 0.36} ry={plan.VHview * 0.07} fill="url(#bbSmear)" opacity="0.7" />
+          {/* 拭き跡の横筋（黒板消しを横に走らせた跡）。板であることの手掛かり */}
+          {[0, 1, 2, 3, 4].map((k) => {
+            const yy = plan.VHview * (0.13 + k * 0.19);
+            const l = handLine(plan.VW * (k % 2 ? 0.05 : 0.18), yy, plan.VW * (k % 2 ? 0.88 : 0.99), yy + plan.VHview * 0.02, 3300 + k * 7, 2.2);
+            return <path key={k} className="bb-sweep" d={l.d} strokeWidth={plan.VHview * (0.012 + (k % 3) * 0.006)} stroke="#dfeee2" />;
+          })}
+          {/* 板の下にたまった粉 */}
+          <rect x="0" y={plan.VH - plan.VHview * 0.09} width={plan.VW} height={plan.VHview * 0.09} fill="url(#bbDust)" />
+          {wide && plan.VH > plan.VHview && (
+            <ellipse cx={plan.VW * 0.4} cy={plan.VHview * 1.3} rx={plan.VW * 0.34} ry={plan.VHview * 0.14} fill="url(#bbSmear)" opacity="0.8" />
+          )}
         </g>
+
+        {wide && (
+          <text
+            className="bb-title"
+            x={plan.VW < 600 ? 26 : plan.VW * 0.5}
+            y={plan.VW < 600 ? 30 : 34}
+            textAnchor={plan.VW < 600 ? "start" : "middle"}
+          >
+            世界の作り方 ／ 消した式もそのまま
+          </text>
+        )}
 
         {plan.placed.slice(0, shown).map((p, i) =>
           p.cue.k === "head" ? (
-            <Head key={i} p={p} />
+            <Head key={i} p={p} full={wide} />
           ) : (
             <g
               key={i}
@@ -270,40 +348,68 @@ export default function Blackboard({ phase, isMobile }: Props) {
                 x={p.x}
                 y={p.y}
                 size={p.size}
-                speed={p.size * opts.pen}
-                still={opts.still || opts.all}
+                speed={p.size * (opts.pen || PEN)}
+                still={opts.still || opts.all || wide}
                 failed={p.cue.failed}
                 seed={i + 1}
               />
               {p.cue.src && (
-                <text className="bb-src" x={p.x + 2} y={p.y + p.line!.desc + 11}>
-                  {p.cue.src}
-                </text>
+                <SrcLine text={p.cue.src} x={p.x + 2} y={p.y + p.line!.desc + (wide ? 15 : 12)} size={p.size * 0.72} seed={i + 400} maxW={p.colW} />
               )}
             </g>
           ),
         )}
       </svg>
+
+      <div className="bb-frame" aria-hidden>
+        <div className="bb-tray">
+          <span className="bb-chalk" style={{ left: "7%", width: 34 }} />
+          <span className="bb-chalk" style={{ left: "12.5%", width: 22, opacity: 0.8 }} />
+          <span className="bb-eraser" />
+        </div>
+      </div>
+
+      {(full || opts.fullp) && (
+        <button className="bb-close" type="button" onClick={onClose}>
+          閉じる
+        </button>
+      )}
     </div>
   );
 }
 
-/** 章の見出し（和文はシステムフォント。線文字は作らない） */
-function Head({ p }: { p: Placed }) {
+/** 出典（ASCII なので線文字で書ける ― 板の上の字を UI のフォントにしない） */
+function SrcLine({ text, x, y, size, seed, maxW }: { text: string; x: number; y: number; size: number; seed: number; maxW: number }) {
+  const line = useMemo(() => {
+    const l = inkOfText(text, size, seed);
+    return l.w > maxW ? inkOfText(text, size * (maxW / l.w), seed) : l;
+  }, [text, size, seed, maxW]);
+  return (
+    <g className="bb-srcline">
+      <ChalkLine line={line} x={x} y={y} size={size} still dim seed={seed} />
+    </g>
+  );
+}
+
+/** 章の見出し。和文だけシステムフォント（線文字を作れない）、欧文は線文字 */
+function Head({ p, full }: { p: Placed; full: boolean }) {
   const cue = p.cue as Extract<Cue, { k: "head" }>;
+  const fs = full ? 19 : 15;
+  // 和文の幅ぶんだけ右に置く（字数 × 字送り。全角なので font-size とほぼ同じ）
+  const jaW = cue.text.length * fs * 1.26;
+  const latin = useMemo(() => inkOfText(cue.latin, fs * 0.62, 900 + cue.latin.length), [cue.latin, fs]);
+  const rule = useMemo(() => Math.max(52, jaW * 0.86), [jaW]);
   return (
     <g style={{ opacity: p.back ? 0.42 : 1 }}>
-      <text className="bb-head" x={p.x} y={p.y}>
+      <text className="bb-head" style={{ fontSize: fs }} x={p.x} y={p.y}>
         {cue.text}
       </text>
-      <text className="bb-src" x={p.x + 74} y={p.y}>
-        {cue.latin}
-      </text>
+      <ChalkLine line={latin} x={p.x + jaW + 10} y={p.y - 1} size={fs * 0.62} still dim seed={7} />
       <path
         className="bb-w"
-        style={{ "--l": "120", "--l0": "124", "--t": "420ms", "--d": "0ms" } as CSSProperties}
-        d={`M${p.x} ${p.y + 8}L${p.x + 40} ${p.y + 7.4}L${p.x + 62} ${p.y + 8.6}`}
-        strokeWidth={2.7}
+        style={{ "--l": "160", "--l0": "164", "--t": "420ms", "--d": "0ms" } as CSSProperties}
+        d={`M${p.x} ${p.y + 8}L${p.x + rule * 0.64} ${p.y + 7.4}L${p.x + rule} ${p.y + 8.8}`}
+        strokeWidth={full ? 3.1 : 2.7}
         stroke="url(#bbChalk)"
       />
     </g>
