@@ -229,7 +229,7 @@ if (fFloor > 0.0005) {
   if (tNear < 0.99) grass *= 1.0 - 0.24 * fFloor * fLitter * (1.0 - tNear);
   // 木漏れ日: 林が濃いほど直達光が届かない。CSM の落ち影は 200m ほどで尽きるので、
   // それより遠い林床が「日なたの砂」になっていた。斑（2.4m）で木漏れ日にする
-  tCanopy = 1.0 - 0.78 * fFloor * smoothstep(0.95, 0.15, fLitter + 0.45 * tPatch);
+  tCanopy = 1.0 - 0.88 * fFloor * smoothstep(1.00, 0.10, fLitter + 0.45 * tPatch);
 }
 // 中景（10〜60m）: 丈の高い草の群れ（2m）のやわらかい明暗
 if (tDist < 160.0 && uReflect < 0.5) grass *= 1.0 + 0.16 * flip_fbm(tXZ * 0.55 + 8.0, 2) * (1.0 - smoothstep(60.0, 160.0, tDist));
@@ -469,7 +469,7 @@ tCol *= 1.0 - 0.42 * cavD;
 tAO = 0.28 + 0.72 * tAO * tAO * (1.0 - 0.45 * cavD);
 // 樹冠は太陽だけでなく空も隠す。林床の明るさの大半は半球光なので、ここを落とさないと
 // いくら直達光を遮っても「日なたの砂」のままだった
-tAO *= 1.0 - 0.60 * fFloor;
+tAO *= 1.0 - 0.78 * fFloor;
 // 山の影（地平角マップ）: 太陽と、夜だけ月
 float tSunVis = flip_terrainSunVis(tXZ, uSunDir) * tCanopy;
 float tMoonVis = ((uMoonColor.r + uMoonColor.g + uMoonColor.b > 0.0005) ? flip_terrainSunVis(tXZ, uMoonDir) : 1.0) * tCanopy;
