@@ -22,6 +22,7 @@ import { SKY_VERT, SKY_FRAG } from "./sky.glsl";
 import { ATMO, transmittance, moonDirection, luminance } from "./cpu";
 import { seedOffset } from "../core/seed";
 import { LAB } from "../lab/store";
+import { SKY_DBG_PREFIX } from "./debug";
 
 type U = Record<string, THREE.IUniform>;
 
@@ -92,7 +93,7 @@ export class Sky {
   private envRT: THREE.WebGLRenderTarget | null = null;
   private envTimer = 1e9;
   private envSunDir = new THREE.Vector3(0, -2, 0);
-  private baked = { shape: 0, detail: 0, weather: false, hazeKm: -1, lab: -1 };
+  private baked = { shape: 0, detail: 0, weather: false, hazeKm: -1, wet: -1, lab: -1 };
   /** シードが変わったとき（engine/lab/rebuild.ts）に呼ぶ。次のフレームで雲の天気マップを焼き直す */
   reseed() {
     (this.weatherMat.uniforms.uWeatherSeed.value as THREE.Vector2).set(seedOffset("sky", 1) * 0.004, seedOffset("sky", 2) * 0.004);
@@ -130,7 +131,8 @@ export class Sky {
   private cloudU: U;
 
   constructor(public scene: THREE.Scene, public env: Env, public q: QualitySettings) {
-    overrideChunk("flip_atmosphere", FLIP_ATMOSPHERE_PBR);
+    // ?dbg=skydry/skyo3/skynofloor/skyr6 のときだけ #define が前に付く（既定では空文字）
+    overrideChunk("flip_atmosphere", SKY_DBG_PREFIX + FLIP_ATMOSPHERE_PBR);
 
     // ---- フルスクリーン三角形（LUT 用は uv 付き） ----
     const fsGeo = new THREE.BufferGeometry();
@@ -174,7 +176,7 @@ export class Sky {
     // ---- LUT のマテリアル ----
     const lutMat = (frag: string, uniforms: U = {}) => {
       bindEnvUniforms(uniforms, env);
-      return new THREE.ShaderMaterial({ uniforms, vertexShader: LUT_VERT, fragmentShader: frag, depthTest: false, depthWrite: false });
+      return new THREE.ShaderMaterial({ uniforms, vertexShader: LUT_VERT, fragmentShader: SKY_DBG_PREFIX + frag, depthTest: false, depthWrite: false });
     };
     const scatterU = (): U => ({
       uMsLut: { value: this.msRT.texture },
@@ -241,7 +243,7 @@ export class Sky {
       const uniforms = skyUniforms(mode);
       bindEnvUniforms(uniforms, env);
       return new THREE.ShaderMaterial({
-        uniforms, vertexShader: SKY_VERT, fragmentShader: SKY_FRAG,
+        uniforms, vertexShader: SKY_VERT, fragmentShader: SKY_DBG_PREFIX + SKY_FRAG,
         depthWrite: false, depthTest: true, depthFunc: THREE.LessEqualDepth,
       });
     };
@@ -290,7 +292,10 @@ export class Sky {
     const lowSun = 1 - smoothstep(0.03, 0.35, env.sunDir.y);
     const hazeKm = 0.016 * (1 + 1.5 * lowSun) + 0.026 * Math.pow(fogK, 1.3);
     eu.uSkyParams.value.set(SHADOW_EXTENT, AERIAL_MAX, hazeKm, GROUND_ALT_KM);
-    const mistK = smoothstep(0.5, 1.0, w.fog);
+    // 相対湿度（エアロゾルの吸湿成長。GLSL の flip_atmoMedium の wet と同じ式）。
+    // ミストの層と同じ曲線を使う ＝「霧が出るほど湿っている」
+    const wet = smoothstep(0.5, 1.0, w.fog);
+    const mistK = wet;
     const t = env.time;
     // 第1層: 広いミスト（H=22m）。第2層: 湖面に張り付く濃い層（H=6m）。雨は薄い第1層だけ
     eu.uSkyFog.value.set(3.0e-3 * mistK + 3e-4 * w.rain, 22 + 12 * w.storm, w.windDir.x * w.wind * 0.6 * t, w.windDir.y * w.wind * 0.6 * t);
@@ -299,7 +304,7 @@ export class Sky {
     // ---- 太陽（地上での放射照度 = E0 × 透過率） ----
     const camY = env.cameraPos.y;
     const rCam = ATMO.RG + GROUND_ALT_KM + Math.max(camY, -60) / 1000;
-    transmittance(rCam, env.sunDir.y, hazeKm, GROUND_ALT_KM, this.sunT);
+    transmittance(rCam, env.sunDir.y, hazeKm, GROUND_ALT_KM, this.sunT, wet);
     const sunMax = Math.max(this.sunT.r, this.sunT.g, this.sunT.b, 1e-6);
     const cloudDim = this.globalCloudDim ? (1 - 0.9 * Math.pow(w.cloud, 1.4)) * (1 - 0.9 * w.storm) : 1;
     env.sunColor.copy(this.sunT).multiplyScalar(1 / sunMax);
@@ -307,7 +312,7 @@ export class Sky {
 
     // ---- 月（向きは満月の軌道。地上の光は lighting.ts が moonColor×4 にするので /4） ----
     moonDirection(env.hour, env.moonDir);
-    transmittance(rCam, env.moonDir.y, hazeKm, GROUND_ALT_KM, this.moonT);
+    transmittance(rCam, env.moonDir.y, hazeKm, GROUND_ALT_KM, this.moonT, wet);
     const moonMax = Math.max(this.moonT.r, this.moonT.g, this.moonT.b, 1e-6);
     const moonUp = smoothstep(-0.02, 0.1, env.moonDir.y);
     const moonIrr = ATMO.sunE0 * ATMO.moonRatio * moonMax * moonUp * cloudDim;
@@ -340,8 +345,8 @@ export class Sky {
     }
     // 雲に当たる光（層の高さでの透過率）
     const rCloud = ATMO.RG + GROUND_ALT_KM + (base + top) * 0.5e-3;
-    transmittance(rCloud, env.sunDir.y, hazeKm, GROUND_ALT_KM, this.cloudSunT);
-    transmittance(rCloud, env.moonDir.y, hazeKm, GROUND_ALT_KM, this.cloudMoonT);
+    transmittance(rCloud, env.sunDir.y, hazeKm, GROUND_ALT_KM, this.cloudSunT, wet);
+    transmittance(rCloud, env.moonDir.y, hazeKm, GROUND_ALT_KM, this.cloudMoonT, wet);
     const sunCloudE = this.sunCloudE.copy(this.cloudSunT).multiplyScalar(ATMO.sunE0);
     const moonCloudE = this.moonCloudE.copy(this.cloudMoonT).multiply(ATMO.moonTint).multiplyScalar(ATMO.sunE0 * ATMO.moonRatio * moonUp);
     const useSun = luminance(sunCloudE) >= luminance(moonCloudE);
@@ -462,13 +467,16 @@ export class Sky {
       b.detail = DETAIL_RES;
     }
     const hazeKm = this.env.uniforms.uSkyParams.value.z;
-    // 実験室で媒質（ミー・レイリー・オゾン）を動かしたら、透過率と多重散乱の LUT も焼き直す
+    // 実験室で媒質（ミー・レイリー・オゾン）を動かしたら、透過率と多重散乱の LUT も焼き直す。
+    // 湿度（uFog）も媒質を変える（吸湿成長）ので、同じ条件で見る
+    const wet = smoothstep(0.5, 1.0, this.env.uniforms.uFog.value as number);
     const lb = this.env.uniforms.uLabSky.value as THREE.Vector4;
     const labKey = lb.x + lb.y * 7.13 + lb.z * 31.77;
-    if (Math.abs(hazeKm - b.hazeKm) > 0.004 || labKey !== b.lab) {
+    if (Math.abs(hazeKm - b.hazeKm) > 0.004 || Math.abs(wet - b.wet) > 0.02 || labKey !== b.lab) {
       this.blit(this.transMat, this.transRT);
       this.blit(this.msMat, this.msRT);
       b.hazeKm = hazeKm;
+      b.wet = wet;
       b.lab = labKey;
     }
 
