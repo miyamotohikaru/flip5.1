@@ -142,7 +142,7 @@ void main(){
   float th = flip_height(xz);
   float hL = th - uWxLake;
   // 岸の草地と森の際に多い。湖の上には出さない（水面に浮く光の玉になる）
-  float shore = smoothstep(0.05, 0.9, hL) * (1.0 - smoothstep(4.0, 9.0, hL));
+  float shore = smoothstep(0.15, 1.1, hL) * (1.0 - smoothstep(4.0, 9.0, hL));
   float forestEdge = smoothstep(7.0, 12.0, hL) * (1.0 - smoothstep(20.0, 35.0, hL));
   float dens = max(shore, forestEdge * 0.6);
   // 群れ感: λ≈22m の低周波ノイズで「いる場所・いない場所」を作る（一様にばら撒かない）
@@ -155,6 +155,9 @@ void main(){
   vec3 vel = vec3(cos(t * 0.5 + ph.x) * 0.5 + cos(t * 1.3 + ph.y) * 0.39, cos(t * 0.8 + ph.y) * 0.4, -sin(t * 0.45 + ph.z) * 0.45 - sin(t * 1.1 + ph.x) * 0.33) * 0.6;
   // 地上 1.4m 以内（草の高さ〜腰の高さ）
   vec3 center = vec3(xz.x, th + 0.12 + 1.05 * aSeed.z, xz.y) + wander;
+  // 揺らいだ「今いる場所」で陸かどうかを見る。置いた場所が岸でも、
+  // ±1.1m の揺らぎで水の上へはみ出すと「湖面に浮かぶ光の玉」になる
+  on *= step(uWxLake + 0.05, flip_height(center.xz));
   // 明滅: 虫ごとに周期も点灯の長さも違う。素早く点いてゆっくり消える
   float period = 1.5 + 3.4 * aSeed.y;
   float bp = fract(t / period + aSeed.x);
@@ -166,7 +169,7 @@ void main(){
   float dist = distance(center, uCamPos);
   float px = dist * uWxPixel;
   // 1〜3px の光の点（テニスボールにしない）
-  float size = max(0.012, px * 2.5);
+  float size = max(0.02, px * 3.4);
   float alpha = on * night * blink * (1.0 - smoothstep(20.0, 30.0, dist)) * (1.0 - uRain) * smoothstep(0.3, 1.0, dist);
   vFm = wx_flipMask(center);
   float msize = max(size, px * 10.0);
@@ -189,6 +192,7 @@ const FIREFLY_FRAG = /* glsl */ `
 #include <flip_flip>
 ${WX_COMMON}
 ${MATH_VIEW}
+uniform float uExposure;
 varying vec2 vQ;
 varying float vAlpha;
 varying vec3 vWorld;
@@ -197,10 +201,12 @@ varying vec2 vVel;
 void main(){
   vec2 q = vec2(vQ.x, vQ.y - 0.5) * 2.0;
   float r = length(q);
-  float core = exp(-r * r * 26.0);
-  float halo = exp(-r * 2.6) * 0.30 * (1.0 - smoothstep(0.75, 1.0, r));
-  // 蛍の黄緑（白くしない）: 芯は明るい黄緑、周りは緑の淡い光。板が小さくなったぶん芯を明るく
-  vec3 col = vec3(0.85, 1.0, 0.32) * core * 5.0 + vec3(0.45, 0.85, 0.2) * halo * 3.0;
+  float core = exp(-r * r * 34.0);
+  float halo = exp(-r * 3.4) * 0.30 * (1.0 - smoothstep(0.30, 0.95, r));
+  // 蛍の黄緑（白くしない）。夜は露出が 6 倍近くまで開くので、放射輝度をそのまま置くと
+  // トーンマップで飽和して「白い四角のドット」になる。表示輝度を狙って露出で割る
+  float ex = clamp(uExposure, 0.2, 8.0);
+  vec3 col = vec3(0.85, 1.0, 0.32) * core * (2.4 / ex) + vec3(0.45, 0.85, 0.2) * halo * (1.1 / ex);
   float soft = wx_soft(gl_FragCoord.xy, gl_FragCoord.z, 0.12);
   vec4 aer = flip_aerial(vWorld);
   col *= vAlpha * soft * aer.a * exp(-wx_fogOD(uCamPos, vWorld));

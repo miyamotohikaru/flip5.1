@@ -185,15 +185,17 @@ void main(){
   float r = length(vQ) * 2.0;
   // 雲の中の発光は狭く（広いと空全体が白く飛んで雲の構造が消える）
   float g = exp(-r * r * 7.0) * (1.0 - smoothstep(0.6, 1.0, r));
-  // 雲の中で光る: むらのある柔らかい面
-  float n = 0.75 + 0.5 * flip_vnoise(vec3(vQ * 6.0, uTime * 3.0));
+  // 雲の中で光る: むらのある柔らかい面（2オクターブ。のっぺりした円盤にしない）
+  float n = 0.5 + 0.75 * flip_vnoise(vec3(vQ * 5.0, uTime * 2.2)) * (0.65 + 0.5 * flip_vnoise(vec3(vQ * 13.0, uTime * 3.5)));
   vec3 dv = vWorld - uCamPos;
   float dc = length(dv);
   // 落雷までの距離で減衰し、その向きの空の 2 倍（= 合計3倍）を上限にする
   float att = 1.0 / (1.0 + dc * dc / (500.0 * 500.0));
   vec3 col = vec3(0.78, 0.84, 1.0) * g * n * uBoltFlash * 1.6 * att;
-  // uSkyAmbient*0.64 = 雲を含む空の代表輝度。その2倍（= 合計3倍）で頭を打つ
-  col = min(col, uSkyAmbient * 1.28 + 0.004);
+  // uSkyAmbient*0.64 = 雲を含む空の代表輝度。その2倍（= 合計3倍）で頭を打つ。
+  // min で切ると上限に張り付いた平らな円盤（= 空に浮かぶ白い玉）になるので、柔らかく圧縮する
+  vec3 cap = uSkyAmbient * 1.28 + 0.004;
+  col = col / (1.0 + col / max(cap, 1e-4));
   col *= flip_aerial(vWorld).a;
   float fm = flip_mask(vWorld);
   col = mix(col, FLIP_ACCENT * g * 0.35 * uBoltFlash, fm);
