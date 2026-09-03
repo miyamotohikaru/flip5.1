@@ -100,7 +100,11 @@ export function buildConifer(v: TreeVariant, lod: 0 | 1): TreeGeo {
 
   // ---- 幹
   const segs = lod === 0 ? 8 : 5;
-  const rings = lod === 0 ? [0, 0.04, 0.12, 0.25, 0.42, 0.6, 0.78, 0.9, 1.0] : [0, 0.35, 1.0];
+  // 幹は樹冠の頂点より 0.5m 下で切る。上まで伸ばすと、梢の葉より上に
+  // 幹が「角材」として突き出て見える（批評R5 の退行）
+  const trunkTop = Math.max(0.5, 1.0 - 0.5 / H);
+  const ringsT = lod === 0 ? [0, 0.04, 0.12, 0.25, 0.42, 0.6, 0.78, 0.9, 1.0] : [0, 0.35, 1.0];
+  const rings = ringsT.map((t) => t * trunkTop);
   const base0 = 0;
   for (let ri = 0; ri < rings.length; ri++) {
     const t = rings[ri];
@@ -120,6 +124,41 @@ export function buildConifer(v: TreeVariant, lod: 0 | 1): TreeGeo {
     for (let k = 0; k < segs; k++) {
       const a = base0 + ri * (segs + 1) + k, b = a + 1, c = a + segs + 1, d = c + 1;
       idx.push(a, c, b, b, c, d);
+    }
+  }
+
+  // ---- 樹冠の内側の「暗い殻」（8 面・3 段の円錐）
+  // 葉カードの隙間から明るい空が 1px 抜けるのを、内側の暗い面で塞ぐ。
+  // 半径は枝の 0.6 倍なので輪郭は変えず、樹冠の中が暗くなって立体にも見える
+  {
+    const shellSeg = 8;
+    const shellRings: number[] = [];
+    const tTop = 0.985;
+    const nSR = lod === 0 ? 4 : 3;
+    for (let i = 0; i < nSR; i++) shellRings.push(v.crownBase + (tTop - v.crownBase) * (i / (nSR - 1)));
+    const shellBase = pos.length / 3;
+    for (let ri = 0; ri < shellRings.length; ri++) {
+      const t = shellRings[ri];
+      const u = (t - v.crownBase) / Math.max(tTop - v.crownBase, 1e-3);
+      const a0 = axisAt(t);
+      // 枝の届く半径のおおよそ 0.6 倍（いちばん上は 0 に絞る）
+      const rr = v.lmax * H * (1 - 0.62 * Math.pow(u, 0.8)) * 0.32 * (1 - Math.pow(u, 6));
+      for (let k = 0; k <= shellSeg; k++) {
+        const a = (k / shellSeg) * Math.PI * 2;
+        const ca = Math.cos(a), sa = Math.sin(a);
+        pos.push(a0.x + ca * rr, a0.y, a0.z + sa * rr);
+        nrm.push(ca, 0.35, sa);
+        uv.push(k / shellSeg, t);
+        data.push(2, 0.25 + 0.5 * t, 0, 0);
+        axis.push(a0.x, a0.y, a0.z);
+        dir.push(0, 1, 0);
+      }
+    }
+    for (let ri = 0; ri < shellRings.length - 1; ri++) {
+      for (let k = 0; k < shellSeg; k++) {
+        const a = shellBase + ri * (shellSeg + 1) + k, b = a + 1, c = a + shellSeg + 1, d = c + 1;
+        idx.push(a, c, b, b, c, d);
+      }
     }
   }
 
@@ -315,6 +354,18 @@ void veg_tree(out vec3 p, out vec3 n){
   float backdrop = 0.0;
   if (uLod.w < 0.5) fade = step(dist, sw0);
   else if (uLod.w < 1.5) fade = uReflect * step(dist, sw1);
+  // 樹冠の内側の殻は 9m より近いと「のっぺりした緑の壁」として見えてしまう。
+  // 近景では畳む（近くは葉の枚数が足りているので隙間も自然に見える）
+  if (aData.x > 1.5 && dist < 9.0) {
+    p = aAxis;
+    n = vec3(0.0, 1.0, 0.0);
+    vTree = vec4(fade, 0.0, aData.x, seed);
+    vVegWorld = (im * vec4(p, 1.0)).xyz;
+    vTreeUv = uv;
+    vConeN = vec3(0.0, 0.0, 1.0);
+    vBark = p;
+    return;
+  }
   vec3 lp = position * mix(1.0, 0.92, backdrop);
   float hN = clamp(lp.y / uTreeH, 0.0, 1.0);
   vec2 wd = veg_windDir();
@@ -391,6 +442,11 @@ vec3 veg_bark(vec3 lp, float seed, out float relief){
 vec4 veg_treeAlbedo(out float relief){
   relief = 0.0;
   if (vTree.y > 0.5) return vec4(FLIP_LINE, 1.0);
+  if (vTree.z > 1.5) {
+    // 樹冠の内側の殻。葉の 0.35 倍の暗さ（葉の隙間から見える「奥の影」）
+    vec3 deep = vec3(0.017, 0.039, 0.018) * (0.8 + 0.4 * flip_hash11(vTree.w * 5.0 + 1.0));
+    return vec4(deep, 1.0);
+  }
   if (vTree.z < 0.5) return vec4(veg_bark(vBark, vTree.w, relief), 1.0);
   // アルファのミップは textures.ts が被覆率を保つように作ってあるので、ここでは持ち上げない
   vec4 tex = texture2D(uNeedle, vTreeUv);
@@ -401,6 +457,7 @@ vec4 veg_treeAlbedo(out float relief){
 float veg_treeAO(){
   // 樹冠の中ほど・下ほど暗い（自己遮蔽）。枝は幹側ほど暗い
   float hN = clamp(vBark.y / uTreeH, 0.0, 1.0);
+  if (vTree.z > 1.5) return 0.5;
   if (vTree.z > 0.5) return (0.42 + 0.58 * fract(vTreeUv.x * 2.0)) * (0.55 + 0.45 * smoothstep(0.05, 0.9, hN));
   // 幹は樹冠の中ほど・上ほど**暗い**（葉に囲まれて光が届かない）。
   // 逆にすると幹が明るい棒として樹冠を突き抜けて見える
@@ -473,7 +530,7 @@ export function makeTreeMaterial(env: Env, lighting: Lighting, needle: THREE.Tex
         shader.fragmentShader,
         "#include <normal_fragment_maps>",
         `#include <normal_fragment_maps>
-        if (vTree.z > 0.5) {
+        if (vTree.z > 0.5 && vTree.z < 1.5) {
           normal = normalize(mix(normal, vConeN, 0.6));
         } else if (vTree.y < 0.5) {
           // 樹皮の凹凸（ノイズの画面微分から法線を曲げる）
@@ -489,7 +546,7 @@ export function makeTreeMaterial(env: Env, lighting: Lighting, needle: THREE.Tex
       shader.fragmentShader = replaceOnce(
         shader.fragmentShader,
         "#include <lights_fragment_begin>",
-        `float vegTrans = vTree.z > 0.5 ? 0.20 : 0.0;
+        `float vegTrans = (vTree.z > 0.5 && vTree.z < 1.5) ? 0.20 : 0.0;
         float vegAO = veg_treeAO();
         float vegSpec = 0.0;
         float vegGloss = 18.0;
@@ -562,7 +619,7 @@ export function makeTreeDepthMaterial(env: Env, needle: THREE.Texture, o: TreeMa
         `#ifndef VEG_DEPTH_ALL
         if (vTree.x < veg_ign(gl_FragCoord.xy)) discard;
         #endif
-        if (vTree.z > 0.5 && vTree.y < 0.5) diffuseColor.a = texture2D(uNeedle, vTreeUv).a;`,
+        if (vTree.z > 0.5 && vTree.z < 1.5 && vTree.y < 0.5) diffuseColor.a = texture2D(uNeedle, vTreeUv).a;`,
         "tree depth fs map",
       );
     },

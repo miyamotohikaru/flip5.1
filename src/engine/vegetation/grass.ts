@@ -69,9 +69,9 @@ const RING_BLADES = [5, 4, 3, 3];
 function ringDensity(tier: string): number[] {
   switch (tier) {
     case "low": return [110, 26, 8, 0.55];
-    case "mid": return [150, 34, 11, 0.6];
+    case "mid": return [134, 26, 7, 0.36];
     case "ultra": return [320, 115, 38, 1.05];
-    default: return [250, 84, 24, 0.40];
+    default: return [244, 80, 19, 0.24];
   }
 }
 

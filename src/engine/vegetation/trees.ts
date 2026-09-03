@@ -26,11 +26,11 @@ function tierSettings(q: QualitySettings): Tier {
     case "low":
       return { r0: 22, r1: 62, band: 5, capNear: 90, capMid: 260, cell: 10, impCell: 132, chunk: 512, shadowR: 160, capShadow: 700 };
     case "mid":
-      return { r0: 32, r1: 70, band: 7, capNear: 130, capMid: 300, cell: 10, impCell: 216, chunk: 768, shadowR: 200, capShadow: 430 };
+      return { r0: 26, r1: 70, band: 6, capNear: 110, capMid: 260, cell: 10, impCell: 216, chunk: 768, shadowR: 180, capShadow: 320 };
     case "ultra":
       return { r0: 65, r1: 170, band: 10, capNear: 320, capMid: 1100, cell: 7.5, impCell: 252, chunk: 1024, shadowR: 330, capShadow: 2400 };
     default:
-      return { r0: 40, r1: 104, band: 8, capNear: 220, capMid: 640, cell: 8, impCell: 252, chunk: 1024, shadowR: 280, capShadow: 700 };
+      return { r0: 40, r1: 104, band: 8, capNear: 220, capMid: 640, cell: 8, impCell: 252, chunk: 1024, shadowR: 260, capShadow: 520 };
   }
 }
 
