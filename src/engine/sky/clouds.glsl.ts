@@ -230,7 +230,10 @@ void main(){
           // 上からの空の光は、上に積もる雲の厚さで弱まる（薄いところ・端が明るい）
           float odUp = 0.0;
           {
-            float du = (top - base) * 0.16;
+            // 歩幅はその雲自身の厚み（層雲は薄く積雲は高い）に合わせる。
+            // 固定だと層雲では雲の上まで飛び越してしまい、薄い所と厚い所の差が出ない
+            float topF = mix(0.30, 1.0, clamp(w.g + uCloudShape.x, 0.0, 1.0)) * uCloudShape.y;
+            float du = (top - base) * topF * 0.28;
             for (int k = 1; k <= 3; k++){
               vec3 q = p + vec3(0.0, du * float(k), 0.0);
               float hq = hf + du * float(k) / (top - base);
