@@ -96,6 +96,8 @@ float flip_heightPoint(vec2 xz){
 
 /** 針葉樹の天蓋のおおよその高さ（m）。林の密度 1 のところの木の高さ */
 #define FLIP_CANOPY 18.0
+/** 樹冠の真下で直達光をどれだけ遮るか（地形の tCanopy の 0.88 を引き継ぐ） */
+#define FLIP_UNDER_K 0.85
 
 /**
  * 遠景の太陽の遮蔽（0 = 影, 1 = 日なた）。CSM のシャドウマップが届かない外側を埋める。
@@ -105,7 +107,10 @@ float flip_heightPoint(vec2 xz){
  *      太陽が低いほど遡る距離 FLIP_CANOPY/tan(高度) が伸び、斜面に長い影が出る。
  *      天蓋の高さは木ごと・林分ごとに波打たせ、標本を横にずらして帯の縁をぎざぎざにする
  *      （平らな板にすると影が「幅も間隔も一定の畝」になる）。
- * camDist はカメラからの距離（m）。近景は CSM が本物の落ち影を出すので ② は uSunOccParams.zw で徐々に効かせる。
+ *   ③ 樹冠の下（真上が林）… 距離に関係なく効く。地形の tCanopy を引き継ぐもので、
+ *      これが無いと手前の林床が日なたと同じ明るさになる（②は近景では CSM に譲って弱めているため）。
+ * camDist はカメラからの距離（m）。②（長い帯）は近景では CSM が本物の落ち影を出すので
+ * uSunOccParams.zw で徐々に効かせる。③ は近景でこそ要るので距離で切らない。
  */
 float flip_sunOcclusion(vec3 wp, vec3 sunDir, float camDist){
   if (sunDir.y <= 0.02) return 1.0;
@@ -142,10 +147,17 @@ float flip_sunOcclusion(vec3 wp, vec3 sunDir, float camDist){
     float taper = 1.0 - 0.55 * smoothstep(0.35, 1.0, t);
     occ = max(occ, cov * smoothstep(-3.0, 3.0, canopy - ray) * taper);
   }
-  // 近景は CSM が本物の落ち影を出すので帯は徐々に効かせる（既定 25→120m）。
-  // uSunOccParams.x = 0（?dbg=nosunocc）なら帯だけ切って山の影は残す
-  float band = uSunOccParams.x * uSunOccParams.y * smoothstep(uSunOccParams.z, uSunOccParams.w, camDist);
-  return vis * (1.0 - band * occ);
+  // ③ 樹冠の下。地面（と草）から見て真上が林なら、距離に関係なく直達光は届かない。
+  // 太陽が低いほど斜めに抜けるので、遮蔽は太陽高度が高いほど強い。
+  // 梢の高さまで登ると効かなくなる（木そのものは暗くしない）。
+  float gHere = texture2D(uSunVeg, wp.xz * uHeightmapInfo.y + 0.5).g;
+  float covHere = smoothstep(0.02, 0.20, gHere);
+  float under = covHere * (1.0 - smoothstep(0.0, FLIP_CANOPY * 0.9, above)) * (0.45 + 0.55 * sunDir.y);
+  // 近景は CSM が本物の落ち影を出すので帯（②）は徐々に効かせる（既定 25→120m）。
+  // uSunOccParams.x = 0（?dbg=nosunocc）なら林の遮蔽（②③）だけ切って山の影は残す
+  float band = uSunOccParams.y * smoothstep(uSunOccParams.z, uSunOccParams.w, camDist);
+  float shade = uSunOccParams.x * max(band * occ, FLIP_UNDER_K * under);
+  return vis * (1.0 - shade);
 }
 #endif
 `;
