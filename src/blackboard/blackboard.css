@@ -1,0 +1,186 @@
+/* 黒板（ガリレオ演出）。globals.css には触らない（UI 担当とぶつからないよう別ファイル） */
+
+.bb {
+  position: fixed;
+  inset: 0;
+  z-index: 18; /* .landing(20) の下、canvas の上 */
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity 1.15s ease;
+}
+.bb.bb-out {
+  opacity: 0;
+}
+.bb > svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* 板の地。緑黒 ＋ むら（タイル1枚を敷き詰めるだけ。画面全体のフィルタは掛けない） */
+.bb-ground {
+  fill: #16211c;
+  transition: opacity 1.4s ease;
+}
+
+.bb path {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+/* チョークの粉（フィルタ無し。太く薄い線を1本重ねるだけ） */
+.bb-dust {
+  opacity: 0.075;
+}
+
+/* 書き取り: stroke-dashoffset を 0 へ。JS では毎フレーム触らない */
+.bb-w {
+  stroke-dasharray: var(--l) 20000;
+  stroke-dashoffset: var(--l0);
+  animation: bb-draw var(--t) linear var(--d) both;
+}
+@keyframes bb-draw {
+  from {
+    stroke-dashoffset: var(--l0);
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+/* 書いている間だけ合成を分ける。畳んだら外す（貼りっぱなしにしない） */
+.bb-line:not(.bb-flat) {
+  will-change: contents;
+}
+.bb-still .bb-w {
+  animation: none;
+  stroke-dashoffset: 0;
+}
+
+  /* 黒板消しで拭いた筋 */
+.bb-wipe {
+  opacity: 0.12;
+  stroke-linecap: round;
+}
+
+/* 失敗した式: 打ち消したあと、うっすら残す（消して終わりにしない）。
+   打ち消し線と消し跡（.bb-struck）は薄くしない ― 消した痕跡が主役だから */
+.bb-fail .bb-line > g:not(.bb-struck) {
+  animation: bb-dim 1.6s ease var(--fd) both;
+}
+@keyframes bb-dim {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0.44;
+  }
+}
+.bb-still .bb-fail .bb-line > g:not(.bb-struck) {
+  animation: none;
+  opacity: 0.44;
+}
+
+/* 項の光り（実験室のスライダーから） */
+.bb g[data-term].hot path {
+  stroke: url(#bbChalkHot);
+}
+
+/* 添え書き（和文はシステムフォントの小さな走り書き） */
+.bb-note {
+  font-family: var(--font-jp, sans-serif);
+  font-size: 10.8px;
+  fill: rgba(206, 228, 215, 0.34);
+  letter-spacing: 0.02em;
+}
+.bb-head {
+  font-family: var(--font-jp, sans-serif);
+  font-size: 15px;
+  fill: rgba(226, 242, 232, 0.72);
+  letter-spacing: 0.24em;
+}
+.bb-src {
+  font-family: var(--font-mono, monospace);
+  font-size: 9.5px;
+  fill: rgba(200, 224, 210, 0.26);
+  letter-spacing: 0.01em;
+}
+.bb-title {
+  font-family: var(--font-jp, sans-serif);
+  font-size: 13px;
+  fill: rgba(226, 242, 232, 0.5);
+  letter-spacing: 0.3em;
+}
+
+/* 入口の地の暗幕は黒板があるとき弱める（globals.css は書き換えない） */
+body.bb-on .landing {
+  background: linear-gradient(180deg, rgba(6, 14, 11, 0.34) 0%, rgba(5, 12, 9, 0.46) 55%, rgba(4, 10, 8, 0.72) 100%);
+}
+body.bb-on .loading-log {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bb-w {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
+  .bb-fail .bb-line > g:not(.bb-struck) {
+    animation: none;
+    opacity: 0.44;
+  }
+}
+
+/* 世界の中の隅「いま計算していること」 */
+.bbnow {
+  position: fixed;
+  z-index: 11;
+  left: calc(var(--gutter, 22px) + var(--safe-l, 0px));
+  bottom: calc(20px + var(--safe-b, 0px));
+  max-width: min(46vw, 460px);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 0.7s ease, transform 0.7s ease;
+}
+.bbnow.show {
+  opacity: 1;
+  transform: none;
+}
+.bbnow.faint {
+  opacity: 0.34;
+}
+.bbnow-head {
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: rgba(226, 242, 232, 0.5);
+  margin-bottom: 2px;
+}
+.bbnow-src {
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+  font-family: var(--font-mono, monospace);
+  font-size: 9.5px;
+  letter-spacing: 0;
+  color: rgba(200, 224, 210, 0.3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bbnow svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.7)) drop-shadow(0 0 6px rgba(0, 0, 0, 0.45));
+}
+@media screen and (max-width: 620px) {
+  .bbnow {
+    max-width: calc(100vw - 32px);
+    bottom: calc(96px + var(--safe-b, 0px));
+  }
+  .bbnow-head {
+    font-size: 10px;
+  }
+}

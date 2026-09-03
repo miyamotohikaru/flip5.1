@@ -36,15 +36,19 @@ void main(){
     col.r += texture2D(tSrc, vUv + off).r - c.r;
     col.b += texture2D(tSrc, vUv - off).b - c.b;
   }
-  // 粒子: 中間調〜影で強く、ハイライトで弱く。時間でシードが変わる（freeze 中は固定）
+  // 粒子: 中間調〜影で強く、ハイライトで弱く。時間でシードが変わる（freeze 中は固定）。
+  // 2 つ目のハッシュは「格子を 1.7 倍」ではなく「ずらす」。1.7 = 17/10 なので整数格子だと
+  // 10px 周期になり、平坦な空に斜めの網目（クロスハッチ）が出ていた
   vec2 gp = floor(vUv * uGrainScale);
   float g = post_hash12(gp + uGrainSeed) - 0.5;
-  float g2 = post_hash12(gp * 1.7 + uGrainSeed + 11.0) - 0.5;
+  float g2 = post_hash12(gp + vec2(37.31, 91.17) + uGrainSeed) - 0.5;
   float lum = post_luma(col);
   float ga = uGrain * (1.0 - smoothstep(0.2, 1.0, lum) * 0.65);
   col += (g * 0.7 + g2 * 0.3) * ga;
-  // 8bit のディザ
-  col += (post_hash12(gp + 3.3) - 0.5) / 255.0;
+  // 8bit のディザ（TPDF = 独立な 2 つの一様乱数の差。平坦な空で縞にも網目にもならない）
+  float d1 = post_hash12(gl_FragCoord.xy + uGrainSeed + 5.71);
+  float d2 = post_hash12(gl_FragCoord.xy + uGrainSeed + 71.3);
+  col += (d1 - d2) / 255.0;
   gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
 }
 `;
