@@ -129,7 +129,7 @@ float dNear0 = (1.0 - smoothstep(2.0, 6.0 + 6.0 * uDetail, tDist)) * detailOn;  
 float dNear1 = (1.0 - smoothstep(3.0, 7.0 + 8.0 * uDetail, tDist)) * detailOn;   // 10〜30cm: 株・小石
 float dNear2 = (1.0 - smoothstep(4.0, 9.0 + 7.0 * uDetail, tDist)) * detailOn;     // 45cm: こぶ
 float tNear = dNear2;
-float tMid = (1.0 - smoothstep(120.0, 400.0 + 500.0 * uDetail, tDist)) * (1.0 - uReflect);
+float tMid = (1.0 - smoothstep(110.0, 300.0 + 320.0 * uDetail, tDist)) * (1.0 - uReflect); // 岩の粒は 620m 先では 1px 未満。そこまでで切る
 if (uTerrainDebug > 8.5 && uTerrainDebug < 9.5) { dNear0 = 0.0; dNear1 = 0.0; dNear2 = 0.0; tNear = 0.0; tMid = 0.0; } // 計測用
 
 // ---- どの材質か（0..1 のマスク）。ゾーンは数百 m 単位（tMacro）で変える。細かい斑は迷彩に見えるので使わない ----
@@ -141,7 +141,7 @@ float dirtM = max(smoothstep(0.15, 0.28, tSlope + 0.05 * tMeso), 1.0 - smoothste
 // 土は斜面いちめんではなく斑で出す（一様に出ると尾根の草地が茶色い毛布になる）。
 // λ36m の一段だけだと「ぼけた水彩」になるので、λ6m と λ1.5m の 2 段を足す（振幅 0.35）
 float dirtFine = 0.0;
-if (dirtM > 0.01) dirtFine = 0.35 * (flip_gnoise(tXZ * 0.17 + 29.0) + 0.55 * flip_gnoise(tXZ * 0.66 + 41.0)) * (1.0 - smoothstep(220.0, 700.0, tDist));
+if (dirtM > 0.03 && tDist < 700.0) dirtFine = 0.35 * (flip_gnoise(tXZ * 0.17 + 29.0) + 1.1 * tPatch) * (1.0 - smoothstep(220.0, 700.0, tDist));
 dirtM *= clamp(0.35 + 0.65 * smoothstep(-0.45, 0.45, tPatch + 0.7 * tMeso) + dirtFine, 0.0, 1.0);
 vec2 tWind = normalize(uWind.xy + vec2(1e-4, 0.0));
 float lee = dot(gN.xz, tWind); // 風下斜面で正
@@ -206,7 +206,7 @@ if (fFloor > 0.0005) {
   vec3 duff = mix(vec3(0.074, 0.051, 0.023), vec3(0.028, 0.019, 0.011),
                   smoothstep(0.18, 0.80, fLitter + 0.4 * tPatch));
   // 苔とまばらな下草（濃い緑）が斑で混じる
-  duff = mix(duff, vec3(0.026, 0.046, 0.017), 0.85 * smoothstep(0.20, 0.84, flip_vnoise(tXZ * 0.19 + 5.0) + 0.3 * tMeso)); // 苔と下草の緑を厚めに（茶一色だと泥に見える）
+  duff = mix(duff, vec3(0.026, 0.046, 0.017), 0.85 * smoothstep(-0.35, 0.62, tMeso + 0.8 * tPatch + 0.5 * fLitter)); // 苔と下草の緑を厚めに（茶一色だと泥に見える）
   duff *= 1.0 + 0.16 * tMacro;
   grass = mix(grass, duff, min(1.0, 2.5 * fFloor));
   // 樹冠の下は空が見えない。さらに λ12m の「木が混んで暗い溜まり」を作る
@@ -216,7 +216,7 @@ if (fFloor > 0.0005) {
   // 根元（植生マップ r = 草の密度。木を置いた texel は薄くしてある）ほどわずかに暗い
   grass *= 1.0 - 0.16 * fFloor * smoothstep(0.30, 0.02, tVeg.r);
   // 遠景の樹冠のざらつき（近景では草・幹が描くので出さない）
-  if (tNear < 0.99) grass *= 1.0 - 0.24 * fFloor * flip_vnoise(tXZ * 0.2 + 3.0) * (1.0 - tNear);
+  if (tNear < 0.99) grass *= 1.0 - 0.24 * fFloor * fLitter * (1.0 - tNear);
   // 木漏れ日: 林が濃いほど直達光が届かない。CSM の落ち影は 200m ほどで尽きるので、
   // それより遠い林床が「日なたの砂」になっていた。斑（2.4m）で木漏れ日にする
   tCanopy = 1.0 - 0.55 * fFloor * smoothstep(0.90, 0.20, fLitter + 0.45 * tPatch);
@@ -315,7 +315,7 @@ if (tNear > 0.0) {
   wN = normalize(wN - vec3(g.x, 0.0, g.y) * gN.y);
 }
 
-if (rockM > 0.005 || screeM > 0.005) {
+if (rockM > 0.01 || screeM > 0.06) {
   // 岩。遠景（山肌）にも効く層理・段・亀裂と、近景だけのトライプラナーの粒・ブロック割れ。
   // 層理の帯は 7m 周期・段（ledge）は 6〜12m 周期で、1500m 先でも 8px 幅あるので迷彩にならない
   float farFade = 1.0 - smoothstep(1900.0, 3200.0, tDist);
