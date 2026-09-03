@@ -12,7 +12,7 @@ export type TerrainBake = {
   aux: THREE.WebGLRenderTarget;
   horizonA: THREE.WebGLRenderTarget;
   horizonB: THREE.WebGLRenderTarget;
-  /** 材質のノイズ場（RGBA8, 1024²）: r = マクロ, g = メソ, b = 林の密度, a = 岸線からの距離 (sd+20)/40 */
+  /** 材質のノイズ場（RGBA8, 1024²）: r = マクロ(λ625m), g = メソ(λ36m), b = 斑(λ13m), a = 岸線からの距離 (sd+20)/40 */
   field: THREE.WebGLRenderTarget;
 };
 
@@ -25,9 +25,11 @@ void main(){
   vec2 xz = (vUv - 0.5) * uHeightmapInfo.x;
   float macro = flip_fbm(xz * 0.0016 + 4.0, 2);
   float meso = flip_gnoise(xz * 0.028 + 9.0);
-  float forest = smoothstep(-0.1, 0.45, flip_fbm(xz * 0.004 + 11.0, 3) + 0.25);
+  // b は「林の密度」だった枠。林の密度は植生マップ（uVegMap の G）を使うようになったので、
+  // 全画素で毎フレーム引いていた 13m の斑（tPatch = fbm2）をここへ移した（gnoise 2 本ぶんの節約）
+  float patchN = flip_fbm(xz * 0.075 + 3.0, 2); // patch は GLSL の予約語なので使えない
   float sd = texture2D(uHeightParts, vUv).a;
-  gl_FragColor = vec4(macro * 0.5 + 0.5, meso * 0.5 + 0.5, forest, clamp((sd + 20.0) / 40.0, 0.0, 1.0));
+  gl_FragColor = vec4(macro * 0.5 + 0.5, meso * 0.5 + 0.5, patchN * 0.5 + 0.5, clamp((sd + 20.0) / 40.0, 0.0, 1.0));
 }
 `;
 

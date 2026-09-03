@@ -174,7 +174,7 @@ function buildAngleTables() {
     angRange[i] = 120 * nz(ca * 1.9 + 1.2, sa * 1.9 + 4.4);
     angMassif[i] = 0.74 + 0.26 * nz(ca * 1.4 + 7.7, sa * 1.4 + 2.2);
   // 浅瀬の棚の幅（m）。方角で 3〜17m。ここが無いと湖底が岸で垂直に落ちて「プールの縁」になる
-  angShelf[i] = 3.5 + 7.0 * (1 + nz(ca * 3.1 + 6.7, sa * 3.1 - 2.3));
+  angShelf[i] = 2.5 + 4.8 * (1 + nz(ca * 3.1 + 6.7, sa * 3.1 - 2.3)) + 3.0 * nz(ca * 7.3 + 1.9, sa * 7.3 + 4.1);
   }
 }
 // 置換表 → 角度の表 の順に作り直す（角度の表は nz / noise2 を引くので後）
@@ -225,12 +225,11 @@ export function heightAt(x: number, z: number): number {
   let base = 0;
   if (sd < 0) {
     const bed = 0.85 + 0.15 * nz(x * 0.012 + 3.0, z * 0.012 - 5.0);
-    // 岸から数 m は浅い棚（幅 3〜17m で 0 → 0.7m）。その先で本来の指数の落ち込みに移る。
-    // 棚が無いと水際 2m で 1m の深さになり、明るい岸と暗い湖底が接して「プールの縁」に見える
+    // 岸から数 m は浅い棚。棚が無いと水際 2m で 1m の深さになり、明るい岸と暗い湖底が
+    // 接して「プールの縁」に見える。棚と本体を式で繋ぐ（段で切り替えると棚の外縁に線が出る）:
+    // 指数の落ち込みに、幅 shelf×2.4 の smoothstep を掛けるだけ。微分が連続なので折れ目が無い
     const shelf = angGet(angShelf);
-    const s2 = sd + shelf;
-    const t = -sd / shelf;
-    base -= (s2 > 0 ? 0.7 * t * t : 0.7 + 33 * (1 - Math.exp(s2 / 62))) * bed;
+    base -= 33.7 * (1 - Math.exp(sd / 62)) * smoothstep(0, -shelf * 2.4, sd) * bed;
   }
   // 岸の土手（角度で幅が変わる: 砂浜になる所と草の土手が水に落ちる所）
   base += 2.4 * smoothstep(-2, 9 + 6 * angGet(angBank), sd);
