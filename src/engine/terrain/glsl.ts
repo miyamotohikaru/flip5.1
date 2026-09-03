@@ -57,6 +57,7 @@ uniform float uLakeLevel;
 uniform sampler2D uHeightParts;
 uniform sampler2D uTerrainField; // 焼いたノイズ場: r = マクロ, g = メソ, b = 林の密度, a = 岸線からの距離（(sd+20)/40）
 uniform sampler2D uVegMap;       // 植生マップ（vegetation/vegmap.ts）: r = 草の密度, g = 林の密度, b = 乾き, a = 岩
+uniform vec4 uSeedWorld;     // 世界の体格（core/height.ts）: x = 雪線のずれ(m)
 uniform float uDetail;
 uniform float uReflect;      // 1 = 映り込みカメラ（細部を省く）
 uniform float uTerrainDebug; // 調査用: 1 太陽の見え方 2 AO 3 法線 4 cavity 5 地平角A 6 影なし 7 rgb=林/土/ガレのマスク 9 細部なし
@@ -147,7 +148,7 @@ vec2 tWind = normalize(uWind.xy + vec2(1e-4, 0.0));
 float lee = dot(gN.xz, tWind); // 風下斜面で正
 // 雪: 45°（tSlope 0.29）を超える面には積もらない＝急な岩壁は黒く出る。
 // 吹き溜まり: 風下（lee）と窪み（tCav < 0.5）で雪線が下がり、風の当たる尾根（tCav > 0.5）では上がる
-float snowLine = 448.0 + 60.0 * tMacro - 48.0 * lee - 25.0 * tPatch - 70.0 * (tCav - 0.5);
+float snowLine = 448.0 + uSeedWorld.x + 60.0 * tMacro - 48.0 * lee - 25.0 * tPatch - 70.0 * (tCav - 0.5);
 float snowM = smoothstep(snowLine, snowLine + 40.0, tH) * (1.0 - smoothstep(0.21, 0.33, tSlope - 0.09 * lee));
 // 岸: 砂は水際だけ。幅を -1.2〜4.6m（＝砂の無い岸もある）を 3〜25m のノイズでうねらせ、
 // 縁のぼけ幅と高さの上限も場所で変える（幅も縁も一定だと「プールの縁」に見える）。

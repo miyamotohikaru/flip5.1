@@ -11,7 +11,7 @@
 //   mtn  = 山脈（東西に走る尾根 × 山腹を流れ下る谷筋 × 支尾根の族 × 段丘）。方角で高さが変わる（北が主峰）
 //   fine = 数m〜数十mの細かい起伏
 import { noise2, smoothstep } from "./noise";
-import { onSeed, subSeed } from "./seed";
+import { isDefaultSeed, onSeed, seedPick, subSeed } from "./seed";
 
 export const WORLD = {
   /** ハイトマップが覆う一辺（m）。これより外は霧の向こう。 */
@@ -157,6 +157,118 @@ function terrace(h: number, T: number): number {
 }
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+/**
+ * **この谷の「体格」。ぜんぶ種ひとつから決まる。**
+ * 置換表だけを変えると「同じ大きさの谷の、山の形だけ違う絵」にしかならないので、
+ * 湖の広さ・山脈の距離と高さ・丘の大きさ・森の量・雪線まで種で振る。
+ * 既定のシード（DEFAULT_SEED）では**全部 neutral ＝ 今の谷のまま**。
+ * 保つもの（世界の決まりごと）: 南岸から北の山脈を見る構図・湖があること・歩けること。
+ */
+export type WorldShape = {
+  /** 湖の半径の倍率 */
+  lakeR: number;
+  /** 岸線のうねりの倍率 */
+  shoreWav: number;
+  /** 湖底の深さの倍率 */
+  depth: number;
+  /** 岸の土手の倍率 */
+  bank: number;
+  /** 盆地のゆるい上りの倍率 */
+  rise: number;
+  /** 侵食の丘の倍率 */
+  hills: number;
+  /** 山脈の始まる距離の倍率 */
+  rangeR: number;
+  /** 山塊の高さの倍率 */
+  amp: number;
+  /** 方角ごとの高さのばらつき（1 で今） */
+  massif: number;
+  /** 段丘の段の高さの倍率 */
+  terr: number;
+  /** 細かい起伏の倍率 */
+  fine: number;
+  // ---- 植生・材質（vegetation / terrain が読む。ここで一緒に決めて世界の性格をそろえる）----
+  /** 森のしきい値のずれ（− で森が濃い、+ で疎ら） */
+  forest: number;
+  /** 森林限界のずれ（m） */
+  treeLine: number;
+  /** 岩の露出の倍率 */
+  rock: number;
+  /** 雪線のずれ（m）。山が低い世界では雪線も下がる */
+  snow: number;
+  /** 草の乾き（色）のずれ */
+  dry: number;
+  /** 木の大きさの倍率 */
+  treeSize: number;
+  /** 開始地点を岸からどれだけ陸側に置くか（m）。構図が谷ごとに変わる */
+  standBack: number;
+  /** 尾根の鋭さの倍率（丸い山塊の谷／ぎざぎざの岩峰の谷） */
+  ridge: number;
+  /** 尾根の蛇行（ドメインワープ）の倍率 */
+  warp: number;
+  /** 山脈を岸から最低これだけ離す（m）。既定のシードでは 0 ＝ 何も変えない */
+  minRangeGap: number;
+  /** 盆地の上りに最低これだけの距離をかける（m）。既定のシードでは 12 ＝ 何も変えない */
+  minRiseW: number;
+};
+
+const SHAPE: WorldShape = {
+  lakeR: 1, shoreWav: 1, depth: 1, bank: 1, rise: 1, hills: 1, rangeR: 1, amp: 1, massif: 1, terr: 1, fine: 1,
+  forest: 0, treeLine: 0, rock: 1, snow: 0, dry: 0, treeSize: 1, standBack: 0, ridge: 1, warp: 1, minRangeGap: 0, minRiseW: 12,
+};
+function buildShape() {
+  const p = (i: number, lo: number, hi: number, neutral = 1) => seedPick("terrain", i, lo, hi, neutral);
+  if (isDefaultSeed()) {
+    // 既定のシード＝今の谷。全部 neutral（何も変えない）。
+    // ※ Object.assign は使わない（19 個の書き換えで隠しクラスが辞書モードに落ち、
+    //    4M サンプルの焼き込みと毎フレームの heightAt が目に見えて遅くなる）
+    SHAPE.lakeR = 1; SHAPE.shoreWav = 1; SHAPE.depth = 1; SHAPE.bank = 1; SHAPE.rise = 1;
+    SHAPE.hills = 1; SHAPE.rangeR = 1; SHAPE.amp = 1; SHAPE.massif = 1; SHAPE.terr = 1;
+    SHAPE.fine = 1; SHAPE.forest = 0; SHAPE.treeLine = 0; SHAPE.rock = 1; SHAPE.snow = 0;
+    SHAPE.dry = 0; SHAPE.treeSize = 1; SHAPE.standBack = 0; SHAPE.ridge = 1; SHAPE.warp = 1;
+    // 「湖のすぐ裏が壁」を防ぐ下限は、既定のシードでは効かせない（今の谷の形を 1cm も変えない）
+    SHAPE.minRangeGap = 0; SHAPE.minRiseW = 12;
+    return;
+  }
+  SHAPE.lakeR = p(1, 0.5, 1.85);
+  SHAPE.shoreWav = p(2, 0.35, 1.9);
+  SHAPE.depth = p(3, 0.5, 1.9);
+  SHAPE.bank = p(4, 0.3, 2.4);
+  // 山の高さは「谷の性格」の主役。低い世界では盆地の縁を高くして、
+  // 「低い山＋平らな地平」＝どの種でも同じに見える絵にならないようにする（山と縁は逆相関）
+  const ampT = seedPick("terrain", 8, 0, 1, 0.5);
+  SHAPE.rise = 1.5 - 0.75 * ampT;
+  SHAPE.hills = p(6, 0.3, 2.0);
+  SHAPE.rangeR = p(7, 0.66, 1.32);
+  SHAPE.amp = 0.62 + 1.05 * ampT;
+  SHAPE.massif = p(9, 0.4, 2.3);
+  SHAPE.terr = p(10, 0.5, 2.0);
+  SHAPE.fine = p(11, 0.4, 1.8);
+  SHAPE.forest = p(12, -0.30, 0.26, 0);
+  // 森林限界と雪線は山の高さについて行く（低い山の世界で「雪ゼロ」「森が山頂まで」にならないように）
+  SHAPE.treeLine = (SHAPE.amp - 1) * 190 + p(13, -70, 70, 0);
+  SHAPE.snow = (SHAPE.amp - 1) * 330 + p(14, -95, 95, 0);
+  SHAPE.rock = p(15, 0.3, 2.2);
+  SHAPE.dry = p(16, -0.26, 0.14, 0);
+  SHAPE.treeSize = p(17, 0.7, 1.35);
+  // 岸から離しすぎると手前の草地が湖を隠す（「湖があること」は世界の決まりごと）
+  SHAPE.standBack = p(18, 0, 18, 0);
+  // 稜線の性格: 丸い山塊の谷か、ぎざぎざの岩峰の谷か。silhouette がいちばん変わる
+  SHAPE.ridge = p(19, 0.45, 1.35);
+  SHAPE.warp = p(20, 0.4, 2.0);
+  SHAPE.minRangeGap = 620;
+  SHAPE.minRiseW = 430;
+}
+/** この谷の体格（vegetation / terrain / UI が読む） */
+export function worldShape(): Readonly<WorldShape> {
+  return SHAPE;
+}
+/** 湖のおおよその半径（m）。シードで変わる。WORLD.lakeRadius を直に使っていた所はこれに置き換える */
+export function lakeRadiusMean(): number {
+  return WORLD.lakeRadius * SHAPE.lakeR;
+}
+
 // 方角だけで決まる量（岸線の半径・土手の幅・山脈の始まる距離・山塊の高さ）は角度の表にして引く。
 // 4M サンプルの焼き込みで 5 本のノイズを 1 回の atan2 に置き換えるため。
 const ANG_N = 2048;
@@ -169,10 +281,17 @@ function buildAngleTables() {
   for (let i = 0; i <= ANG_N; i++) {
     const a = (i / ANG_N) * Math.PI * 2 - Math.PI;
     const ca = Math.cos(a), sa = Math.sin(a);
-    angShore[i] = WORLD.lakeRadius + 70 * noise2(ca * 1.7 + 5.2, sa * 1.7 + 5.2) + 26 * noise2(ca * 4.1 + 1.3, sa * 4.1 + 9.1);
+    // 湖の広さと岸線のうねり。うねりは湖の大きさに比例させる（小さい湖が湾だらけにならない）
+    const wob = (70 * noise2(ca * 1.7 + 5.2, sa * 1.7 + 5.2) + 26 * noise2(ca * 4.1 + 1.3, sa * 4.1 + 9.1))
+      * SHAPE.shoreWav * (0.45 + 0.55 * SHAPE.lakeR);
+    angShore[i] = Math.max(95, WORLD.lakeRadius * SHAPE.lakeR + wob);
     angBank[i] = nz(ca * 2.6 + 3.3, sa * 2.6 + 8.1);
-    angRange[i] = 120 * nz(ca * 1.9 + 1.2, sa * 1.9 + 4.4);
-    angMassif[i] = 0.74 + 0.26 * nz(ca * 1.4 + 7.7, sa * 1.4 + 2.2);
+    angRange[i] = 120 * nz(ca * 1.9 + 1.2, sa * 1.9 + 4.4) * SHAPE.rangeR;
+    // 方角ごとの高さのばらつき（massif が大きいほど「片側だけ高い山脈」になる）
+    {
+      const v = Math.min(0.62, 0.26 * SHAPE.massif);
+      angMassif[i] = 1 - v + v * nz(ca * 1.4 + 7.7, sa * 1.4 + 2.2);
+    }
   // 浅瀬の棚の幅（m）。方角で 3〜17m。ここが無いと湖底が岸で垂直に落ちて「プールの縁」になる
   angShelf[i] = 3.5 + 7.0 * (1 + nz(ca * 3.1 + 6.7, sa * 3.1 - 2.3));
   }
@@ -180,6 +299,7 @@ function buildAngleTables() {
 // 置換表 → 角度の表 の順に作り直す（角度の表は nz / noise2 を引くので後）
 onSeed(() => {
   buildP2();
+  buildShape();
   buildAngleTables();
 });
 let angI = 0, angF = 0;
@@ -230,21 +350,23 @@ export function heightAt(x: number, z: number): number {
     const shelf = angGet(angShelf);
     const s2 = sd + shelf;
     const t = -sd / shelf;
-    base -= (s2 > 0 ? 0.7 * t * t : 0.7 + 33 * (1 - Math.exp(s2 / 62))) * bed;
+    base -= (s2 > 0 ? 0.7 * t * t : 0.7 + 33 * SHAPE.depth * (1 - Math.exp(s2 / 62))) * bed;
   }
   // 岸の土手（角度で幅が変わる: 砂浜になる所と草の土手が水に落ちる所）
-  base += 2.4 * smoothstep(-2, 9 + 6 * angGet(angBank), sd);
+  base += 2.4 * SHAPE.bank * smoothstep(-2, 9 + 6 * angGet(angBank), sd);
 
   // 山脈の始まる距離（方角で違う）と、そこまでのゆるい上り
-  const rangeR = 1580 - 450 * northness + angGet(angRange);
-  const riseT = smoothstep(12, rangeR - 350 - shoreR, sd);
-  base += (70 + 65 * northness) * riseT * (0.5 + 0.5 * riseT);
+  // 山脈は必ず岸から 620m 以上むこう（湖が広い世界でも「岸のすぐ裏が壁」にならない）
+  const rangeR = Math.max(shoreR + SHAPE.minRangeGap, (1580 - 450 * northness) * SHAPE.rangeR + angGet(angRange));
+  // 上りは 430m 以上かけて。短い距離に 200m 上げると、湖の向こうが「ダムの壁」になる
+  const riseT = smoothstep(12, Math.max(SHAPE.minRiseW, rangeR - 350 - shoreR), sd);
+  base += (70 + 65 * northness) * SHAPE.rise * riseT * (0.5 + 0.5 * riseT);
 
   // 侵食風の丘（岸辺では小さく、離れるほど大きい）と、丘のノイズでうねらせた沢筋
   const landT = smoothstep(-30, 40, sd);
   if (landT > 0) {
     const hills = erodedFbm(x * 0.0021 + 3.1, z * 0.0021 - 1.7, 4);
-    base += hills * (5 + 50 * smoothstep(0, 800, sd)) * landT;
+    base += hills * (5 + 50 * smoothstep(0, 800, sd)) * landT * SHAPE.hills;
     const creaseT = smoothstep(30, 380, sd);
     if (creaseT > 0) {
       const c1 = 1 - Math.abs(nz(x * 0.0029 + hills * 0.6 + 0.7, z * 0.0029 - hills * 0.5 + 2.1));
@@ -270,19 +392,20 @@ export function heightAt(x: number, z: number): number {
     const dotPeak = ca * PEAK_DIR_X + sa * PEAK_DIR_Z;
     const dotValley = ca * VALLEY_DIR_X + sa * VALLEY_DIR_Z;
     const dotValley2 = ca * VALLEY2_DIR_X + sa * VALLEY2_DIR_Z;
-    let amp = (320 + 360 * northness * northness) * angGet(angMassif) * TUNE.amp;
+    let amp = (320 + 360 * northness * northness) * angGet(angMassif) * TUNE.amp * SHAPE.amp;
     amp *= 1 + 0.24 * smoothstep(0.86, 1.0, dotPeak);
     const valleyCut = smoothstep(0.955, 0.993, dotValley) + 0.8 * smoothstep(0.965, 0.995, dotValley2);
     amp *= 1 - 0.72 * Math.min(1, valleyCut);
 
     // 尾根: 東西に走る走向（x を引き伸ばす）。ドメインワープで蛇行させる
-    const wx = 300 * nz(x * 0.00052 + 7.1, z * 0.00052 + 3.3);
-    const wz = 300 * nz(x * 0.00052 - 2.7, z * 0.00052 + 9.9);
+    const ww = 300 * SHAPE.warp;
+    const wx = ww * nz(x * 0.00052 + 7.1, z * 0.00052 + 3.3);
+    const wz = ww * nz(x * 0.00052 - 2.7, z * 0.00052 + 9.9);
     const px = (x + wx) * 0.00048 + 0.5, pz = (z + wz) * 0.00078 + 0.9;
     const sharp = ridgedBoth(px, pz, 5);
     const round = ridgeRound;
     // 0.45 → 0.62: 稜線を鋭く（山が「団子」に見えていた）。TUNE.ridge は実験室の「尾根の鋭さ」
-    let sharpness = (0.62 + 0.38 * smoothstep(-0.35, 0.45, nz(x * 0.0008 + 2.9, z * 0.0008 + 8.8))) * TUNE.ridge;
+    let sharpness = (0.62 + 0.38 * smoothstep(-0.35, 0.45, nz(x * 0.0008 + 2.9, z * 0.0008 + 8.8))) * TUNE.ridge * SHAPE.ridge;
     sharpness = sharpness < 0 ? 0 : sharpness > 1.6 ? 1.6 : sharpness;
     let m = round + (sharp - round) * sharpness;
     m = m < 0 ? 0 : m > 1 ? 1 : m; // sharpness を 1 より上へ振ったときの外挿を止める
@@ -310,7 +433,7 @@ export function heightAt(x: number, z: number): number {
     // 段丘（崖の帯）: 上部の岩場だけ、場所によって
     if (mtn > 160) {
       const terrT = smoothstep(0.25, 0.7, nz(x * 0.0013 + 5.5, z * 0.0013 + 0.4)) * smoothstep(160, 320, mtn);
-      if (terrT > 0) mtn += (terrace(mtn, 46) - mtn) * 0.65 * terrT;
+      if (terrT > 0) mtn += (terrace(mtn, 46 * SHAPE.terr) - mtn) * 0.65 * terrT;
     }
   }
 
@@ -325,6 +448,7 @@ export function heightAt(x: number, z: number): number {
       const f3 = nz(x * 0.115 + 5.5, z * 0.115 + 2.2);
       fine += (0.45 * f2 + 0.18 * f3) * shoreT * nearT;
     }
+    fine *= SHAPE.fine;
   }
 
   partBase = base;
@@ -396,6 +520,6 @@ export function bakeHeightRows(
 export function startPosition(): { x: number; z: number; yaw: number } {
   // 岸線から +18m ほど陸側
   const a = Math.PI / 2; // +Z
-  const r = shoreRadius(Math.cos(a) * 10, Math.sin(a) * 10) + 18;
+  const r = shoreRadius(Math.cos(a) * 10, Math.sin(a) * 10) + 18 + SHAPE.standBack;
   return { x: 0, z: r, yaw: 0 };
 }

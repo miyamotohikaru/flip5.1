@@ -10,6 +10,7 @@ import { LAYER, type Pipeline } from "../core/pipeline";
 import { bindEnvUniforms } from "../core/patch";
 import type { QualitySettings } from "../core/quality";
 import { WORLD } from "../core/heightfield";
+import { lakeRadiusMean } from "../core/height";
 import { WaveSim } from "./wavesim";
 import { WATER_VERT, WATER_FRAG } from "./shaders";
 import { ShoreDecal } from "./shore";
@@ -307,7 +308,7 @@ export class Water {
     // 水面はカメラの真下を中心に（極座標メッシュ）
     this.mesh.position.set(cam.x, WORLD.lakeLevel, cam.z);
     // 岸のデカール: 湖の近くにいるときだけ
-    const nearLake = Math.hypot(cam.x, cam.z) < WORLD.lakeRadius + 500 && Math.abs(cam.y - WORLD.lakeLevel) < 120;
+    const nearLake = Math.hypot(cam.x, cam.z) < lakeRadiusMean() + 500 && Math.abs(cam.y - WORLD.lakeLevel) < 120;
     this.shore.update(pipeline, this.camFwd, this.shoreDecalEnabled && nearLake && !under);
   }
 

@@ -178,6 +178,11 @@ export class Env {
     uLabSky: { value: new THREE.Vector4(1, 1, 1, 1) },
     /** 植生: x = 草の密度の倍率, yzw = 予備 */
     uLabVeg: { value: new THREE.Vector4(1, 1, 1, 1) },
+    /**
+     * 世界の体格（core/height.ts の worldShape()）のうち、材質が読むもの。シードで決まる。
+     * x = 雪線のずれ(m), y = 岩の露出の倍率, z = 草の乾きのずれ, w = 予備。既定のシードでは (0, 1, 0, 0)
+     */
+    uSeedWorld: { value: new THREE.Vector4(0, 1, 0, 0) },
   };
 
   setWeather(name: WeatherPresetName) {
