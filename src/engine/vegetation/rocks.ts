@@ -269,6 +269,7 @@ export class Rocks {
           "#include <common>",
           `#include <common>
           #include <flip_noise>
+          #include <flip_height>
           #include <flip_atmosphere>
           #include <flip_flip>
           uniform float uWetness;
@@ -437,6 +438,7 @@ export class Rocks {
           "#include <common>",
           `#include <common>
           #include <flip_noise>
+          #include <flip_height>
           #include <flip_atmosphere>
           #include <flip_flip>
           uniform float uWetness;

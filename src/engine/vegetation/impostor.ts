@@ -285,6 +285,7 @@ export function makeImpostorMaterial(env: Env, lighting: Lighting, atlas: Impost
         "#include <common>",
         `#include <common>
         #include <flip_noise>
+        #include <flip_height>
         #include <flip_atmosphere>
         #include <flip_flip>
         ${VEG_FRAG_DITHER}

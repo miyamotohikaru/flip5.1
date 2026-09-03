@@ -5,6 +5,8 @@
 //   flip_terrainAO(xz)          … 空の見え方 0..1（谷底で小さい）。間接光に掛ける
 //   flip_terrainCavity(xz)      … 谷筋の陰 0..1（0.5 = 平ら、小さいほど窪み）
 //   flip_terrainSunVis(xz, dir) … その地点から光源 dir（光の来る向き）が山に隠れていないか 0..1
+//   flip_sunOcclusion(wp, dir, camDist) … 上の「山の影」に「林が落とす帯」を足した遠景の遮蔽 0..1
+//     （uSunVeg = 植生マップ。core/lighting.ts が uVegMap を毎フレーム挿す）
 export const FLIP_HEIGHT = /* glsl */ `
 #ifndef FLIP_HEIGHT_INCLUDED
 #define FLIP_HEIGHT_INCLUDED
@@ -13,6 +15,7 @@ uniform vec4 uHeightmapInfo; // x = worldSize, y = 1/worldSize, z = res, w = max
 uniform sampler2D uTerrainAux;
 uniform sampler2D uTerrainHorizonA;
 uniform sampler2D uTerrainHorizonB;
+uniform sampler2D uSunVeg; // 植生マップ（G = 林の密度）。lighting が uVegMap を挿す
 // world xz → 高さ（バイリニア・手動。float線形フィルタ非対応の端末でも同じ絵にする）
 float flip_height(vec2 xz){
   float res = uHeightmapInfo.z;
@@ -61,6 +64,51 @@ float flip_terrainSunVis(vec2 xz, vec3 dir){
   float horizon = mix(h0, h1, f) * 1.5707963;
   float elev = asin(clamp(dir.y, -1.0, 1.0));
   return smoothstep(horizon - 0.13, horizon + 0.07, elev); // 幅を 5.7° → 11.5°（1km 先の稜線の半影はこれくらい広い。地平角マップの段差も隠れる）
+}
+
+// 影の判定用の高さ（最近傍 1 タップ。バイリニアは要らないので flip_height より 4 倍安い）
+float flip_heightPoint(vec2 xz){
+  return texture2D(uHeightmap, xz * uHeightmapInfo.y + 0.5).r;
+}
+
+/** 針葉樹の天蓋のおおよその高さ（m）。林の密度 1 のところの木の高さ */
+#define FLIP_CANOPY 16.0
+
+/**
+ * 遠景の太陽の遮蔽（0 = 影, 1 = 日なた）。CSM のシャドウマップが届かない外側を埋める。
+ *   ① 地形の地平角（flip_terrainSunVis）… 山が落とす影。全距離に効く。
+ *      地面より上にある点（木の梢など）は、その分だけ地平が下がって見えるので太陽を少し持ち上げて判定する。
+ *   ② 「地形＋林の天蓋」を太陽方向へ 6 歩レイマーチ … 林が落とす帯。木 1 本ずつではなく林として。
+ *      太陽が低いほど遡る距離 FLIP_CANOPY/tan(高度) が伸び、斜面に長い影が出る。
+ * camDist はカメラからの距離（m）。近景は CSM が本物の落ち影を出すので ② は 90〜260m で徐々に効かせる。
+ */
+float flip_sunOcclusion(vec3 wp, vec3 sunDir, float camDist){
+  if (sunDir.y <= 0.02) return 1.0;
+  float ground = flip_heightPoint(wp.xz);
+  float above = max(0.0, wp.y - ground);
+  vec3 lifted = normalize(sunDir + vec3(0.0, above * 0.0033, 0.0));
+  float vis = flip_terrainSunVis(wp.xz, lifted);
+  vec2 hxz = sunDir.xz;
+  float hl = length(hxz);
+  if (hl < 1e-4) return vis; // 真上の太陽（林は帯を落とさない）
+  vec2 dir = hxz / hl;
+  float tanE = sunDir.y / hl;
+  float reach = clamp(FLIP_CANOPY / tanE, 14.0, 420.0);
+  // 太陽方向に 6 歩。天蓋が光線より上にある標本が 1 つでもあれば影（＝落ち影のマスク）。
+  // 密度をそのまま暗さにすると弱すぎるので、まず「林らしさ 0..1」に伸ばしてから使う。
+  float occ = 0.0;
+  for (int i = 1; i <= 6; i++){
+    float t = float(i) / 6.0;
+    float d = reach * t;
+    vec2 sxz = wp.xz + dir * d;
+    float g = texture2D(uSunVeg, sxz * uHeightmapInfo.y + 0.5).g;
+    float cov = smoothstep(0.02, 0.26, g); // 林らしさ（疎林でも木の丈は同じ）
+    float canopy = flip_heightPoint(sxz) + FLIP_CANOPY * cov;
+    float ray = wp.y + d * tanE;
+    // 天蓋が光線より上にある分だけ効く（縁は 3m でぼかす）
+    occ = max(occ, cov * smoothstep(-3.0, 3.0, canopy - ray));
+  }
+  return vis * (1.0 - 0.78 * occ * smoothstep(70.0, 220.0, camDist));
 }
 #endif
 `;

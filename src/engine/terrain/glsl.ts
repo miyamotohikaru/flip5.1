@@ -489,7 +489,8 @@ if ((uTerrainDebug > 0.5 && uTerrainDebug < 5.5) || (uTerrainDebug > 6.5 && uTer
 
 /**
  * three の lights_fragment_begin（CSM 版）に「山の影」を差し込む。
- * 影を落とす平行光（太陽のカスケード）には tSunVis、それ以外（月）には tMoonVis を掛ける。
+ * 月（影を落とさない平行光）に tMoonVis を掛ける。太陽側は core/lighting.ts が
+ * flip_sunOcclusion（山の影＋林の帯）で全マテリアルにまとめて掛けるのでここでは触らない。
  * 目印が見つからなければそのまま返す（山の影なしで動く）。
  */
 export function injectTerrainShadow(chunk: string): string {
@@ -497,7 +498,9 @@ export function injectTerrainShadow(chunk: string): string {
   const call = "getDirectionalLightInfo( directionalLight, directLight );";
   const idx = chunk.indexOf(marker);
   if (idx < 0 || !chunk.includes(call)) return chunk;
-  const sun = chunk.slice(0, idx).split(call).join(`${call} directLight.color *= tSunVis;`);
+  // 太陽（カスケード）の「山の影」は core/lighting.ts が flip_sunOcclusion で全マテリアルに掛けるので
+  // ここでは掛けない（掛けると地形だけ二乗になって、木と地面で影の濃さが食い違う）
+  const sun = chunk.slice(0, idx);
   const moon = chunk.slice(idx).split(call).join(`${call} directLight.color *= tMoonVis;`);
   return sun + moon;
 }
