@@ -344,7 +344,7 @@ void main(){
   if (uChromaBack > 0.0) {
     float lb = post_luma(pre), la = post_luma(c);
     vec3 keep = clamp(pre * (la / max(lb, 1e-4)), 0.0, 1.0);
-    c = mix(c, keep, uChromaBack * smoothstep(0.06, 0.55, la));
+    c = mix(c, keep, uChromaBack * smoothstep(0.03, 0.40, la));
   }
   // グレーディング
   if (uGradeOn > 0.5) c = gradeColor(c);
