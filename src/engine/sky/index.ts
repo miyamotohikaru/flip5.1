@@ -327,7 +327,7 @@ export class Sky {
     layer.set(base, top, cov, sigma);
     const shape = this.cloudU.uCloudShape.value as THREE.Vector4;
     // z = 雲底のうねり（層の高さに対する割合）。嵐・雨で雲底が平らな板にならないように
-    shape.set(-0.35 * w.storm - 0.20 * w.rain, 1.0, 0.30 * w.storm + 0.15 * w.rain, 0);
+    shape.set(-0.35 * w.storm - 0.20 * w.rain, 1.0, 0.70 * w.storm + 0.35 * w.rain, 0);
     const drift = w.wind * 1.8 * t;
     const wp = this.cloudU.uWeatherParams.value as THREE.Vector4;
     wp.set(1 / WEATHER_TILE, (-w.windDir.x * drift) / WEATHER_TILE, (-w.windDir.y * drift) / WEATHER_TILE, 1);
@@ -376,6 +376,11 @@ export class Sky {
     // 雲底に届く空の光。嵐では 0.12 まで落として「暗い塊」を出す
     const ambBotK = 0.22 - 0.10 * w.storm;
     const ambBottom = this.ambBottom.copy(skyEff).multiplyScalar(ambBotK / Math.PI).add(this.tmpC2.copy(p.groundIrr).multiplyScalar(0.40 / Math.PI)).multiplyScalar(stormDark);
+    // 雲底を下から照らす薄明の地平線の帯。雲より下にあるので雲では遮られない（stormDark を掛けない）。
+    // 日没前後の雷雲の底が橙になるのはこれ。曇りの照度 skyEff は「下から見た雲そのもの」なので雲底の光源にならず、
+    // これが無いと嵐の雲底が真っ黒になり、画に見えているのは空気遠近だけ＝無地の灰色の壁になる
+    const horizonLit = 0.30 * (1 - smoothstep(0.02, 0.22, env.sunDir.y));
+    if (horizonLit > 0.001) ambBottom.add(this.tmpC2.copy(p.sunside).multiplyScalar(horizonLit));
     (this.cloudU.uAmbBottom.value as THREE.Vector3).set(ambBottom.r, ambBottom.g, ambBottom.b);
     const cheap = this.tmpC.copy(sunCloudE).multiplyScalar(0.10).add(this.tmpC2.copy(ambTop).multiplyScalar(0.8));
     for (const m of [this.material, this.envMat]) (m.uniforms.uCheapCloudColor.value as THREE.Vector3).set(cheap.r, cheap.g, cheap.b);
