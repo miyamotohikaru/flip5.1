@@ -169,9 +169,11 @@ vec3 gradeColor(vec3 c){
   // ラウンド2で「下 1/3 が情報ゼロ」になった原因はこれ。軸まわりの「べき」に変えると
   // 0 と 1 は動かず、中間だけ傾きが立つ＝暗部にも白側にも階調が残る。
   vec3 g = pow(max(c, vec3(0.0)), vec3(1.0 / 2.2));
-  vec3 lo = uPivot * pow(max(g, vec3(0.0)) / uPivot, vec3(uContrast));
-  vec3 hi = 1.0 - (1.0 - uPivot) * pow(max(1.0 - g, vec3(0.0)) / (1.0 - uPivot), vec3(uContrast));
-  g = mix(lo, hi, step(vec3(uPivot), g));
+  vec3 up = step(vec3(uPivot), g);
+  // 軸までの距離を 0..1 に正規化 → 1 回の pow で上下ともまかなう
+  vec3 t = mix(g / uPivot, (1.0 - g) / (1.0 - uPivot), up);
+  vec3 r = pow(clamp(t, 0.0, 1.0), vec3(uContrast));
+  g = mix(uPivot * r, 1.0 - (1.0 - uPivot) * r, up);
   // 影に空の環境光を残す（黒潰れ止め）。g が小さいところだけ持ち上げ、中間調には触らない
   g += uLift * (1.0 - smoothstep(vec3(0.0), vec3(0.30), g));
   c = pow(clamp(g, 0.0, 1.0), vec3(2.2));
