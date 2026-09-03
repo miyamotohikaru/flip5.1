@@ -11,6 +11,7 @@ import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import type { World } from "@/engine/world";
 import { buildLabels, occluded, type WorldLabel } from "@/engine/ui/labels";
+import { FormulaSvg } from "@/blackboard/render";
 
 type Props = {
   world: World | null;
@@ -202,10 +203,8 @@ export default function WorldLabels({ world, active, compact, maxLabels = 0 }: P
               {l.title}
               <span>{l.latin}</span>
             </div>
-            {l.lines.map((t, j) => (
-              <div className="wlabel-line" key={j}>
-                {t}
-              </div>
+            {l.nodes.map((nd, j) => (
+              <FormulaSvg key={j} className="wlabel-line" nodes={nd} size={compact ? 11.5 : 13} seed={31 + j} grain={false} pad={2} />
             ))}
             <div className="wlabel-note">{l.note}</div>
           </div>

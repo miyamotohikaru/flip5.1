@@ -158,17 +158,20 @@ button { font-family: inherit; }
 .wlabel { position: absolute; left: 0; top: 0; width: 0; height: 0; transform-origin: 0 0; opacity: 0; transition: opacity 0.7s ease; will-change: transform, opacity; }
 .wlabel-dot { position: absolute; left: -4px; top: -4px; width: 8px; height: 8px; border-radius: 50%; border: 1px solid rgba(214, 238, 255, 0.95); background: rgba(3, 5, 12, 0.45); box-shadow: 0 0 6px rgba(140, 217, 255, 0.5); }
 .wlabel-stem { position: absolute; left: 0; bottom: 5px; width: 1px; height: 30px; background: linear-gradient(180deg, rgba(160, 222, 255, 0.35), rgba(214, 238, 255, 0.95)); }
+/* 式は入口の黒板と同じチョークの線文字（FormulaSvg）で書く。UI の等幅フォントは使わない。
+   地は薄く（背景の風景を隠さない）。ぼかしは動く canvas の上では毎フレーム GPU を食うので使わない */
 .wlabel-box {
-  position: absolute; left: 10px; bottom: 30px; max-width: min(40vw, 340px); overflow: hidden;
+  /* 幅は確定させる。中の svg に max-width:100% を効かせるため（幅が内容依存だと循環して 1 字ずつ折り返す） */
+  position: absolute; left: 10px; bottom: 30px; width: min(40vw, 340px); overflow: hidden;
   padding: 7px 11px 8px; border-left: 2px solid rgba(160, 222, 255, 0.75); border-radius: 0 5px 5px 0;
-  background: rgba(2, 5, 13, 0.82); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
-  font-family: var(--font-mono); font-size: 11.5px; line-height: 1.6; color: #b7e2ff;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+  background: rgba(2, 5, 13, 0.5);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+  font-size: 11.5px; line-height: 1.6; color: #b7e2ff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9), 0 0 10px rgba(0, 0, 0, 0.7);
 }
 .wlabel-head { font-family: var(--font-jp); font-size: 11.5px; font-weight: 600; letter-spacing: 0.1em; color: var(--ink); margin-bottom: 2px; }
 .wlabel-head span { margin-left: 8px; font-family: var(--font-mono); font-size: 9.5px; font-weight: 400; letter-spacing: 0.18em; color: var(--formula-dim); }
-.wlabel-line { white-space: pre; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.wlabel-line { display: block; margin: 1px 0; max-width: 100%; height: auto; }
 .wlabel-note { margin-top: 5px; font-family: var(--font-jp); font-size: 11px; line-height: 1.55; letter-spacing: 0.02em; color: rgba(242, 239, 232, 0.82); }
 /* 画面の上寄り・右寄りの点では、ふだを下／左へ逃がす */
 .wlabel.below .wlabel-stem { bottom: auto; top: 5px; }
@@ -231,6 +234,9 @@ button { font-family: inherit; }
   .landing-foot { font-size: 13px; line-height: 1.7; flex-direction: column; align-items: flex-start; gap: 2px; }
   .landing-credit { color: var(--ink-faint); }
   .hud { font-size: 13px; }
+  /* 携帯では題字が右上のボタン列（写真・音・いじる・?）にぶつかるので、左上の塊ごと 1 段下げる。
+     幅を詰めて逃げると 360px の端末でまたぶつかるし、当たり判定 44px を割る。数式の札は 172px なので下は空いている */
+  .hud-tl { top: calc(68px + var(--safe-t)); }
   .hud-title { font-size: 14px; }
   .hud-count { font-size: 13px; line-height: 1.55; }
   .hud-count span { display: block; }
@@ -266,7 +272,7 @@ button { font-family: inherit; }
   .formula-src { display: none; }
   .formula-head { margin-bottom: 2px; }
   .formula-here { font-size: 13px; margin-bottom: 6px; padding-bottom: 6px; }
-  .wlabel-box { max-width: min(74vw, 280px); padding: 5px 8px 6px; font-size: 10px; line-height: 1.55; }
+  .wlabel-box { width: min(74vw, 280px); padding: 5px 8px 6px; font-size: 10px; line-height: 1.55; }
   .wlabel-head { font-size: 11px; }
   .wlabel-note { font-size: 10px; }
   .wlabel-stem { height: 22px; }
@@ -378,13 +384,11 @@ html:has(.log), body:has(.log) { overflow: auto; }
 .lab-label b { font-family: var(--font-mono); font-size: 11.5px; font-weight: 500; color: var(--ink-dim); font-variant-numeric: tabular-nums; transition: color 0.2s; }
 .lab-row.moved .lab-label b { color: var(--accent); }
 .lab-row.hot .lab-label span { color: var(--accent); }
-.lab-formula { margin-top: 5px; font-family: var(--font-mono); font-size: 10.5px; line-height: 1.5; color: var(--formula-dim); white-space: pre-wrap; word-break: break-word; }
-.lab-formula em {
-  font-style: normal; padding: 0 3px; border-radius: 3px;
-  color: var(--formula); background: rgba(140, 217, 255, 0.1);
-  transition: background 0.25s ease, color 0.25s ease, box-shadow 0.25s ease;
-}
-.lab-focus.hot .lab-formula em { color: #1a1000; background: var(--accent); box-shadow: 0 0 14px rgba(255, 184, 71, 0.55); }
+/* 式は入口の黒板と同じ線文字（FormulaSvg）。動かす項 \t{k}{} は橙のチョークにする */
+.lab-formula { display: block; margin-top: 5px; max-width: 100%; height: auto; opacity: 0.86; }
+.lab-formula g[data-term].hot path { stroke: url(#bbChalkHot); }
+.lab-focus.hot .lab-formula { opacity: 1; }
+.lab-focus.hot .lab-formula g[data-term].hot path { filter: drop-shadow(0 0 5px rgba(255, 184, 71, 0.85)); }
 .lab-live { margin-top: 3px; font-family: var(--font-mono); font-size: 10.5px; line-height: 1.5; color: var(--ink-dim); font-variant-numeric: tabular-nums; }
 .lab-focus.hot .lab-live { color: var(--ink); }
 .lab-src { margin-top: 2px; font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.04em; color: rgba(242, 239, 232, 0.28); }
