@@ -173,7 +173,11 @@ export function buildConifer(v: TreeVariant, lod: 0 | 1): TreeGeo {
     const n = new THREE.Vector3().crossVectors(w, d).normalize();
     if (!spire && n.y < 0) n.negate();
     const start = pos.length / 3;
-    const cx = (cell % 2) * CELL, cy = Math.floor(cell / 2) * CELL;
+    // コマの縁に余白を取る。縁ちょうどを引くと、ミップの段でとなりのコマ
+    // （梢の明るい主軸）の色がにじんで、葉の上に明るい茶色の点が出る
+    const PAD = 0.010;
+    const cx = (cell % 2) * CELL + PAD, cy = Math.floor(cell / 2) * CELL + PAD;
+    const SPAN = CELL - 2 * PAD;
     const corners: [number, number][] = [[0, vA], [1, vA], [0, vB], [1, vB]];
     for (const [u, vv] of corners) {
       const px = bx + d.x * u * L + w.x * vv, py = by + d.y * u * L + w.y * vv, pz = bz + d.z * u * L + w.z * vv;
@@ -182,8 +186,8 @@ export function buildConifer(v: TreeVariant, lod: 0 | 1): TreeGeo {
       pos.push(px, py, pz);
       nrm.push(n.x, n.y, n.z);
       const tv = (vv - vA) / (vB - vA);
-      if (spire) uv.push(cx + (0.15 + 0.7 * tv) * CELL, cy + (0.98 - 0.94 * u) * CELL);
-      else uv.push(cx + u * CELL, cy + (texV0 + (texV1 - texV0) * tv) * CELL);
+      if (spire) uv.push(cx + (0.15 + 0.7 * tv) * SPAN, cy + (0.98 - 0.94 * u) * SPAN);
+      else uv.push(cx + u * SPAN, cy + (texV0 + (texV1 - texV0) * tv) * SPAN);
       data.push(1, flex * (0.35 + 0.65 * u), phase, cell);
       axis.push(bx + d.x * u * L, by + d.y * u * L, bz + d.z * u * L);
       dir.push(d.x, d.y, d.z);
@@ -201,8 +205,13 @@ export function buildConifer(v: TreeVariant, lod: 0 | 1): TreeGeo {
       const t = 0.05 + (Math.max(v.crownBase, 0.26) - 0.05) * ((b + 0.25 + 0.5 * rnd()) / nDead);
       const a0 = axisAt(t), rt = radiusAt(t);
       const az = rnd() * Math.PI * 2;
-      const dr = ((28 + 30 * rnd()) * Math.PI) / 180; // 下向きに垂れる
-      const len = (0.45 + 0.9 * rnd()) * v.lmax * H;
+      const dr = ((22 + 26 * rnd()) * Math.PI) / 180; // 下向きに垂れる
+      // **短い折れ枝**。ここが長いと、葉の付いていない茶色の棒が樹冠の外へ突き出して
+      // 地面まで届き、「木に竹の支柱を刺した」画になる（批評 R6 の新規 1 番）
+      let len = (0.20 + 0.32 * rnd()) * v.lmax * H;
+      // 先が地面（y = 0.35m）より下に行かない長さで頭打ちにする
+      const drop = Math.sin(dr);
+      if (drop > 1e-3) len = Math.min(len, Math.max(0.12, (a0.y - 0.35) / drop));
       const d0 = new THREE.Vector3(Math.cos(az) * Math.cos(dr), -Math.sin(dr), Math.sin(az) * Math.cos(dr)).normalize();
       const w = new THREE.Vector3().crossVectors(d0, up).normalize();
       const w1 = rt * 0.45, w2 = rt * 0.12;
@@ -224,7 +233,9 @@ export function buildConifer(v: TreeVariant, lod: 0 | 1): TreeGeo {
   // LOD1 は「段数を減らして 1 段の枝を増やす」と、遠くで段が分離して**パゴダ（塔の相輪）**に見える。
   // 三角形の総数は同じまま、段を増やして 1 段の枝を減らすと、段が重なって円錐に読める
   const nW = lod === 0 ? v.whorls : Math.max(7, Math.round(v.whorls * 0.95));
-  const top = 0.88;
+  // 輪生の上端。0.88 だと、ここから上（樹高の 12%）が「細い幹に小さな房が 3〜4 個」の
+  // アンテナになる（批評 R6 の新規 2 番）。梢の輪生と連続させるため 0.94 まで上げる
+  const top = 0.94;
   // 1 段の枝を丸ごと 1 つの高さに置くと「皿」に見える。段の高さ（±0.05H）と
   // 枝ごとの高さ（±0.05H）を別々に散らして、段の境目を溶かす。
   const spanT = top - v.crownBase;
@@ -246,25 +257,36 @@ export function buildConifer(v: TreeVariant, lod: 0 | 1): TreeGeo {
     const nCards = lod === 0 ? (spire ? 4 : 9) : 1;
     for (let ci = 0; ci < nCards; ci++) {
       const along = nCards === 1 ? 0 : (0.02 + (0.88 / nCards) * ci) * Lb;
-      const len = nCards === 1 ? Lb : Lb * (0.30 + 0.13 * rnd()) * (1 - 0.05 * ci);
+      const len = nCards === 1 ? Lb : Lb * (0.27 + 0.12 * rnd()) * (1 - 0.05 * ci);
       // 枝の向きから左右に振る（枝先が扇状に分かれる）
       const yawOff = nCards === 1 ? 0 : (rnd() - 0.5) * 0.62;
       const dc = d.clone().applyAxisAngle(up, yawOff).normalize();
       // いちばん内側の 2 枚は幹に沿って強く垂らす。これが無いと幹が上から下まで
       // 1 本の棒として見通せる（統合担当の指摘・R6）
+      let inner = 1.0;
       if (nCards > 1 && ci < 3) {
         const side = new THREE.Vector3().crossVectors(dc, up).normalize();
         dc.applyAxisAngle(side, -(0.45 + 0.25 * rnd())).normalize();
+        // 幹に沿って垂れる 3 枚は一回り大きく。ここが小さいと幹が上から下まで
+        // 1 本のピンクの棒として見通せる（批評 R6 の 6 番）
+        inner = 1.40;
       }
       // 幅方向は「下」。カードごとに捻りを変えて、平らな面が揃わないようにする
       let dn = new THREE.Vector3().crossVectors(new THREE.Vector3().crossVectors(dc, up).normalize(), dc).normalize();
       if (dn.y > 0) dn = dn.negate();
       dn.applyAxisAngle(dc, (rnd() - 0.5) * (nCards === 1 ? 0.8 : 0.75));
-      const cell = nCards === 1 ? 1 : ci === 1 ? (rnd() < 0.5 ? 0 : 3) : 1;
-      const v0 = cell === 1 ? 0.32 : 0.14, v1 = cell === 1 ? 0.92 : 0.86;
+      // 9 枚中 8 枚が同じコマ（横から見た垂れ）だと、コマの中の茶色い主軸が
+      // どのカードでも同じ位置に出て「格子状のサーモンの点」に見える（批評 R6 の 5 位③）。
+      // 3 つのコマに散らし、さらに半分は上下を反転して同じ模様が並ばないようにする
+      const cr = rnd();
+      const cell = nCards === 1 ? 1 : cr < 0.46 ? 1 : cr < 0.73 ? 0 : 3;
+      let v0 = cell === 1 ? 0.34 : 0.16, v1 = cell === 1 ? 0.94 : 0.88;
+      if (rnd() < 0.5) { const t = v0; v0 = v1; v1 = t; }
+      // 幅は長さの 0.62 倍。ほぼ正方形（0.98 倍）だとアトラスの絵が縦に 1.6 倍伸びて
+      // 針が太くなり、1 枚が「切った工作用紙」として読める（批評 R6 の 5 位①）
       addCard(
         bx + d.x * along, by + d.y * along, bz + d.z * along,
-        dc, dn, len, -0.32 * len, 0.66 * len, cell, v0, v1, flex, phase + 1.0 + ci * 2.1, false,
+        dc, dn, len * inner, -0.27 * len * inner, 0.58 * len * inner, cell, v0, v1, flex, phase + 1.0 + ci * 2.1, false,
       );
     }
   };
@@ -283,11 +305,12 @@ export function buildConifer(v: TreeVariant, lod: 0 | 1): TreeGeo {
   }
   // 梢: 交差カード 2 枚だと電球に見えるので、短い輪生 3 段の小さな円錐にする
   {
-    const tips = lod === 0 ? [0.88, 0.925, 0.962, 0.992] : [0.92];
-    const nb = lod === 0 ? 5 : 3;
+    // 頂芽は「樹高の 4% の短い円錐」。段を上に詰め、いちばん上を 0.999 まで持ち上げる
+    const tips = lod === 0 ? [0.945, 0.965, 0.982, 0.996] : [0.95];
+    const nb = lod === 0 ? 6 : 3;
     for (let s = 0; s < tips.length; s++) {
       const t0 = tips[s];
-      const Ls = v.lmax * H * 0.30 * (1 - 0.6 * s);
+      const Ls = v.lmax * H * 0.34 * (1 - 0.42 * s);
       for (let b = 0; b < nb; b++) {
         const az = s * 1.7 + (b * Math.PI * 2) / nb + (rnd() - 0.5) * 0.6;
         // LOD1 は梢が 1 段しかないので、ここで長い枝を出すと「きのこの傘」になる
@@ -335,6 +358,7 @@ varying vec3 vVegWorld;
 varying vec3 vConeN;
 varying vec2 vTreeUv;
 varying vec3 vBark;
+varying float vAlphaK;   // 遠いカードのアルファの持ち上げ（ピンホール対策）
 void veg_tree(out vec3 p, out vec3 n){
   mat4 im = instanceMatrix;
   vec3 root = im[3].xyz;
@@ -345,6 +369,13 @@ void veg_tree(out vec3 p, out vec3 n){
   float seed = flip_hash12(floor(root.xz * 3.7 + 0.5));
   // LOD の切り替え: 画素ごとのディザで溶かすと「網戸」に見えるので、木ごとに切り替え距離を
   // ばらけさせて 1 本ずつパッと入れ替える。LOD0 と LOD1 の輪郭はほぼ同じなので飛びは目立たない
+  // 遠いカードだけアルファを持ち上げる（＝しきい値を 0.30 → 0.19 に下げるのと同じ）。
+  // カードとカードの間に残る 1〜2px の空の穴が塞がる。7m 以内は素通しなので
+  // 近景が「板」に戻ることはない（批評 R6 のピンホール代案 1）
+  vAlphaK = 1.0 + 0.60 * smoothstep(7.0, 40.0, dist);
+  #ifdef VEG_BAKE
+  vAlphaK = 1.0;
+  #endif
   float lodJit = flip_hash11(seed * 31.0 + 5.0);
   float sw0 = uLod.x - uLod.z * lodJit;
   float sw1 = uLod.y - uLod.z * lodJit;
@@ -358,7 +389,13 @@ void veg_tree(out vec3 p, out vec3 n){
   else if (uLod.w < 1.5) fade = uReflect * step(dist, sw1);
   // 樹冠の内側の殻は 14m より近いと「のっぺりした緑の壁」として見えてしまう。
   // 近景では畳む（近くは葉の枚数が足りているので隙間も自然に見える）
+  // **焼き込み（インポスター）では畳まない。** 畳むと焼いた木の樹冠に穴が開き、
+  // 150m の木の真ん中に幹色のひし形が縦に並ぶ（批評 R6 の 2 位「緑のサボテン」）
+  #ifdef VEG_BAKE
+  if (false) {
+  #else
   if (aData.x > 1.5 && dist < 14.0) {
+  #endif
     p = aAxis;
     n = vec3(0.0, 1.0, 0.0);
     vTree = vec4(fade, 0.0, aData.x, seed);
@@ -369,6 +406,11 @@ void veg_tree(out vec3 p, out vec3 n){
     return;
   }
   vec3 lp = position * mix(1.0, 0.92, backdrop);
+  #ifdef VEG_BAKE
+  // 焼き込みのときだけ殻を 2.4 倍に太らせる。150m ではカードの隙間から空が抜けるほうが
+  // ずっと目立つので、樹冠の内側を葉の色で埋める（輪郭はカードが決めるので変わらない）
+  if (aData.x > 1.5) lp = aAxis + (lp - aAxis) * 2.4;
+  #endif
   float hN = clamp(lp.y / uTreeH, 0.0, 1.0);
   vec2 wd = veg_windDir();
   float gust = veg_gust(root.xz);
@@ -428,6 +470,7 @@ varying vec3 vVegWorld;
 varying vec3 vConeN;
 varying vec2 vTreeUv;
 varying vec3 vBark;
+varying float vAlphaK;
 uniform float uTintMix;   // 1 = 個体ごとの色味を掛ける / 0 = 掛けない（インポスターの焼き込み用）
 vec3 veg_bark(vec3 lp, float seed, out float relief){
   float streak = flip_vnoise(vec3(lp.x * 14.0, lp.y * 0.9 + seed * 7.0, lp.z * 14.0));
@@ -435,10 +478,10 @@ vec3 veg_bark(vec3 lp, float seed, out float relief){
   float plates = flip_vnoise(vec3(lp.x * 6.0, lp.y * 1.6, lp.z * 6.0) + seed * 10.0);
   relief = streak * 0.65 + streak2 * 0.35;
   // 針葉樹の樹皮は暗い灰褐色。筋のコントラストを強く（ピンクの円筒に見せない）
-  vec3 dark = vec3(0.036, 0.028, 0.022);
-  vec3 light = vec3(0.20, 0.16, 0.12);
+  vec3 dark = vec3(0.023, 0.021, 0.018);
+  vec3 light = vec3(0.104, 0.096, 0.078);
   vec3 c = mix(dark, light, smoothstep(0.24, 0.80, relief) * 0.8 + 0.2 * plates);
-  c = mix(c, vec3(0.145, 0.125, 0.085), 0.35 * smoothstep(0.62, 0.9, plates));
+  c = mix(c, vec3(0.098, 0.086, 0.062), 0.35 * smoothstep(0.62, 0.9, plates));
   return c;
 }
 vec4 veg_treeAlbedo(out float relief){
@@ -452,9 +495,12 @@ vec4 veg_treeAlbedo(out float relief){
   if (vTree.z < 0.5) return vec4(veg_bark(vBark, vTree.w, relief), 1.0);
   // アルファのミップは textures.ts が被覆率を保つように作ってあるので、ここでは持ち上げない
   vec4 tex = texture2D(uNeedle, vTreeUv);
+  // カードの中の「針の明暗」。法線と AO をこれで揺らすと、1 枚 100px の平らな紙が
+  // 針の塊に見える（三角形は 1 枚も増えない。批評 R6 の 5 位②）
+  relief = clamp(dot(tex.rgb, vec3(0.30, 0.60, 0.10)) * 13.0, 0.0, 1.0);
   vec3 tint = mix(vec3(1.02, 1.0, 0.88), vec3(0.88, 1.0, 1.10), vTree.w) * (0.86 + 0.28 * flip_hash11(vTree.w * 3.0 + 0.2));
   tint = mix(vec3(1.0), tint, uTintMix);
-  return vec4(tex.rgb * tint, tex.a);
+  return vec4(tex.rgb * tint, min(tex.a * vAlphaK, 1.0));
 }
 float veg_treeAO(){
   // 樹冠の中ほど・下ほど暗い（自己遮蔽）。枝は幹側ほど暗い
@@ -534,6 +580,17 @@ export function makeTreeMaterial(env: Env, lighting: Lighting, needle: THREE.Tex
         `#include <normal_fragment_maps>
         if (vTree.z > 0.5 && vTree.z < 1.5) {
           normal = normalize(mix(normal, vConeN, 0.6));
+          // 葉のカードの法線を下に向けない（裏を向いたカードだけ真っ黒になるのを止める）。
+          // 針葉は薄いので裏から見ても上からの光で明るい
+          vec3 upV = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
+          float dnv = dot(normal, upV);
+          if (dnv < 0.0) normal = normalize(normal - 1.7 * dnv * upV);
+          // 針の明暗から法線を曲げる（カードの中が 1 色の面にならない）
+          vec3 cx1 = dFdx(-vViewPosition), cy1 = dFdy(-vViewPosition);
+          vec3 C1 = cross(cy1, normal), C2 = cross(normal, cx1);
+          float cdet = dot(cx1, C1);
+          vec3 cgrad = sign(cdet) * (dFdx(vegRelief) * 0.030 * C1 + dFdy(vegRelief) * 0.030 * C2);
+          normal = normalize(abs(cdet) * normal - cgrad);
         } else if (vTree.y < 0.5) {
           // 樹皮の凹凸（ノイズの画面微分から法線を曲げる）
           vec3 sx = dFdx(-vViewPosition), sy = dFdy(-vViewPosition);
@@ -549,7 +606,8 @@ export function makeTreeMaterial(env: Env, lighting: Lighting, needle: THREE.Tex
         shader.fragmentShader,
         "#include <lights_fragment_begin>",
         `float vegTrans = (vTree.z > 0.5 && vTree.z < 1.5) ? 0.20 : 0.0;
-        float vegAO = veg_treeAO();
+        // カードは針ごとの陰影を掛ける。これが無いと 1 枚が均一な明るさの紙に見える
+        float vegAO = veg_treeAO() * ((vTree.z > 0.5 && vTree.z < 1.5) ? (0.58 + 0.80 * vegRelief) : 1.0);
         float vegSpec = 0.0;
         float vegGloss = 18.0;
         float vegUpMix = 0.25;
@@ -612,7 +670,8 @@ export function makeTreeDepthMaterial(env: Env, needle: THREE.Texture, o: TreeMa
         uniform sampler2D uNeedle;
         uniform float uNeedleSize;
         varying vec4 vTree;
-        varying vec2 vTreeUv;`,
+        varying vec2 vTreeUv;
+        varying float vAlphaK;`,
         "tree depth fs common",
       );
       shader.fragmentShader = replaceOnce(
@@ -621,7 +680,7 @@ export function makeTreeDepthMaterial(env: Env, needle: THREE.Texture, o: TreeMa
         `#ifndef VEG_DEPTH_ALL
         if (vTree.x < veg_ign(gl_FragCoord.xy)) discard;
         #endif
-        if (vTree.z > 0.5 && vTree.z < 1.5 && vTree.y < 0.5) diffuseColor.a = texture2D(uNeedle, vTreeUv).a;`,
+        if (vTree.z > 0.5 && vTree.z < 1.5 && vTree.y < 0.5) diffuseColor.a = min(texture2D(uNeedle, vTreeUv).a * vAlphaK, 1.0);`,
         "tree depth fs map",
       );
     },

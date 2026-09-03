@@ -45,7 +45,12 @@ export function forestDensity(x: number, z: number, h: number, ny: number): numb
   // 岸の草地には孤立木がまばらに
   const sd = Math.hypot(x, z) - shoreRadius(x, z);
   const meadow = 1 - smoothstep(150, 320, sd);
-  f = f * (1 - meadow) + meadow * 0.08 * smoothstep(3.5, 7.0, h);
+  // 岸の草地の孤立木は**塊にする**。一様に 8% で撒くと、1〜3km の斜面が
+  // 「同じ濃さ・同じ大きさの点を等間隔に振った胡椒」に見える（批評 R6 の golden）。
+  // λ80m の斑にして、3〜8 本の小さな木立と広い空きに分ける
+  const clump = noise2(x * 0.0125 + 71.3, z * 0.0125 - 40.1);
+  const meadowD = 0.19 * smoothstep(0.02, 0.40, clump * 0.7 + noise2(x * 0.026 - 3.3, z * 0.026 + 8.7) * 0.3);
+  f = f * (1 - meadow) + meadow * meadowD * smoothstep(3.5, 7.0, h);
   return clamp(f * elev * slope, 0, 1);
 }
 
