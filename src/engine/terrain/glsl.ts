@@ -149,8 +149,7 @@ float screeM = smoothstep(0.17, 0.27, tSlope + 0.04 * tPatch) * (1.0 - rockM) * 
 float dirtM = max(smoothstep(0.15, 0.28, tSlope + 0.05 * tMeso), 1.0 - smoothstep(0.22, 0.42, tCav)) * (1.0 - rockM) * (1.0 - screeM);
 // 土は斜面いちめんではなく斑で出す（一様に出ると尾根の草地が茶色い毛布になる）。
 // λ36m の一段だけだと「ぼけた水彩」になるので、λ6m と λ1.5m の 2 段を足す（振幅 0.35）
-float dirtFine = 0.0;
-if (dirtM > 0.03 && tDist < 700.0) dirtFine = 0.35 * (flip_gnoise(tXZ * 0.17 + 29.0) + 1.1 * tPatch) * (1.0 - smoothstep(220.0, 700.0, tDist));
+float dirtFine = 0.35 * (tMeso + 1.1 * tPatch); // 下の中景ノイズと役割が重なるので自前のノイズはやめた
 dirtM *= clamp(0.35 + 0.65 * smoothstep(-0.45, 0.45, tPatch + 0.7 * tMeso) + dirtFine, 0.0, 1.0);
 // 水際 12m 以内は土を出さない。棚の肩の傾きで dirtM が立ち、岸線と平行な
 // 「幅 5〜15m の無地の灰色コンクリート」になっていた（批評R4 7①）
@@ -217,17 +216,17 @@ if (fFloor > 0.0005) {
   // 褪せた針葉のリター（灰茶。R/G ≈ 1.0）→ 腐植（ほぼ黒）。
   // R が G に勝つ色（前は R/G = 1.32）は日なたで橙の砂に、1km 先では錆色に見える。
   // 明暗の比 4:1 を近距離で読ませるのが「林床」と「砂」の分かれ目
-  vec3 duff = mix(vec3(0.0228, 0.0216, 0.0136), vec3(0.0056, 0.0053, 0.0035),
+  vec3 duff = mix(vec3(0.0880, 0.0935, 0.0600), vec3(0.0284, 0.0302, 0.0196),
                   smoothstep(0.05, 0.90, fLitter + 0.45 * tPatch));
   // 苔・下草の緑が斑で混じる（緑側なので R/G は下がる方向）
-  duff = mix(duff, vec3(0.0128, 0.0152, 0.0074), 0.35 * smoothstep(0.15, 0.78, tMeso + 0.7 * tPatch + 0.5 * fLitter));
+  duff = mix(duff, vec3(0.0270, 0.0380, 0.0175), 0.45 * smoothstep(0.15, 0.78, tMeso + 0.7 * tPatch + 0.5 * fLitter));
   duff *= 1.0 + 0.16 * tMacro;
   tDuffCap = duff * 1.18; // 針葉や小枝の明るい粒でも腐植の 1.18 倍まで
   grass = mix(grass, duff, min(1.0, 2.5 * fFloor));
   // 樹冠の下は空が見えない。さらに λ12m の「木が混んで暗い溜まり」を作る
   // （一様に明るいと、いくら暗くしても砂丘の陰影に見える）
   float shade = smoothstep(-0.35, 0.55, tMeso + 0.6 * tPatch);
-  grass *= 1.0 - (0.16 + 0.22 * shade) * fFloor; // 暗さの大半は下の tCanopy（直達光を遮る）が持つ
+  grass *= 1.0 - (0.05 + 0.10 * shade) * fFloor; // 暗さは影担当の flip_sunOcclusion が持つ
   // 根元（植生マップ r = 草の密度。木を置いた texel は薄くしてある）ほどわずかに暗い
   grass *= 1.0 - 0.16 * fFloor * smoothstep(0.30, 0.02, tVeg.r);
   // 遠景の樹冠のざらつき（近景では草・幹が描くので出さない）
@@ -272,11 +271,6 @@ if (dirtM > 0.05 && tDist < 380.0) {
   dirt *= 1.0 + (0.35 * d6 + 0.20 * d15.x) * dFade;
   dirtN = d15.yz * (0.66 * 0.13) * dFade;
   // 雨裂は本当に急な斜面だけ。緩い岸の肩に出すと縦縞のコーデュロイになる（批評R4 7④）
-  float steepD = smoothstep(0.17, 0.30, tSlope) * (1.0 - smoothstep(120.0, 240.0, tDist)) * smoothstep(0.0, 25.0, tShore);
-  if (steepD > 0.02) {
-    float rill = 1.0 - abs(flip_gnoise(vec2(dot(tXZ, vec2(0.83, -0.55)) * 0.42, tH * 0.045) + 3.0));
-    dirt *= 1.0 - 0.40 * rill * rill * rill * steepD * dFade;
-  }
 }
 vec3 scree = vec3(0.19, 0.185, 0.175) * (0.85 + 0.3 * tMeso);
 vec3 rock = vec3(0.17, 0.155, 0.14) * (1.0 + 0.25 * tMacro);
@@ -468,6 +462,16 @@ tCol = mix(tCol, scree, screeM);
 tCol = mix(tCol, rock, rockM);
 tCol = mix(tCol, snow, snowM);
 tCol = mix(tCol, sand, sandM);
+// 中景（25m〜1.9km）の 2 段ノイズ。ここが空くと 100m 以遠の地面が「のっぺりした塗り」になる
+// （批評 R2 の 6 番から 4 ラウンド続けて指摘された箇所）。
+// λ36m と λ13m は焼いた場（tMeso / tPatch）の使い回しで無料、λ6m だけ 1 タップ引く。
+// 法線にも同じ勾配を入れて、曇天でも起伏として読めるようにする
+float midN = (1.0 - smoothstep(900.0, 1900.0, tDist)) * smoothstep(25.0, 70.0, tDist) * (1.0 - snowM) * (1.0 - uReflect);
+if (midN > 0.01) {
+  vec3 m6 = tn_gnoised(tXZ * 0.17 + 53.0);
+  tCol *= 1.0 + (0.35 * m6.x + 0.20 * tPatch + 0.12 * tMeso) * midN;
+  wN = normalize(wN - vec3(m6.y, 0.0, m6.z) * (0.17 * 0.34) * midN * gN.y);
+}
 float tRough = mix(0.92, 0.80, dirtM);
 tRough = mix(tRough, 0.99, fFloor); // 林床は完全なマット（腐植と針葉に艶は無い。斜めから見たときの照りを消す）
 tRough = mix(tRough, 0.85, screeM);
@@ -488,12 +492,12 @@ if (uWetness > 0.05) {
 // 谷筋の陰と空の見え方。
 // cavity は「窪みの底ほど暗い」。谷筋（tCav < 0.4）を強めに効かせ、尾根（> 0.6）は明るく残す
 float cavD = smoothstep(0.62, 0.16, tCav);           // 0 = 尾根・平ら, 1 = 谷底
-tCol *= 1.0 - 0.42 * cavD;
+tCol *= 1.0 - 0.28 * cavD;
 // 焼いた AO は空の照度にだけ掛かる。谷で効かせつつ 0.28 を下限に（影の中が真っ黒にならない）
-tAO = 0.28 + 0.72 * tAO * tAO * (1.0 - 0.45 * cavD);
+tAO = 0.40 + 0.60 * tAO * (1.0 - 0.35 * cavD); // 二乗はやめた（曇天では光の全部がここを通るので効きすぎる）
 // 樹冠は太陽だけでなく空も隠す。林床の明るさの大半は半球光なので、ここを落とさないと
 // いくら直達光を遮っても「日なたの砂」のままだった
-tAO *= 1.0 - 0.62 * fFloor;
+tAO *= 1.0 - 0.18 * fFloor; // 曇天は光がほぼ全部これなので、樹冠でここを落としすぎると地面が空の 3% になる
 // 山の影（地平角マップ）: 太陽と、夜だけ月
 float tSunVis = flip_terrainSunVis(tXZ, uSunDir) * tCanopy;
 float tMoonVis = ((uMoonColor.r + uMoonColor.g + uMoonColor.b > 0.0005) ? flip_terrainSunVis(tXZ, uMoonDir) : 1.0) * tCanopy;
@@ -514,12 +518,11 @@ reflectedLight.indirectSpecular *= tAO;
 // 林床（落ち葉と腐植）は光を内部で散らす多孔質なので、面としての鏡面反射をほとんど返さない。
 // 斜めから見た林床に GGX の照りが残ると、アルベドを真っ黒にしても sRGB 110 の明るさが残る
 // （実測。批評R2〜R4 の「明るい砂」の主因はこれだった）
-reflectedLight.directSpecular *= 1.0 - 0.98 * fFloor;
-reflectedLight.indirectSpecular *= 1.0 - 0.98 * fFloor;
+reflectedLight.directSpecular *= 1.0 - 0.55 * fFloor;
+reflectedLight.indirectSpecular *= 1.0 - 0.35 * fFloor; // 曇天は環境の鏡面も光量の一部。落としすぎない
 // 樹冠が直達光を遮る（木漏れ日）。影担当の flip_sunOcclusion は camDist 25m から効くので、
 // それより手前の林床には林の遮蔽が一切かかっていなかった。ここで掛けると地形だけに閉じる。
 // tCanopy は 2.4m の斑なので、光の差す所は明るいまま残る
-reflectedLight.directDiffuse *= mix(1.0, tCanopy, 0.35); // 影担当の flip_sunOcclusion と二重にならない程度に
 `;
 
 /**
