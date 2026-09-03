@@ -44,6 +44,7 @@ export default function WorldView({ sourceLines }: { sourceLines: number | null 
   const [keepLabels, setKeepLabels] = useState(false);
   const [showStats, setShowStats] = useState(false);
   const [about, setAbout] = useState(false);
+  const [board, setBoard] = useState(false); // 黒板をぜんぶ見る
   const [lab, setLab] = useState(false);
   const [locked, setLocked] = useState(false);
   const [grabbing, setGrabbing] = useState(false);
@@ -54,8 +55,10 @@ export default function WorldView({ sourceLines }: { sourceLines: number | null 
   const [gyro, setGyro] = useState<"none" | "off" | "on">("none");
   const phaseRef = useRef<Phase>("loading");
   const aboutRef = useRef(false);
+  const boardRef = useRef(false);
   phaseRef.current = phase;
   aboutRef.current = about;
+  boardRef.current = board;
 
   // 世界を作る
   useEffect(() => {
@@ -170,6 +173,7 @@ export default function WorldView({ sourceLines }: { sourceLines: number | null 
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
       if (aboutRef.current) return; // About は自分で Esc を扱う
+      if (boardRef.current) return; // 黒板を読んでいる間は入場のキーを効かせない
       if (e.key === "?") {
         openAbout();
         return;
@@ -252,10 +256,12 @@ export default function WorldView({ sourceLines }: { sourceLines: number | null 
     <div className="world">
       <canvas ref={canvasRef} className={grabbing ? "grabbing" : ""} />
 
-      {!landingGone && <Blackboard phase={phase} isMobile={isMobile} />}
+      {!landingGone && (
+        <Blackboard phase={phase} isMobile={isMobile} full={board} onClose={() => setBoard(false)} />
+      )}
 
       {!landingGone && (
-        <Landing phase={phase} progress={progress} heightmapRes={heightmapRes} isMobile={isMobile} onEnter={enter} onAbout={openAbout} />
+        <Landing phase={phase} progress={progress} heightmapRes={heightmapRes} isMobile={isMobile} onEnter={enter} onAbout={openAbout} onBoard={() => setBoard(true)} />
       )}
 
       {overlays && (
