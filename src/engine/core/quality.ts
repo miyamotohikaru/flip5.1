@@ -36,7 +36,7 @@ export const QUALITY: Record<QualityTier, QualitySettings> = {
     targetFrameMs: 33.3,
   },
   mid: {
-    tier: "mid", renderScale: 0.85, maxPixelRatio: 2, msaaSamples: 2, heightmapRes: 1024,
+    tier: "mid", renderScale: 0.85, maxPixelRatio: 2, msaaSamples: 2, heightmapRes: 1536,
     shadowMapSize: 2048, shadowCascades: 3, shadowMaxFar: 220, grassCount: 40000, grassRadius: 55,
     treeDistance: 1500, cloudScale: 0.35, cloudSteps: 40, reflectionScale: 0.4,
     postFx: { bloom: true, godrays: true, ao: false, dof: false, smaa: true },

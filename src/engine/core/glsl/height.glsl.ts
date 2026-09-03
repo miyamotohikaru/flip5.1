@@ -60,7 +60,7 @@ float flip_terrainSunVis(vec2 xz, vec3 dir){
   float h1 = flip_horizonPick(a, b, mod(i0 + 1.0, 8.0));
   float horizon = mix(h0, h1, f) * 1.5707963;
   float elev = asin(clamp(dir.y, -1.0, 1.0));
-  return smoothstep(horizon - 0.07, horizon + 0.03, elev);
+  return smoothstep(horizon - 0.13, horizon + 0.07, elev); // 幅を 5.7° → 11.5°（1km 先の稜線の半影はこれくらい広い。地平角マップの段差も隠れる）
 }
 #endif
 `;
