@@ -45,6 +45,8 @@ uniform vec2 uAutoRange;
 uniform float uWarmth;
 uniform float uSaturation;
 uniform float uContrast;
+uniform float uPivot;
+uniform float uLift;
 uniform vec3 uShadowTint;
 uniform vec3 uHighlightTint;
 uniform vec2 uSplit;
@@ -162,10 +164,18 @@ vec3 gradeColor(vec3 c){
   float hw = smoothstep(0.30, 1.0, l);
   c *= mix(vec3(1.0), uShadowTint, sw * uSplit.x);
   c *= mix(vec3(1.0), uHighlightTint, hw * uSplit.y);
-  // コントラスト（ガンマ空間。軸は 0.42＝屋外の中間調。0.5 だと中間まで一緒に沈んで、締まるのでなく暗くなるだけ）
+  // コントラスト（ガンマ空間、軸 = uPivot ＝ 屋外の中間調）。
+  // 直線の (g-p)*C+p は C>1 のとき g < p-p/C を 0 に切り落とす（軸 0.42・C 1.135 なら g<0.050 が全部黒）。
+  // ラウンド2で「下 1/3 が情報ゼロ」になった原因はこれ。軸まわりの「べき」に変えると
+  // 0 と 1 は動かず、中間だけ傾きが立つ＝暗部にも白側にも階調が残る。
   vec3 g = pow(max(c, vec3(0.0)), vec3(1.0 / 2.2));
-  g = (g - 0.42) * uContrast + 0.42;
-  g = mix(g, g * g * (3.0 - 2.0 * g), 0.12);
+  vec3 up = step(vec3(uPivot), g);
+  // 軸までの距離を 0..1 に正規化 → 1 回の pow で上下ともまかなう
+  vec3 t = mix(g / uPivot, (1.0 - g) / (1.0 - uPivot), up);
+  vec3 r = pow(clamp(t, 0.0, 1.0), vec3(uContrast));
+  g = mix(uPivot * r, 1.0 - (1.0 - uPivot) * r, up);
+  // 影に空の環境光を残す（黒潰れ止め）。g が小さいところだけ持ち上げ、中間調には触らない
+  g += uLift * (1.0 - smoothstep(vec3(0.0), vec3(0.30), g));
   c = pow(clamp(g, 0.0, 1.0), vec3(2.2));
   // 彩度
   l = post_luma(c);
@@ -272,8 +282,14 @@ void main(){
   float bs = uBloomStrength * (1.0 - 0.7 * fm);
   c = mix(c, bloom, bs);
 
-  // ゴッドレイ
-  float god = texture2D(tGod, uv).r;
+  // ゴッドレイ。1/4 解像度で、放射ブラーの開始位置を IGN でずらしてある。
+  // そのジッタが ×4 に拡大されて平坦な空に斜めの網目（周期 9〜13px）として見えるので、
+  // 1/4 テクセルの 2×2 を平均して均す（批評 R2 の新規破綻 11）
+  vec2 gt = uTexel * 2.0;
+  float god = 0.25 * (texture2D(tGod, uv + vec2( gt.x,  gt.y)).r
+                    + texture2D(tGod, uv + vec2(-gt.x,  gt.y)).r
+                    + texture2D(tGod, uv + vec2( gt.x, -gt.y)).r
+                    + texture2D(tGod, uv + vec2(-gt.x, -gt.y)).r);
   c += uSunColorN * god * uGodStrength;
 
   // レンズフレア（遮蔽は太陽位置のマスクを見る）
@@ -371,6 +387,10 @@ export function gradeUniforms(): Record<string, THREE.IUniform> {
     uWarmth: { value: 0 },
     uSaturation: { value: 0.96 },
     uContrast: { value: 1.04 },
+    /** コントラストの軸（ガンマ空間）。屋外の中間調 */
+    uPivot: { value: 0.42 },
+    /** 暗部の持ち上げ（ガンマ空間）。影に空の環境光を残す */
+    uLift: { value: 0.03 },
     uShadowTint: { value: new THREE.Vector3(0.92, 0.96, 1.1) },
     uHighlightTint: { value: new THREE.Vector3(1.06, 1.01, 0.94) },
     uSplit: { value: new THREE.Vector2(0.35, 0.35) },

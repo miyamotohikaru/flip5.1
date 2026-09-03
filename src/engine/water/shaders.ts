@@ -249,10 +249,15 @@ void main(){
     float env = smoothstep(0.0, 0.6, vDepthA) * (1.0 - smoothstep(4.0, 30.0, vDepthA));
     float amp = (0.012 + 0.05 * smoothstep(1.0, 10.0, wind)) * env;
     float k = 6.2831853 / 9.0;
-    slope += -amp * k * sin(sw.y) * vShoreDir * (1.0 - smoothstep(40.0, 140.0, dist));
+    // 寄せ波は波長 9m しかないので、浅い視線で 1 画素が波長に近づくと
+    // 「等間隔の横縞」に潰れる（夜の湖面のバンディング）。画素の足跡で消す
+    slope += -amp * k * sin(sw.y) * vShoreDir
+           * (1.0 - smoothstep(40.0, 140.0, dist)) * (1.0 - smoothstep(0.30, 1.4, fp));
   }
-  // 雨の波紋（法線のリング）。1 画素より細かくなったら描かず、粗さに預ける
-  float rainNear = uRain * (1.0 - smoothstep(0.05, 0.40, fp)) * (1.0 - 0.6 * smoothstep(3.0, 9.0, wind));
+  // 雨の波紋（法線のリング）。輪の波長は 10cm しかないので、1 画素で解けなくなったら描かない
+  // （描くと 1 画素ごとに法線が暴れ、スペキュラが 2px の市松ノイズになる）。約 10m 以遠で切れる
+  float ringRes = 1.0 - smoothstep(0.02, 0.12, fp);        // 1 = 輪が解ける
+  float rainNear = uRain * ringRes * (1.0 - 0.6 * smoothstep(3.0, 9.0, wind));
   if (rainNear > 0.005) {
     int layers = int(uWaterB.z);
     slope += water_rain(vWorld.xz, uTime, uRain, layers) * rainNear;
@@ -263,14 +268,13 @@ void main(){
   // 岸ぎわほど静か。smoothstep で切ると、深さが一定の所に「まっすぐな帯（楔）」の縁が出るので指数で
   float calmShore = 1.0 - 0.6 * exp(-max(vDepthA, 0.0) / 2.2);
   float mssCap = (0.0011 + 0.0021 * wind) * mix(0.25, 1.15, vGust) * calmShore;
-  float varCap = mssCap * smoothstep(0.004, 0.05, fp);
-  // 画素の中で法線が振れている分（Kaplanyan の specular AA）。白い輝点＝デッドピクセルを消す
-  vec3 dNx = dFdx(N), dNy = dFdy(N);
-  float varAA = min(0.5 * (dot(dNx, dNx) + dot(dNy, dNy)), 0.05);
-  // 雨で荒れる分（リングが見えているところは二重に数えない）
-  float varRain = uRain * 0.010 * (1.0 - 0.85 * rainNear);
+  float varCap = mssCap * smoothstep(0.002, 0.02, fp);
+  // 解けなくなった雨の輪の傾きの分散（振幅 4mm × 波数 62.8 rad/m を面積で均したもの）。
+  // dFdx(N) で測ると値が 2×2 画素の塊ごとに跳ぶ（微分は quad 単位）ので、市松ノイズの元になる。
+  // 解析的に、しかも ringRes と連続につながる形で足す
+  float varRing = 0.0075 * uRain * (1.0 - ringRes) * calmShore;
   // 粗さ²
-  float a2 = 0.0009 + var + varCap + varAA + varRain;
+  float a2 = 0.0009 + var + varCap + varRing;
   float sigma = sqrt(0.5 * var + 0.00005);
 
   vec3 sunL = uSunColor;
@@ -339,11 +343,17 @@ void main(){
     // 一方、細かいさざ波（varCap）は遠いほど像を崩す ＝ 遠方が鏡そのものにならない
     // （風 3m/s・300m 先で σ ≈ 0.06。近くは像の形が残る）
     float farMix = 0.18 + 0.55 * smoothstep(60.0, 320.0, dist);
-    float sigmaR = sqrt(0.30 * var + farMix * varCap + 0.5 * varAA + 0.35 * varRain + 0.00004);
+    float sigmaR = sqrt(0.30 * var + farMix * varCap + 0.30 * varRing + 0.00004);
     float pixAng = 2.0 * uWaterB.y / uReflSize.y;
     float blurPx = 2.0 * sigmaR / pixAng;
-    float lod = clamp(log2(max(blurPx * max(sinDown, 0.06), 1.0)), 0.0, uWaterA.y);
-    float spread = min(2.0 * sigmaR, 0.15);
+    // タップ 5 本の隙間をミップで埋める。埋めないと明るい物が「等間隔の横縞」に分裂する
+    // （夜の湖面のバンディング。隙間 = 0.5·spread、その 0.45 倍をならす）
+    float tapGapPx = 0.5 * min(2.0 * sigmaR, 0.10) / pixAng;
+    float lod = clamp(max(log2(max(blurPx * max(sinDown, 0.06), 1.0)),
+                          log2(max(tapGapPx * 0.45, 1.0))), 0.0, uWaterA.y);
+    // 5 タップの縦ずらしを広げすぎると、映った山の形まで平らな灰色に潰れる（雨・曇天で
+    // 「映り込みが消えた」に見える）。広い方のぼけはミップ（lod）に任せ、ずらしは 0.10 rad まで
+    float spread = min(2.0 * sigmaR, 0.10);
     // 「映る物までの距離」の見当。平らな水面なら鏡像カメラは水面上の点で主カメラと一致するので、
     // L をいくつにしても像は自分の画素（suv）に戻る。L は「波で像がどれだけずれるか」だけを決める。
     // 以前の 6·dist+10 は遠くで像が RT の外へ飛び、clamp した縁が引き伸ばされて継ぎ目になっていた
