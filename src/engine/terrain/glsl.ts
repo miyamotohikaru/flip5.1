@@ -165,8 +165,10 @@ float snowM = smoothstep(snowLine, snowLine + 40.0, tH) * (1.0 - smoothstep(0.21
 // ノイズは水際の帯でだけ引く（全画素で 3 回引くと重い）
 float bn1 = 0.0, bn2 = 0.0, bn3 = 0.0, sandM = 0.0, wetBand = 0.0;
 if (tShore < 9.0 && tAbove < 3.5) { // 砂は tShore ≤ 6.5m・水面 +2.75m まで。範囲外でノイズを引かない
-  bn1 = flip_gnoise(tXZ * 0.55 + 5.0);   // λ ≈ 1.8 m（縁のぎざぎざ）
-  bn2 = flip_gnoise(tXZ * 0.17 + 11.0);  // λ ≈ 6 m（幅のうねり。25m だと遠景で幅が一定に見える）
+  // 岸の帯の形を決めるノイズ。波長ごとに別の距離で消す。λ1.8m を 1.5km まで残すと、
+  // マスクの縁が 1 画素より細かく揺れて「一方向へ引き伸ばした彗星形のにじみ」になる
+  bn1 = flip_gnoise(tXZ * 0.55 + 5.0) * (1.0 - smoothstep(45.0, 110.0, tDist));   // λ ≈ 1.8 m（縁のぎざぎざ）
+  bn2 = flip_gnoise(tXZ * 0.17 + 11.0) * (1.0 - smoothstep(150.0, 380.0, tDist)); // λ ≈ 6 m（幅のうねり）
   bn3 = flip_gnoise(tXZ * 0.055 + 17.0); // λ ≈ 18 m（浜と草の岸の入れ替わり）
   // 幅 1〜3m を主に λ6m で揺らす。λ36m（焼いた場 tMeso）で「浜のある入り江」と
   // 「草が水に落ちる岸」を数十 m 単位で切り替える（帯が途切れないと「プールの縁」になる）
@@ -182,13 +184,20 @@ if (tShore < 9.0 && tAbove < 3.5) { // 砂は tShore ≤ 6.5m・水面 +2.75m �
   // 幅 1〜3m の帯は 150m 先で 1px 未満。そのまま残すと「岸をなぞった 1 本の線」になるので薄める
   float shoreFar = 1.0 - 0.6 * smoothstep(90.0, 320.0, tDist);
   sandM *= shoreFar;
-  wetBand *= shoreFar;
   // 水際の濡れ: 高さで一律に切ると等高線の帯（＝プールの縁）になる。幅を 0.1〜0.9m に散らし、
   // 砂の帯とは別の位相にして「濡れ・砂利・草」の 3 本の平行線ができないようにする
   float wetTop = 0.14 + 0.75 * smoothstep(-0.7, 0.7, bn1 + 0.6 * bn2 - 0.4 * bn3);
   wetBand = 1.0 - smoothstep(-0.04, wetTop, tAbove);
   // 高さだけで切ると等高線の帯になるので、水際からの「距離」でも減衰させる
   wetBand *= 1.0 - smoothstep(0.0, 1.4 + 1.8 * (bn2 + 0.5 * bn1 + 0.5), tShore);
+  // 濡れの帯は幅 1m 前後。1.5km 先では 1 画素を大きく下回り、
+  // 「一方向に引き伸ばした彗星形のにじみ」として出る（批評R4〜R6 の 2 ラウンド × 判定の正体）。
+  // 砂の濡れを切ると帯の std 8.56 → 6.75、tCol 側も切ると 7.04（sand を定数にした下限が 6.31）
+  // 濡れの帯は幅 1m 前後の高コントラスト（0.52 倍）の細い帯。浅い角度で見ると
+  // 縁が 1〜2 画素を切って「一方向へ引き伸ばした彗星形のにじみ」になる（批評R4〜R6 の × 判定）。
+  // 30m から縁のゆらぎを止め、180m で帯そのものを消す
+  wetBand *= 1.0 - smoothstep(70.0, 180.0, tDist);
+  wetBand = mix(wetBand, smoothstep(0.9, 0.15, tShore) * smoothstep(-0.04, 0.7, -tAbove + 0.7), smoothstep(25.0, 60.0, tDist));
 }
 // 林の密度は植生マップ（G）＝木を実際に置いた密度を正とする。
 // 地形の焼いた場（tF.b）は別の乱数なので、それで判断すると「木の下なのに草原の色」になる。
@@ -313,16 +322,21 @@ if (snowM > 0.001) {
 // 砂利まじりの砂: 1〜3m の濃淡と、水際に近いほど暗く湿った砂利
 vec3 sand = vec3(0.115, 0.113, 0.108) * (1.0 + 0.18 * tMeso); // 高山湖の岸は灰色の砂利。暖色だと濡れた帯が赤紫にかぶる（水担当の切り分け）
 if (sandM > 0.001) {
-  sand *= 0.8 + 0.4 * flip_vnoise(tXZ * 0.7 + 4.0);
-  sand = mix(sand, vec3(0.16, 0.16, 0.15), 0.5 * smoothstep(0.55, 0.8, flip_vnoise(tXZ * 2.5 + 1.0)) * (1.0 - smoothstep(0.0, 6.0, tShore)));
+  // 砂利の粒は波長ごとに別の距離で消す。λ1.4m と λ0.4m を 1.5km 先まで残すと、
+  // 1 画素の足跡が細長い浅い角度で「一方向へ引き伸ばした彗星形のにじみ」になる
+  // （批評R4〜R6 の「岸のにじみ」の正体。std 11.41 → sand を定数にすると 6.31 で確定した）
+  float sd14 = 1.0 - smoothstep(60.0, 140.0, tDist);   // λ1.4m は 140m まで
+  float sd04 = 1.0 - smoothstep(18.0, 45.0, tDist);    // λ0.4m は 45m まで
+  sand *= 1.0 + (0.4 * flip_vnoise(tXZ * 0.7 + 4.0) - 0.2) * sd14;
+  if (sd04 > 0.01) sand = mix(sand, vec3(0.16, 0.16, 0.15), 0.5 * smoothstep(0.55, 0.8, flip_vnoise(tXZ * 2.5 + 1.0)) * (1.0 - smoothstep(0.0, 6.0, tShore)) * sd04);
   // 水際の砂利は濡れて暗い（乾いた砂 → 濡れた砂 → 湖底 がつながる）
-  sand = mix(sand, sand * 0.52, wetBand);
+  sand = mix(sand, sand * 0.68, wetBand); // 0.52 は細い帯で明暗差が強すぎ、浅い角度でにじみになる
   // 湖底: 深いほど暗く、沈殿・藻のむらを入れる（一様に明るい灰色は「プールの底」に見える）。
   // 浅瀬の棚は遠くからだと幅 10〜20px の一様な淡い帯になり、それ自体が「プールの縁」になるので、
   // λ2.4m の礫と λ22m の藻・沈泥を 400m 先まで残して崩す
   if (tAbove < 0.1) {
     float dep = -tAbove;
-    float sFar = 1.0 - 0.45 * smoothstep(160.0, 420.0, tDist);
+    float sFar = 1.0 - smoothstep(90.0, 220.0, tDist); // λ2.4m は 220m まで（それ以遠は 1px を切る）
     float g1 = flip_vnoise(tXZ * 0.42 + 61.0);
     sand *= (0.74 + 0.52 * g1 + 0.30 * tMeso + 0.20 * tPatch) * sFar + (1.0 - sFar);
     sand = mix(sand, vec3(0.034, 0.050, 0.030), 0.55 * smoothstep(0.35, 0.88, tPatch + 0.55 * g1 + 0.3 * tMeso) * sFar);
@@ -488,7 +502,7 @@ tRough = mix(tRough, 0.80, snowM); // 0.55 は艶が出すぎて「メレンゲ�
 tRough = mix(tRough, 0.80, sandM);
 // 水際の濡れ・雨の濡れ・水たまり
 float wet = max(wetBand, uWetness * (1.0 - snowM));
-tCol *= 1.0 - 0.32 * wet; // 0.42 は水際に一定幅の暗い帯を作っていた
+tCol *= 1.0 - mix(0.32, 0.18, smoothstep(25.0, 90.0, tDist)) * wet;
 tRough = mix(tRough, 0.32, wet);
 if (uWetness > 0.05) {
   float pud = smoothstep(0.58, 0.78, flip_fbm(tXZ * 0.11 + 1.0, 2) * 0.5 + 0.5 + 0.35 * (0.5 - tCav));
@@ -569,7 +583,7 @@ if (uFlipRadius > 0.001) {
   fc = fc * aer.a + aer.rgb * 0.3;
   gl_FragColor.rgb = mix(gl_FragColor.rgb, fc, fm);
 }
-if ((uTerrainDebug > 0.5 && uTerrainDebug < 5.5) || (uTerrainDebug > 6.5 && uTerrainDebug < 8.5) || uTerrainDebug > 11.5) {
+if ((uTerrainDebug > 0.5 && uTerrainDebug < 5.5) || (uTerrainDebug > 6.5 && uTerrainDebug < 8.5) || (uTerrainDebug > 11.5 && uTerrainDebug < 12.5)) {
   vec3 dbg = vec3(tSunVis);
   if (uTerrainDebug > 1.5) dbg = vec3(tAO);
   if (uTerrainDebug > 2.5) dbg = wN * 0.5 + 0.5;
@@ -577,7 +591,7 @@ if ((uTerrainDebug > 0.5 && uTerrainDebug < 5.5) || (uTerrainDebug > 6.5 && uTer
   if (uTerrainDebug > 4.5) dbg = texture2D(uTerrainHorizonA, tUv).rgb;
   if (uTerrainDebug > 6.5 && uTerrainDebug < 7.5) dbg = vec3(fFloor, dirtM, screeM);
   if (uTerrainDebug > 7.5 && uTerrainDebug < 8.5) dbg = tCol * 6.0; // 地色（照明抜き）を 6 倍で
-  if (uTerrainDebug > 11.5) dbg = vec3(sandM, dirtM, screeM) * 2.0; // 12: 岸まわりの材質マスク（砂/土/ガレ）
+  if (uTerrainDebug > 11.5 && uTerrainDebug < 12.5) dbg = vec3(sandM, dirtM, screeM) * 2.0; // 12: 岸まわりの材質マスク（砂/土/ガレ）
   gl_FragColor.rgb = dbg * 0.5;
 }
 `;
