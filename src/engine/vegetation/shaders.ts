@@ -71,7 +71,11 @@ float vegShadow = 1.0;
 {
   // 太陽（CSM の各カスケードは同じ向き・同じ色なので 0 番だけ見る）
   vec3 L = directionalLights[ 0 ].direction;
-  vec3 sunCol = directionalLights[ 0 ].color * vegShadow;
+  // 遠景の太陽の遮蔽（山の影＋林が落とす帯）。地形・木・岩は core/lighting.ts が
+  // lights_fragment_begin に差し込んでいるが、草はこのチャンクを自前で置き換えているのでここで掛ける
+  vec3 vegSunWP = uCamPos + transpose( mat3( viewMatrix ) ) * geometryPosition;
+  float vegSunOcc = flip_sunOcclusion( vegSunWP, uSunDir, length( vegSunWP - uCamPos ) );
+  vec3 sunCol = directionalLights[ 0 ].color * vegShadow * vegSunOcc;
   float NdotL = dot( geometryNormal, L );
   float wrap = 0.4;
   float diff = clamp( ( NdotL + wrap ) / ( 1.0 + wrap ), 0.0, 1.0 );

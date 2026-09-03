@@ -12,6 +12,10 @@
 //   - 半影はカスケードが遠いほどワールドで広い（遠景の影は輪郭を持たない方が自然で、テクセルも大きい）。
 //   - 法線オフセット（normalBias）は「PCF がテクセルを何枚舐めるか」に比例させる。足りないと縞状のアクネ、
 //     大きすぎると影が足元から浮く（peter-panning）ので、半径 + 定数の 0.8 倍に留めて上限を切る。
+//   - CSM が届く外（600m 以遠）は、シャドウマップの代わりに `flip_sunOcclusion`（core/glsl/height.glsl.ts）
+//     ＝「地形の地平角＋林の天蓋のレイマーチ」で太陽を遮る。CSM が差し替えた lights_fragment_begin に
+//     さらに差し込むので、それを使う全マテリアル（地形・木・岩・インポスター）に一度に効く
+//     （草だけは自前の lights_fragment_begin なので vegetation/shaders.ts 側で同じものを掛けている）。
 //   - 影の中は真っ黒にしない。太陽（directLight）だけを影で消し、半球光（hemi）と環境マップ
 //     （scene.environment）はそのまま残す＝日陰は「空の色」で満たされる。
 //   - カスケードの割り方は CSM 既定の practical をやめて、**25m を起点にした等比**にする。
@@ -103,6 +107,38 @@ function geometricSplits(cascades: number, _near: number, far: number, target: n
   target.push(1);
 }
 
+/** CSM が差し替えた lights_fragment_begin（遠景の遮蔽を足す前）。二度目の差し替えで壊れないよう覚える */
+let sunOccChunkOriginal: string | null = null;
+
+/**
+ * 太陽に「遠景の遮蔽」（山の影＋林が落とす帯）を掛ける。
+ * CSM が差し替えた `lights_fragment_begin` にさらに差し込むことで、
+ * それを使う全マテリアル（地形・木・岩・インポスター）に一度に効く。
+ * 実体は `flip_sunOcclusion`（core/glsl/height.glsl.ts）。呼ぶ側は `#include <flip_height>` と
+ * `#include <flip_atmosphere>`（uCamPos / uSunDir）を持っていること。
+ * three.js / CSM の書き方が変わったら黙って何もしない（画は出る）。
+ */
+function installSunOcclusion() {
+  const chunks = THREE.ShaderChunk as unknown as Record<string, string>;
+  if (sunOccChunkOriginal === null) sunOccChunkOriginal = chunks.lights_fragment_begin;
+  const src = sunOccChunkOriginal;
+  const decl = "vec3 geometryPosition = - vViewPosition;";
+  const marker = "#if ( NUM_DIR_LIGHTS > NUM_DIR_LIGHT_SHADOWS)";
+  const call = "getDirectionalLightInfo( directionalLight, directLight );";
+  const idx = src.indexOf(marker);
+  if (!src.includes("USE_CSM") || idx < 0 || !src.includes(decl) || !src.includes(call)) return;
+  const head = `${decl}
+#if defined( USE_CSM ) && defined( CSM_CASCADES )
+  // viewMatrix は回転＋平行移動なので、逆回転は転置で足りる
+  vec3 flipSunWP = uCamPos + transpose( mat3( viewMatrix ) ) * geometryPosition;
+  float flipSunOcc = flip_sunOcclusion( flipSunWP, uSunDir, length( flipSunWP - uCamPos ) );
+#endif`;
+  let out = src.replace(decl, head);
+  const at = out.indexOf(marker);
+  out = out.slice(0, at).split(call).join(`${call} directLight.color *= flipSunOcc;`) + out.slice(at);
+  chunks.lights_fragment_begin = out;
+}
+
 export class Lighting {
   csm: CSM;
   hemi: THREE.HemisphereLight;
@@ -129,6 +165,8 @@ export class Lighting {
       shadowBias: -0.00015,
       lightMargin: 250,
     });
+    // CSM が lights_fragment_begin を差し替えた後に、遠景の遮蔽を足す
+    installSunOcclusion();
     // カスケードの境目を重ねて混ぜる（跳ばない）。重なり幅の分だけ影の範囲も広がる
     this.csm.fade = true;
     for (const l of this.csm.lights) {
@@ -156,6 +194,8 @@ export class Lighting {
     }
     this.csm.update();
     this.updateShadowParams();
+    // 遠景の遮蔽が読む植生マップ（vegetation が焼いた後に入る。名前が違うのは二重宣言を避けるため）
+    env.uniforms.uSunVeg.value = env.uniforms.uVegMap.value;
     this.hemi.color.copy(env.skyAmbient);
     this.hemi.groundColor.copy(env.groundAmbient);
     // 日陰を満たすのは半球光と環境マップ（sky が scene.environmentIntensity で半分持つ）。
