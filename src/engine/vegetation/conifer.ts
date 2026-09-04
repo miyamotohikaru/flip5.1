@@ -152,6 +152,9 @@ export function buildConifer(v: TreeVariant, lod: 0 | 1): TreeGeo {
       // 樹冠が円錐になった上の方で殻だけが外へはみ出して「緑の芯」が見える。
       // 半径は 0.14 → 0.34。カードを小さくして樹冠が薄くなったぶん、
       // 葉と葉の 1px の隙間から空が抜ける（＝ピンホール）のを内側の暗い面で塞ぐ
+      // 半径は 0.14 → 0.34。カードを小さくして樹冠が薄くなったぶん、
+      // 葉と葉の 1px の隙間から空が抜ける（＝ピンホール）のを内側の暗い面で塞ぐ。
+      // **焼き込みでは逆に細らせる**（下の VEG_BAKE を参照）
       const rr = v.lmax * H * (1 - 0.97 * Math.pow(u, 1.02)) * 0.34 * (1 - Math.pow(u, 6));
       for (let k = 0; k <= shellSeg; k++) {
         const a = (k / shellSeg) * Math.PI * 2;
@@ -401,7 +404,7 @@ void veg_tree(out vec3 p, out vec3 n){
   // 遠いカードだけアルファを持ち上げる（＝しきい値を 0.30 → 0.19 に下げるのと同じ）。
   // カードとカードの間に残る 1〜2px の空の穴が塞がる。7m 以内は素通しなので
   // 近景が「板」に戻ることはない（批評 R6 のピンホール代案 1）
-  vAlphaK = 1.0 + 0.90 * smoothstep(7.0, 40.0, dist);
+  vAlphaK = 1.0 + 1.15 * smoothstep(7.0, 40.0, dist);
   #ifdef VEG_BAKE
   vAlphaK = 1.0;
   #endif
@@ -435,10 +438,17 @@ void veg_tree(out vec3 p, out vec3 n){
     return;
   }
   vec3 lp = position * mix(1.0, 0.92, backdrop);
+  // 樹冠の内側の殻は**遠いほど太らせる**。近景で太いと「のっぺりした緑の壁」に見え、
+  // 遠景で細いと葉と葉の 1px の隙間から空が抜けて白い点（ピンホール）になる
+  #ifndef VEG_BAKE
+  if (aData.x > 1.5) lp = aAxis + (lp - aAxis) * mix(0.55, 1.60, smoothstep(9.0, 18.0, dist));
+  #endif
   #ifdef VEG_BAKE
-  // 焼き込みのときだけ殻を 2.4 倍に太らせる。150m ではカードの隙間から空が抜けるほうが
-  // ずっと目立つので、樹冠の内側を葉の色で埋める（輪郭はカードが決めるので変わらない）
-  if (aData.x > 1.5) lp = aAxis + (lp - aAxis) * 2.4;
+  // 焼き込みのときは殻を**細らせる**。殻は 8 面のなめらかな円錐なので、
+  // 枝の水平の届き（0.62〜0.87×L）に並ぶ太さで焼くと、殻が輪郭を決めてしまい、
+  // 遠景の木が**縁のなめらかな三角形（クリスマスツリーの型抜き）**になる。
+  // 輪郭はカードが決め、殻は内側を埋めるだけにする
+  if (aData.x > 1.5) lp = aAxis + (lp - aAxis) * 1.4;
   #endif
   float hN = clamp(lp.y / uTreeH, 0.0, 1.0);
   vec2 wd = veg_windDir();

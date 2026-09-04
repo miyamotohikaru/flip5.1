@@ -55,7 +55,12 @@ export class ImpostorAtlas {
     for (const g of geos) this.frames.push({ W: g.radius * 2.32, Hf: g.topY + g.H * 0.085, below: g.H * 0.04 });
   }
 
-  /** アルファの穴を 1px 膨張で塞ぐ（元の RT に書き戻すので、テクスチャ参照は変わらない）。 */
+  /**
+   * アルファの**内側の穴だけ**を塞ぐ（モルフォロジーのクロージング: 膨張 3 回 → 収縮 2 回）。
+   * 膨張だけだと輪郭ごと太って、150m の木が「緑のマインクラフト」になる（批評 R6 の 2 位）。
+   * 収縮で輪郭を戻すと、**外形はそのまま・枝と枝の 1〜2px の隙間だけが埋まる**。
+   * 元の RT に書き戻すので、テクスチャ参照は変わらない。
+   */
   private dilateAlpha(renderer: THREE.WebGLRenderer, targets: THREE.WebGLRenderTarget[]) {
     const w = targets[0].width, h = targets[0].height;
     const tmp = new THREE.WebGLRenderTarget(w, h, {
@@ -67,6 +72,7 @@ export class ImpostorAtlas {
       uniforms: {
         uTex: { value: null }, uTexel: { value: new THREE.Vector2(1 / w, 1 / h) },
         uCells: { value: new THREE.Vector2(IMP_AZ * this.geos.length, IMP_ROWS) },
+        uErode: { value: 0 },
       },
       vertexShader: DILATE_SHADER.vertexShader,
       fragmentShader: DILATE_SHADER.fragmentShader,
@@ -79,11 +85,13 @@ export class ImpostorAtlas {
     const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     renderer.setScissorTest(false);
     renderer.setViewport(0, 0, w / renderer.getPixelRatio(), h / renderer.getPixelRatio());
-    // 1 往復＝ 1px 膨張。2 往復（2px）だと 3x3 の最大値フィルタが 2 回かかって、
-    // 孤立した針が 5x5 の四角いブロックに育ち、150m の木が「緑のマインクラフト」になる
-    // （批評 R6 の 2 位）。樹冠の内側は焼き込み時の殻が埋めるので、もう太らせる必要はない
+    // 膨張 4 回 → 収縮 3 回。差し引き 1px だけ外形が太り、内側の 3px までの穴が埋まる。
+    // 膨張だけを 2 回かけると孤立した針が 5x5 のブロックに育つ（批評 R6 の 2 位）ので、
+    // 必ず収縮で戻すこと
+    const passes: number[] = [0, 0, 0, 0, 1, 1, 1];
     for (const rt of targets) {
-      for (let it = 0; it < 1; it++) {
+      for (const erode of passes) {
+        mat.uniforms.uErode.value = erode;
         mat.uniforms.uTex.value = rt.texture;
         renderer.setRenderTarget(tmp);
         renderer.render(sc, cam);
@@ -92,6 +100,7 @@ export class ImpostorAtlas {
         renderer.render(sc, cam);
       }
     }
+    mat.uniforms.uErode.value = 0;
     tmp.dispose();
     mat.dispose();
     quad.geometry.dispose();
@@ -200,6 +209,7 @@ const DILATE_SHADER = {
     uniform sampler2D uTex;
     uniform vec2 uTexel;
     uniform vec2 uCells;   // アトラスの列数・行数
+    uniform float uErode;  // 0 = 膨張（3x3 の最大） / 1 = 収縮（3x3 の最小）
     varying vec2 vUvD;
     void main(){
       // **コマの外へはみ出して読まない**。隣のコマ（別の方位・別の仰角の木）の
@@ -208,15 +218,20 @@ const DILATE_SHADER = {
       vec2 ci = floor(vUvD * uCells);
       vec2 lo = ci * cs + 0.5 * uTexel;
       vec2 hi = (ci + 1.0) * cs - 0.5 * uTexel;
-      vec4 best = texture2D(uTex, vUvD);
+      vec4 c0 = texture2D(uTex, vUvD);
+      vec4 best = c0;
+      float mn = c0.a;
+      // **条件分岐の中で texture2D を呼ばない**（導関数が未定義になる）
       for (int j = -1; j <= 1; j++) {
         for (int i = -1; i <= 1; i++) {
           vec2 uv = clamp(vUvD + vec2(float(i), float(j)) * uTexel, lo, hi);
           vec4 s = texture2D(uTex, uv);
           if (s.a > best.a) best = s;
+          mn = min(mn, s.a);
         }
       }
-      gl_FragColor = best;
+      // 収縮では色は動かさない（透明画素の色を引き込むと縁が濁る）。アルファだけ下げる
+      gl_FragColor = uErode > 0.5 ? vec4(c0.rgb, mn) : best;
     }`,
 };
 
@@ -360,7 +375,7 @@ export function makeImpostorMaterial(env: Env, lighting: Lighting, atlas: Impost
         float W = fr.x * scl * (0.70 + 0.66 * flip_hash11(seed * 23.0 + 9.0));
         float Hh = fr.y * scl;
         // 遠いほど横に広げて、隣の木と輪郭がつながった「林の塊」にする（1 本ずつ立てない）
-        W *= 1.0 + 0.85 * vImpFar;
+        W *= 1.0 + 1.15 * vImpFar;
         vec2 wd = veg_windDir();
         float gust = veg_gust(root.xz);
         float sway = (0.004 + 0.010 * uWind.z) * gust * Hh * position.y * position.y;
@@ -442,7 +457,7 @@ export function makeImpostorMaterial(env: Env, lighting: Lighting, atlas: Impost
           // 「幽霊」になる。本物の針葉樹の樹冠は奥行きがあって 8〜9 割の光を止めるので、
           // 「重なった層」として被覆率を持ち上げる（1-(1-a)^n）。**縁の薄いところは薄いまま**なので
           // 細り・尖った梢は消えない
-          float cov = 1.0 - pow(1.0 - a, 2.4);
+          float cov = 1.0 - pow(1.0 - a, 3.0);
           // L=0.7（1.6 テクセル/画素）から L=2（4 テクセル/画素）にかけて被覆率へ渡す
           return mix(sharp, cov, smoothstep(0.7, 2.0, L));
         }
