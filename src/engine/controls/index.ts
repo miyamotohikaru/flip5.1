@@ -173,7 +173,14 @@ export class Controls {
     this.km.dy += dy;
   }
 
+  /**
+   * 位置と向きを決め打ちする（定点撮影・`?pos=x,z[,y]`）。
+   * **y を渡したら「目線の高さ」として扱う。** そうしないと下の毎フレームの処理が
+   * `地面 + eyeHeight` へ 1〜2 フレームで引き戻すので、渡した y が黙って捨てられる
+   * （`sunset_water` は `pos: [x, z, 0.6]` なのに実際は 2.107m だった。2026-09-04 に水担当が発見）。
+   */
   setPose(x: number, z: number, y: number | undefined, yawDeg: number, pitchDeg: number) {
+    if (y !== undefined) this.eyeHeight = Math.max(0.15, y - heightAt(x, z));
     this.position.set(x, y ?? heightAt(x, z) + this.eyeHeight, z);
     this.yaw = THREE.MathUtils.degToRad(yawDeg);
     this.pitch = THREE.MathUtils.degToRad(pitchDeg);
