@@ -5,7 +5,9 @@ const TITLE = "数式の絶景";
 const DESCRIPTION = "画像 0 枚、3Dモデル 0 個、音源 0 個。全部、数式でできた風景。ふりっぷすると、確かめられます。制作: こす.くま × Claude Fable 5.1";
 const SITE_URL =
   process.env.NEXT_PUBLIC_SITE_URL ??
-  (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : "https://flip5.1.vercel.app");
+  // 控えの URL。**flip5.1.vercel.app は Vercel の仕様上作れない**（.vercel.app のドットは 1 階層だけ）。
+  // 実際に取れているのは flip5-1.vercel.app（と自動割当の flip51.vercel.app）
+  (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : "https://flip5-1.vercel.app");
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),

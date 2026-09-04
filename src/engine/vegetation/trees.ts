@@ -45,6 +45,8 @@ const _s = new THREE.Vector3();
 export class Trees {
   scatter: Scatter;
   needle: THREE.Texture;
+  /** インポスターを焼くときだけ使う針葉アトラス（ミップの詰め方が違う。textures.ts を見ること） */
+  needleBake: THREE.Texture;
   geos: { lod0: TreeGeo; lod1: TreeGeo }[] = [];
   near: THREE.InstancedMesh[] = [];
   mid: THREE.InstancedMesh[] = [];
@@ -78,7 +80,11 @@ export class Trees {
     const msaa = q.msaaSamples >= 4;
     // 影プロキシ用（色は書かない。影のパスでは three が深度マテリアルに差し替える）
     const shadowProxyMat = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
-    this.needle = makeNeedleAtlas(q.tier === "low" ? 192 : q.tier === "mid" ? 320 : 384);
+    const cellPx = q.tier === "low" ? 192 : q.tier === "mid" ? 320 : 384;
+    // 同じ絵で**ミップの詰め方だけが違う** 2 枚。メッシュは詰めた側（空が 1px 抜けない）、
+    // インポスターの焼き込みは詰めない側（焼いた輪郭が円錐になる）を使う
+    this.needle = makeNeedleAtlas(cellPx, true);
+    this.needleBake = makeNeedleAtlas(cellPx, false);
     // 形
     for (const v of TREE_VARIANTS) this.geos.push({ lod0: buildConifer(v, 0), lod1: buildConifer(v, 1) });
     this.stats.lod0Tris = this.geos[0].lod0.tris;
@@ -166,7 +172,7 @@ export class Trees {
     parent.add(this.litter);
 
     // 遠景: インポスター（チャンク）
-    this.atlas = new ImpostorAtlas(this.geos.map((g) => g.lod0), t.impCell, this.needle);
+    this.atlas = new ImpostorAtlas(this.geos.map((g) => g.lod0), t.impCell, this.needleBake);
     // 遠景ビルボードの視程。品質段階の treeDistance は空気遠近のための値なので、
     // ここでは「木が 3px 未満になる距離」で頭打ちにする（1 本 2 三角形でも万単位で効く）
     const impFar = Math.min(q.treeDistance, q.tier === "low" ? 900 : q.tier === "mid" ? 1250 : 2100);
@@ -360,10 +366,10 @@ export class Trees {
       }
       c.visible = true;
       const t = Math.min(1, Math.max(0, (d - far * 0.06) / (far * 0.55)));
-      // 最遠でも 68% は残す。45% まで間引くと、遠くの林で樹冠がつながらず
+      // 最遠でも 88% は残す。45% まで間引くと、遠くの林で樹冠がつながらず
       // 「1 本ずつ数えられる粒の散らばり」になる（統合担当の要件 4）。
       // インポスターは 1 本 2 三角形なので、本数を戻しても三角形は 1% も動かない
-      const frac = 1 - 0.32 * t * t * (3 - 2 * t);
+      const frac = 1 - 0.12 * t * t * (3 - 2 * t);
       c.count = Math.max(1, Math.ceil(info.full * frac));
     }
   }

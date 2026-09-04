@@ -170,8 +170,13 @@ export default function WorldView({ sourceLines }: { sourceLines: number | null 
     const onKey = (e: KeyboardEvent) => {
       const w = worldRef.current;
       if (!w || !w.ready || e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
-      const tag = (e.target as HTMLElement | null)?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      const el = e.target as HTMLElement | null;
+      const tag = el?.tagName;
+      // **文字を打ち込む欄だけ素通りさせる。** ここで range（実験室のつまみ）まで止めていたため、
+      // つまみを 1 度触るとフォーカスが input に残り、**F も L も P も効かなくなっていた**（実測）。
+      // つまみは矢印キーしか使わないので、英字と ? を通しても取り合いにならない。
+      if (tag === "TEXTAREA" || el?.isContentEditable) return;
+      if (tag === "INPUT" && (el as HTMLInputElement).type !== "range") return;
       if (aboutRef.current) return; // About は自分で Esc を扱う
       if (boardRef.current) return; // 黒板を読んでいる間は入場のキーを効かせない
       if (e.key === "?") {
