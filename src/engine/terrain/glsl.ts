@@ -80,14 +80,17 @@ vec3 tn_gnoised(vec2 p){
 // 間隔が画素より細かくなったら消す（潰れて面が白くならないように）
 // 画素幅で太さを決める線。値の幅（tn_line）で決めると、距離と傾きで太さが変わって
 // 「主線 3px / 副線 1px」の 4:1 が画の中で消えてしまう（批評R2→R3 で未達だった原因）
-float tn_linePx(float v, float px){
+float tn_linePx(float v, float px, float aaPx){
   float d = max(fwidth(v), 1e-5);
   float f = abs(fract(v) - 0.5);
   float w = min(px * d * 0.5, 0.42);
-  float aa = d * 0.30;                          // にじみは 0.6 画素。2d だと主線 5px / 副線 3px になり 4:1 が潰れる
+  // にじみは線ごとに変える。両方 0.6 画素だと 3px と 1px が 3.6px と 1.6px になり、
+  // 比が 2.25:1 まで潰れる（批評R2〜R7 で 5 ラウンド「4:1 になっていない」と言われた正体）
+  float aa = d * aaPx;
   float l = smoothstep(0.5 - w - aa, 0.5 - w + aa, f);
   return l * (1.0 - smoothstep(0.30, 0.70, d)); // 間隔が 1.5px を切ったら消す（潰れて面が白くなる）
 }
+float tn_linePx(float v, float px){ return tn_linePx(v, px, 0.30); }
 float tn_line(float v, float w){
   float d = max(fwidth(v), 1e-5);
   float f = abs(fract(v) - 0.5);
@@ -108,6 +111,48 @@ vec3 tn_cell(vec2 p){
     }
   }
   return vec3(sqrt(f1), sqrt(f2), id);
+}
+// 細胞ノイズ（中心へのベクトルつき）: xy = 最近傍点への向き（正規化前）, z = 距離, w = セル id。
+// 小岩の「丸み」を法線で出すのに要る（距離だけでは向きが分からない）
+vec4 tn_cellv(vec2 p){
+  vec2 i = floor(p), f = fract(p);
+  float f1 = 8.0, id = 0.0;
+  vec2 rb = vec2(0.0);
+  for (int y = -1; y <= 1; y++) {
+    for (int x = -1; x <= 1; x++) {
+      vec2 g = vec2(float(x), float(y));
+      vec2 r = g + flip_hash22(i + g) - f;
+      float d = dot(r, r);
+      if (d < f1) { f1 = d; id = flip_hash12(i + g); rb = r; }
+    }
+  }
+  return vec4(rb, sqrt(f1), id);
+}
+// 倒木: cell（m）ごとの格子に 1 本ずつ、向き・長さ・太さを乱数で決めた線分。
+// x = 芯からの距離を半径で割った値（0 が芯、1 が縁）, y = 個体 id, z = 芯からの符号つき横位置（半径単位）,
+// w = 丸太の向き（ラジアン）。ジオメトリを置かずに丸太を描くための場
+vec4 tn_logs(vec2 p, float cell){
+  vec2 q = p / cell;
+  vec2 i = floor(q), f = fract(q);
+  vec4 best = vec4(9.0, 0.0, 0.0, 0.0);
+  for (int y = -1; y <= 1; y++) {
+    for (int x = -1; x <= 1; x++) {
+      vec2 g = vec2(float(x), float(y));
+      float id = flip_hash12(i + g + 7.3);
+      if (id > 0.75) continue;                       // 75% の格子に 1 本（4m 格子なら ≒ 1 本 / 21 m²）
+      vec2 c = g + 0.2 + 0.6 * flip_hash22(i + g);   // 中心（格子単位）
+      float a = 6.2832 * flip_hash12(i + g + 3.1);
+      vec2 dir = vec2(cos(a), sin(a));
+      float L = (0.8 + 1.2 * fract(id * 7.0)) / cell; // 半長 0.8〜2.0m（長さ 1.6〜4m）
+      vec2 r = f - c;
+      float t = clamp(dot(r, dir), -L, L);
+      vec2 dv = (r - dir * t) * cell;                 // m
+      float rad = 0.13 + 0.12 * fract(id * 13.0);     // 半径 13〜25cm
+      float dn = length(dv) / rad;
+      if (dn < best.x) best = vec4(dn, id, dot(dv, vec2(-dir.y, dir.x)) / rad, a);
+    }
+  }
+  return best;
 }
 `;
 
@@ -297,7 +342,11 @@ if (fFloor > 0.0005) {
   if (tNear < 0.99) grass *= 1.0 - 0.24 * fFloor * fLitter * (1.0 - tNear);
   // 木漏れ日: 林が濃いほど直達光が届かない。CSM の落ち影は 200m ほどで尽きるので、
   // それより遠い林床が「日なたの砂」になっていた。斑（2.4m）で木漏れ日にする
-  tCanopy = 1.0 - 0.88 * fFloor * smoothstep(1.00, 0.10, fLitter + 0.45 * tPatch);
+  // 木漏れ日: λ2.4m の一段だけだと「なめらかに暗いだけ」で林床に光の斑ができない。
+  // λ1.1m と λ0.45m を足して縁を立て、日の斑と影をはっきり分ける（晴天の林床のいちばん強い模様）
+  float fleck = smoothstep(0.30, 0.66, flip_vnoise(tXZ * 0.9 + 21.0) + 0.36 * flip_vnoise(tXZ * 2.2 + 5.0)
+                                     + 0.30 * fLitter + 0.25 * tPatch - 0.40);
+  tCanopy = 1.0 - 0.92 * fFloor * (1.0 - fleck);
 }
 // 中景（10〜60m）: 丈の高い草の群れ（2m）のやわらかい明暗
 if (tDist < 160.0 && uReflect < 0.5) grass *= 1.0 + 0.16 * flip_fbm(tXZ * 0.55 + 8.0, 2) * (1.0 - smoothstep(60.0, 160.0, tDist));
@@ -550,6 +599,7 @@ if (fFloor > 0.01) grass = min(grass, mix(grass, tDuffCap, fFloor));
 //
 // **アルベドで「比」を作らないこと。** 比は大気と反射率で決まるので、合わないなら大気か反射率の物理を疑う。
 // 表示の明るさが帯（日なたの草 0.13〜0.20）から外れているなら、それは露出の仕事である。
+float tRoughLog = 0.0; // 倒木の樹皮（下の tRough で使う）
 float gAlb = 1.00;
 vec3 tCol = grass * gAlb;
 tCol = mix(tCol, dirt * gAlb, dirtM);
@@ -588,12 +638,77 @@ if (dMid04 > 0.01) {
   vec2 g04 = m04.yz * (2.5 * 0.040) * a04 + m09.yz * (1.1 * 0.055) * a09;
   wN = normalize(wN - vec3(g04.x, 0.0, g04.y) * nAmp * gN.y);
 }
+// ---- 林床に転がっているもの: 落ち葉の吹きだまり・腐植の窪み・シダ・倒木・小岩・根張り ----
+// 「林床はリターも倒木も根も無い平らな砂」（批評R5〜R7 の forest）。目安 20 個/100m²。
+// **ジオメトリは置かない**（描画呼び出しと三角形を増やさない）。地色と法線だけで作る。
+// 実測でこの林床は「画素 = 0.027 + 0.215 × アルベド」（浅い角度の照りと後処理の分だけ下駄がある）。
+// なめらかなノイズ（std 0.15）を掛けても画は動かないので、**縁の立ったマスクで色そのものを差し替える**。
+// 開けた草地（noon_side など fFloor ≈ 0.3）には出さないよう、fFloor の下に敷居を置く
+float lodObj = 1.0 - smoothstep(1.0, 2.6, tFoot); // 20cm〜3m の「もの」なので λ40cm 用の lodMid では消さない
+float fObj = smoothstep(0.40, 0.62, fFloor) * (1.0 - smoothstep(30.0, 55.0, tDist)) * lodObj * (1.0 - uReflect);
+if (fObj > 0.02) {
+  vec2 og = vec2(0.0);
+  float n1 = flip_vnoise(tXZ * 1.25 + 51.0);            // λ0.8m
+  float n2 = flip_vnoise(tXZ * 3.10 + 11.0);            // λ0.32m
+  float n3 = flip_vnoise(tXZ * 0.42 + 23.0);            // λ2.4m（吹きだまりの群れ）
+  float nm = n1 + 0.35 * n2 + 0.45 * n3 - 0.40;         // 平均 0.60 / std 0.19
+  // 乾いた針葉のリターの吹きだまり（面積 3 割）と、湿って黒い腐植の窪み（面積 3 割）。
+  // 縁を立てて「面」にする（なめらかな濃淡は下の照りに埋もれて見えない）
+  float drift = smoothstep(0.660, 0.700, nm) * fObj;
+  float humus = smoothstep(0.620, 0.530, nm) * fObj;
+  tCol = mix(tCol, vec3(0.215, 0.180, 0.112), 1.00 * drift);
+  tCol = mix(tCol, vec3(0.016, 0.015, 0.011), 0.95 * humus);
+  og += vec2(0.0, 0.10) * (drift - humus);              // 吹きだまりは盛り上がり、窪みは沈む
+  // シダ・下草（λ0.9m の株）。林床の緑はほとんどこれ
+  float fn = flip_vnoise(tXZ * 1.15 + 41.0) + 0.30 * flip_vnoise(tXZ * 3.1 + 7.0) - 0.15;
+  float fern = smoothstep(0.600, 0.665, fn + 0.10 * tPatch) * fObj;
+  if (fern > 0.01) {
+    tCol = mix(tCol, vec3(0.036, 0.082, 0.026) * (0.6 + 0.9 * fract(fn * 13.0)), 0.90 * fern);
+    og += vec2(0.16, -0.10) * fern;
+  }
+  // 倒木（4m 格子に 75%＝ 1 本/21m²、長さ 1.6〜4m、半径 13〜25cm）。
+  // 丸みは法線で、樹皮の縦筋は軸方向に伸ばした 1 タップで。足元には落ち影を敷く
+  vec4 lg = tn_logs(tXZ, 3.4);
+  float logM = (1.0 - smoothstep(0.80, 1.0, lg.x)) * fObj;
+  float logSh = (1.0 - smoothstep(1.0, 2.2, lg.x)) * (1.0 - logM) * fObj;
+  if (logSh > 0.01) tCol *= 1.0 - 0.55 * logSh;
+  if (logM > 0.01) {
+    float z = clamp(lg.z, -1.0, 1.0);
+    vec2 pd = vec2(-sin(lg.w), cos(lg.w));
+    og += pd * (z * 1.3 * logM);
+    float bs = flip_vnoise(vec2(dot(tXZ, vec2(cos(lg.w), sin(lg.w))) * 2.6, z * 1.6) + 5.0);
+    vec3 bark = mix(vec3(0.042, 0.034, 0.024), vec3(0.145, 0.122, 0.084), fract(lg.y * 31.0));
+    tCol = mix(tCol, bark * (0.55 + 0.85 * bs), logM);
+    tRoughLog = logM;
+  }
+  // 小岩（λ1.1m の細胞の 25%、直径 22〜44cm）。丸みは中心へのベクトルから
+  vec4 rk = tn_cellv(tXZ * 0.9 + 19.0);
+  float rr = 0.10 + 0.10 * fract(rk.w * 5.0);
+  float rockS = (1.0 - smoothstep(rr * 0.55, rr, rk.z)) * step(0.75, rk.w) * fObj;
+  if (rockS > 0.01) {
+    float q = clamp(rk.z / max(rr, 1e-3), 0.0, 1.0);
+    og += normalize(rk.xy + 1e-5) * (1.2 * q * q * rockS);
+    vec3 stone = vec3(0.200, 0.196, 0.183) * (0.45 + 1.1 * fract(rk.w * 17.0));
+    stone = mix(stone, vec3(0.050, 0.076, 0.034), 0.5 * smoothstep(0.45, 0.9, fract(rk.w * 41.0))); // 苔
+    tCol = mix(tCol, stone, rockS);
+  }
+  // 根張り: 木の根元（植生マップ r = 草の密度が落ちている所）に、地表を這う畝
+  float rootA = smoothstep(0.30, 0.04, tVeg.r) * fObj;
+  if (rootA > 0.02) {
+    vec3 rn = tn_gnoised(tXZ * vec2(1.5, 0.65) + 61.0);
+    float ridge = max(1.0 - abs(rn.x) * 2.4, 0.0);
+    tCol = mix(tCol, vec3(0.062, 0.050, 0.034), 0.55 * ridge * rootA);
+    og -= rn.yz * vec2(1.5, 0.65) * (0.16 * rootA * (rn.x > 0.0 ? 1.0 : -1.0));
+  }
+  wN = normalize(wN - vec3(og.x, 0.0, og.y) * gN.y);
+}
 float tRough = mix(0.92, 0.80, dirtM);
 tRough = mix(tRough, 0.99, fFloor); // 林床は完全なマット（腐植と針葉に艶は無い。斜めから見たときの照りを消す）
 tRough = mix(tRough, 0.85, screeM);
 tRough = mix(tRough, 0.82, rockM); // 0.72 は低い太陽で岩がプラスチックのように光った
 tRough = mix(tRough, 0.80, snowM); // 0.55 は艶が出すぎて「メレンゲ」に見えた
 tRough = mix(tRough, 0.80, sandM);
+tRough = mix(tRough, 0.98, tRoughLog); // 樹皮に艶は無い
 // 水際の濡れ・雨の濡れ・水たまり
 float wet = max(wetBand, uWetness * (1.0 - snowM));
 tCol *= 1.0 - mix(0.26, 0.15, smoothstep(25.0, 90.0, tDist)) * wet; // 0.32 は 1 本の濃い縁に見えた（3 段の中間色が潰れる）
@@ -662,8 +777,10 @@ if (uFlipRadius > 0.001) {
   // 5m 間隔で同じ太さだと「バーコード」に見える
   // 主線 3px α0.9 / 副線 1px α0.35 の 4:1。副線は 200m で消していたので遠景に主線しか無く、
   // 「全部同じ太さ」に見えていた（批評R2〜R6 で 5 回指摘）。10m 間隔は 2km 先でも 8px あるので残す
-  float cMinor = tn_linePx(tH / 10.0, 1.0) * (1.0 - smoothstep(1600.0, 2600.0, tDist));
-  float cMajor = tn_linePx(tH / 50.0, 3.0);
+  // 主線 3.4px + にじみ 0.6 = 4.0px / 副線 0.75px + にじみ 0.3 = 1.05px ＝ 太さの比 3.8:1。
+  // 副線は遠景で画素を切って消えるが、それは正しい（潰れて面が白くなるより良い）
+  float cMinor = tn_linePx(tH / 10.0, 0.75, 0.15) * (1.0 - smoothstep(1600.0, 2600.0, tDist));
+  float cMajor = tn_linePx(tH / 50.0, 3.40, 0.30);
   // 成分の族はさらに細く（合計の等高線を邪魔しない）
   float lm = tn_linePx(pm / 20.0, 1.2) * smoothstep(0.5, 3.0, pm) * midR;
   float lb = tn_linePx(pb / 8.0, 1.0) * nearR;
@@ -689,7 +806,7 @@ if ((uTerrainDebug > 0.5 && uTerrainDebug < 5.5) || (uTerrainDebug > 6.5 && uTer
   if (uTerrainDebug > 7.5 && uTerrainDebug < 8.5) dbg = tCol * 6.0; // 地色（照明抜き）を 6 倍で
   if (uTerrainDebug > 11.5 && uTerrainDebug < 12.5) dbg = vec3(sandM, dirtM, screeM) * 2.0; // 12: 岸まわりの材質マスク（砂/土/ガレ）
   if (uTerrainDebug > 12.5) { dbg = vec3(0.0); if (tDist < 10.0) dbg = vec3(2.0,0.0,0.0); else if (tDist < 20.0) dbg = vec3(2.0,2.0,0.0); else if (tDist < 30.0) dbg = vec3(0.0,2.0,0.0); else if (tDist < 45.0) dbg = vec3(0.0,2.0,2.0); else if (tDist < 60.0) dbg = vec3(0.0,0.0,2.0); else if (tDist < 125.0) dbg = vec3(2.0,0.0,2.0); else if (tDist < 300.0) dbg = vec3(1.0,1.0,1.0); else dbg = vec3(0.3,0.3,0.3); } // 13: 距離帯（赤<10 黄<20 緑<30 水<45 青<60 桃<125 白<300 灰300〜m）。批評の矩形が何 m の地面かを確かめる
-  if (uTerrainDebug > 14.5) { dbg = vec3(sandGateA, sandGateB, sandGateC); } // 15: 浜のマスクの 3 つのゲート（赤=岸線からの距離 緑=湖面からの高さ 青=傾き）。どれが幅を決めているかを見る
+  if (uTerrainDebug > 14.5 && uTerrainDebug < 15.5) { dbg = vec3(sandGateA, sandGateB, sandGateC); } // 15: 浜のマスクの 3 つのゲート（赤=岸線からの距離 緑=湖面からの高さ 青=傾き）。どれが幅を決めているかを見る
   if (uTerrainDebug > 13.5 && uTerrainDebug < 14.5) { float fo = length(fwidth(tXZ)); dbg = vec3(0.0); if (fo < 0.05) dbg = vec3(2.0,0.0,0.0); else if (fo < 0.12) dbg = vec3(2.0,2.0,0.0); else if (fo < 0.25) dbg = vec3(0.0,2.0,0.0); else if (fo < 0.5) dbg = vec3(0.0,2.0,2.0); else if (fo < 1.0) dbg = vec3(0.0,0.0,2.0); else if (fo < 2.0) dbg = vec3(2.0,0.0,2.0); else dbg = vec3(1.0,1.0,1.0); } // 14: 1 画素が地面で覆う長さ（赤<5 黄<12 緑<25 水<50 青<100 桃<200 白200cm〜）。ここが λ の半分を超えたら模様は標本化できない
   gl_FragColor.rgb = dbg * 0.5;
 }
