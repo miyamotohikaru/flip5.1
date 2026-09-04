@@ -109,8 +109,20 @@ function drawSpray(ctx: Ctx, seed: number, size: number, kind: "top" | "side" | 
   drawTwig(ctx, r, cx0 + len * 0.93, cy0, tipAng, size * 0.09, size * 0.045, 1.0, 0.6);
 }
 
-/** 針葉カードのアトラス（RGBA・sRGB）。返る texture の colorSpace は sRGB。 */
-export function makeNeedleAtlas(cell = 256): THREE.CanvasTexture {
+/**
+ * 針葉カードのアトラス（RGBA・sRGB）。返る texture の colorSpace は sRGB。
+ *
+ * `mipDense` で**ミップの詰め方を 2 通り**作り分ける。同じ絵の 2 枚を使い分けるのが要点:
+ *
+ * - `true`（**メッシュの木が使う**）: 段ごとに 1.6 倍ずつ被覆率を詰める。カードが 2 段目で
+ *   ほぼ不透明になるので、20〜60m の木の樹冠に空が 1px 抜けない（`cloudy_side` のピンホール）。
+ * - `false`（**インポスターを焼くときだけ使う**）: 0〜4 段は被覆率をそのまま保つ。
+ *   焼くとき（コマ 252px ＝ カードが 30px ＝ ミップ 3.5 段）にカードが不透明だと、
+ *   焼き上がる木の輪郭が「上から下まで同じ幅で頭の丸い塊」になる（400m〜1.5km の「緑の杭」）。
+ *
+ * 1 枚で両方は満たせない。焼き込みと表示は見る縮尺が同じなのに、要る性質が逆だから。
+ */
+export function makeNeedleAtlas(cell = 256, mipDense = true): THREE.CanvasTexture {
   const size = cell * NEEDLE_ATLAS_CELLS;
   const canvas = document.createElement("canvas");
   canvas.width = size;
@@ -174,7 +186,7 @@ export function makeNeedleAtlas(cell = 256): THREE.CanvasTexture {
   tex.magFilter = THREE.LinearFilter;
   // ミップは自分で作る。GL の自動生成（アルファも単純平均）だと、針の隙間で
   // アルファがカットオフを割って葉に「白いピンホール」が開く（批評 R3 の最重要破綻）
-  tex.mipmaps = buildCoverageMips(img, ALPHA_CUTOFF);
+  tex.mipmaps = buildCoverageMips(img, ALPHA_CUTOFF, mipDense);
   tex.generateMipmaps = false;
   tex.anisotropy = 4;
   tex.needsUpdate = true;
@@ -255,7 +267,7 @@ function toCanvas(img: ImageData): HTMLCanvasElement {
  * 各段で「アルファ×s がしきい値を超える画素の割合」が原寸と同じになる s を二分探索して掛ける。
  * 色はアルファ重み付き平均（透明画素の色を混ぜると縁が暗くなるため）。
  */
-function buildCoverageMips(level0: ImageData, cutoff: number): HTMLCanvasElement[] {
+function buildCoverageMips(level0: ImageData, cutoff: number, dense: boolean): HTMLCanvasElement[] {
   const cut = cutoff * 255;
   let cover = 0;
   for (let i = 3; i < level0.data.length; i += 4) if (level0.data[i] >= cut) cover++;
@@ -292,17 +304,12 @@ function buildCoverageMips(level0: ImageData, cutoff: number): HTMLCanvasElement
         nd[k + 3] = a / 4;
       }
     }
-    // 被覆率が原寸と同じになるようにアルファを持ち上げる。
-    //
-    // **段ごとに 1.6 倍ずつ詰めてはいけない。** 被覆 0.45 の絵は 2 段目で 0.985＝
-    // ほぼ不透明の矩形になり、1 枚のカードが「切った工作用紙」になる（批評R7 の 4 番）。
-    // さらにインポスターを焼くとき（コマ 252px ＝ カードが 31px ＝ ミップ 3.6 段）も
-    // カードが不透明なので、焼き上がる木の輪郭が**上から下まで同じ幅で頭の丸い塊**になり、
-    // 400m〜1.5km の林が「緑の杭の柵」に見えていた（統合担当の 1 位）。
-    //
-    // 0〜4 段（＝カードが 24px 以上）は**被覆率をそのまま保つ**。それより粗い段だけ、
-    // 遠景で枝の間に空が 1px 抜けないように詰める
-    const targetL = Math.min(0.985, target * Math.pow(1.55, Math.max(0, lv - 4)));
+    // 被覆率が原寸と同じになるようにアルファを持ち上げる。詰め方は 2 通り（上の makeNeedleAtlas を見ること）:
+    //   dense  = メッシュ用。段ごとに 1.6 倍。カードが早く不透明になり、空が 1px 抜けない
+    //   !dense = 焼き込み用。0〜4 段は被覆率のまま。焼いた木の輪郭が円錐になる
+    const targetL = dense
+      ? Math.min(0.985, target * Math.pow(1.6, lv))
+      : Math.min(0.985, target * Math.pow(1.55, Math.max(0, lv - 4)));
     let lo = 1, hi = 24, s = 1;
     for (let it = 0; it < 14; it++) {
       s = (lo + hi) * 0.5;
