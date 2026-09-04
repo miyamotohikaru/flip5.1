@@ -31,20 +31,23 @@ const mobile = !!flag("mobile");
 const W = Number(flag("w", mobile ? 390 : 1600));
 const H = Number(flag("h", mobile ? 844 : 900));
 const DPR = Number(flag("dpr", mobile ? 3 : 1));
+const flagWait = flag("wait") !== null;
 const wait = Number(flag("wait", 2500));
 const q = flag("q", null);
 const base = process.env.FLIP_URL ?? "http://localhost:3051";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const SHOT_NAMES = ["golden", "noon", "dawn", "cloudy", "rain", "storm", "night", "sunset_water", "forest", "ridge", "noon_side", "cloudy_side", "storm_live", "storm_bolt", "flip_half", "flip_full"];
-// 時間を止めずに撮る定点（src/engine/core/params.ts の live）。待ち時間をその秒数に延ばす
-// params.ts の live（秒）＋描画が落ち着くまでの余裕。**ここを params.ts と食い違わせない**
-// （storm_bolt を 2600ms で撮って落雷が写らず、批評が別フレームで採点する事故が起きた）
-const LIVE_WAIT = { storm_live: 11800, storm_bolt: 3850 };
+// 時間を止めずに撮る定点（`live` 秒）は、**実時間ではなく世界の時計（env.time）で待つ**。
+// world.ts が dt を 0.1 秒で頭打ちにしているので、機が混んでフレームが 150ms かかると
+// env.time が実時間から遅れ、同じ待ち時間でも落雷の位相が変わってしまう
+// （「storm_bolt は撮るたびに閃光の位相が変わる」の正体）。
+// 秒数は params.ts の `live` をページから直接読むので、ここに書き写さない
+// （書き写して食い違わせ、落雷の写らない絵で採点する事故が実際に起きた）。
 let targets = [];
 if (flag("url")) targets = [{ name, url: String(flag("url")) }];
-else if (flag("all")) targets = SHOT_NAMES.map((s) => ({ name: `${name}_${s}`, url: `/?shot=${s}`, wait: LIVE_WAIT[s] }));
-else targets = [{ name, url: `/?shot=${flag("shot", "golden")}`, wait: LIVE_WAIT[String(flag("shot", "golden"))] }];
+else if (flag("all")) targets = SHOT_NAMES.map((s) => ({ name: `${name}_${s}`, url: `/?shot=${s}` }));
+else targets = [{ name, url: `/?shot=${flag("shot", "golden")}` }];
 
 const browser = await puppeteer.launch({
   executablePath: CHROME,
@@ -73,14 +76,22 @@ for (const t of targets) {
     await page.waitForFunction(() => !document.querySelector(".landing"), { timeout: 30000 })
       .catch(() => console.log("  ※ 入口が消えるのを待てなかった（この絵は採点に使わないこと）"));
   }
-  await sleep(flag("wait") ? wait : (t.wait ?? wait));
+  // 定点に live（秒）があれば、世界の時計がその秒数に届くまで待つ
+  const live = await page.evaluate(() => window.__flip?.params?.shot?.live ?? null);
+  if (live !== null && !flagWait) {
+    await page.waitForFunction((s) => window.__flip.env.time >= s, { timeout: 180000, polling: "raf" }, live)
+      .catch(() => console.log(`  ※ 世界の時計が ${live}s に届かなかった（この絵は採点に使わないこと）`));
+  } else {
+    await sleep(flagWait ? wait : (t.wait ?? wait));
+  }
   const stats = await page.evaluate(() => {
     const w = window.__flip;
-    return { frameMs: w.stats.frameMs, calls: w.stats.drawCalls, tris: w.stats.triangles, tier: w.stats.tier, size: `${w.stats.width}x${w.stats.height}` };
+    return { frameMs: w.stats.frameMs, calls: w.stats.drawCalls, tris: w.stats.triangles, tier: w.stats.tier, size: `${w.stats.width}x${w.stats.height}`, t: w.env.time };
   });
   const file = path.join(OUT, `${t.name}.png`);
   await page.screenshot({ path: file });
-  console.log(`${file}  (${stats.tier} ${stats.size} ${stats.frameMs.toFixed(1)}ms/frame ${stats.calls} calls ${(stats.tris / 1000).toFixed(0)}k tris, ${((Date.now() - t0) / 1000).toFixed(1)}s)`);
+  const tt = live !== null ? ` 世界の時計 ${stats.t.toFixed(2)}s` : "";
+  console.log(`${file}  (${stats.tier} ${stats.size} ${stats.frameMs.toFixed(1)}ms/frame ${stats.calls} calls ${(stats.tris / 1000).toFixed(0)}k tris,${tt} ${((Date.now() - t0) / 1000).toFixed(1)}s)`);
 }
 await browser.close();
 if (problems.length) {
