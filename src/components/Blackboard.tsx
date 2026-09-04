@@ -78,6 +78,20 @@ function param(name: string): string | null {
   if (typeof location === "undefined") return null;
   return new URLSearchParams(location.search).get(name);
 }
+/** 和文は線文字を作れないのでシステムフォントだが、**1 字ずつ傾けて上下に振る**と手書きに寄る。
+ *  SVG の rotate / dy はグリフ単位に効くので、tspan を足さずに済む（DOM が増えない）。
+ *  ばらつきは hash2 で決定的（同じ字は毎回同じ揺れ方をする）。 */
+function hand(text: string, seed: number, tilt = 3.0, jump = 0.8) {
+  const n = [...text].length;
+  const rot: string[] = [];
+  const dy: string[] = [];
+  for (let i = 0; i < n; i++) {
+    rot.push(((hash2(seed, i, 31) - 0.5) * 2 * tilt).toFixed(1));
+    dy.push(((hash2(seed, i, 53) - 0.5) * 2 * jump).toFixed(2));
+  }
+  return { rotate: rot.join(" "), dy: dy.join(" ") };
+}
+
 const overlaps = (a: Rect, b: Rect) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 
 /** 和文の添え書きを列幅で折る（最大 2 行） */
@@ -315,6 +329,7 @@ export default function Blackboard({ phase, isMobile, full = false, onClose }: P
             x={plan.VW < 600 ? 26 : plan.VW * 0.5}
             y={plan.VW < 600 ? 30 : 34}
             textAnchor={plan.VW < 600 ? "start" : "middle"}
+            {...hand("世界の作り方 ／ 消した式もそのまま", 3, 2.2, 0.7)}
           >
             世界の作り方 ／ 消した式もそのまま
           </text>
@@ -337,6 +352,7 @@ export default function Blackboard({ phase, isMobile, full = false, onClose }: P
                   style={{ fontSize: plan.noteSize }}
                   x={p.x}
                   y={p.y - p.line!.asc - 6 - (p.note!.length - 1 - k) * (plan.noteSize + 2.5)}
+                  {...hand(t, i * 7 + k)}
                 >
                   {t}
                 </text>
@@ -399,7 +415,7 @@ function Head({ p, full }: { p: Placed; full: boolean }) {
   const rule = useMemo(() => Math.max(52, jaW * 0.86), [jaW]);
   return (
     <g style={{ opacity: p.back ? 0.42 : 1 }}>
-      <text className="bb-head" style={{ fontSize: fs }} x={p.x} y={p.y}>
+      <text className="bb-head" style={{ fontSize: fs }} x={p.x} y={p.y} {...hand(cue.text, 41, 2.0, 0.6)}>
         {cue.text}
       </text>
       <ChalkLine line={latin} x={p.x + jaW + 10} y={p.y - 1} size={fs * 0.62} still dim seed={7} />
