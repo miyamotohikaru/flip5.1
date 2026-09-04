@@ -1,4 +1,4 @@
-// 粒子。昼の花粉・埃（逆光で光る。森に多い）／夜の蛍（岸辺と森の際、20〜4時、暖色でゆっくり明滅）／風に飛ぶ葉。
+// 粒子。昼の花粉・埃（逆光で光る。森に多い）／夜の蛍（岸辺と森の際、20〜4時、暖色でゆっくり明滅）／風に舞う林床のくず。
 // 全て決定的（ハッシュ＋時刻）・世界固定・ソフトパーティクル。裏返しでは「座標の点＋速度ベクトル」になる。
 import * as THREE from "three";
 import { LAYER } from "../core/pipeline";
@@ -226,6 +226,11 @@ void main(){
 }
 `;
 
+// 風に舞う「林床のくず」。この森は針葉樹なので、広葉樹の落ち葉は出さない（批評R7 storm_bolt）。
+//   0 = 松葉の束（細い針が 2〜3 本、根元でつながっている）
+//   1 = 樹皮の小片（角ばった薄片。いちばん大きい）
+//   2 = 枯れ草の切れ端（細長い帯。ねじれている）
+// 3 つとも「乾いた林床の色」で、彩度は 0.4 未満。空を背にした黄色い板にならないようにする。
 const LEAF_VERT = /* glsl */ `
 #include <flip_noise>
 #include <flip_height>
@@ -242,46 +247,73 @@ varying float vFm;
 varying vec3 vN;
 varying vec3 vCol;
 varying vec2 vVel;
+varying vec2 vKind;   // x = 種類 0/1/2, y = 視線に対する面の向き |N・V|
 vec3 rot(vec3 v, vec3 ax, float a){ float c = cos(a), s = sin(a); return v * c + cross(ax, v) * s + ax * dot(ax, v) * (1.0 - c); }
 void main(){
+  // 撒く箱は xz だけ（高さは地面からの高さで持つ）。
+  // R7 までは 11m の立方体に一様に撒いていたので、目線より上へ出た粒が
+  // 「空に浮いた黄色い平たい木の葉」として残った。林床のくずは空へは上がらない
   float box = 11.0;
   vec3 fwd = wx_camFwd(viewMatrix);
-  vec3 boxC = uCamPos + vec3(fwd.x, 0.0, fwd.z) * box * 0.28;
+  vec2 boxC = uCamPos.xz + vec2(fwd.x, fwd.z) * box * 0.28;
   vec3 wind3 = vec3(uWind.x, 0.0, uWind.y) * uWind.z * (0.35 + 0.5 * uGust);
   float t = uTime;
   vec3 ph = aSeed.xyz * 6.2832;
-  float fall = 0.35 + 0.3 * aSeed.y;
-  vec3 sway = vec3(sin(t * 1.7 + ph.x), 0.0, cos(t * 1.3 + ph.z)) * 0.4;
-  vec3 p = aSeed.xyz * box + wind3 * t + vec3(0.0, -fall * t, 0.0) + sway;
-  vec3 rel = mod(p - boxC, vec3(box)) - 0.5 * box;
-  vec3 center = boxC + rel;
-  float th = flip_height(center.xz);
+  vec2 sway = vec2(sin(t * 1.7 + ph.x), cos(t * 1.3 + ph.z)) * 0.4;
+  vec2 pxz = aSeed.xz * box + wind3.xz * t + sway;
+  vec2 rel = mod(pxz - boxC, vec2(box)) - 0.5 * box;
+  vec2 cxz = boxC + rel;
+  float th = flip_height(cxz);
+  // 舞い上がる高さ。突風で持ち上がり、また落ちる（0 の近くで転がっている時間が長い）
+  float lift = (0.50 + 1.30 * uGust) * (0.35 + 0.65 * aSeed.z);
+  float bob = 0.5 - 0.5 * cos(t * (0.35 + 0.5 * aSeed.y) + ph.y);
+  float hag = 0.04 + lift * pow(bob, 1.5);
+  vec3 center = vec3(cxz.x, th + hag, cxz.y);
   float forest = smoothstep(6.0, 18.0, th) * (1.0 - smoothstep(300.0, 420.0, th));
-  float on = step(aSeed.w, forest * 0.9 + 0.1) * step(th + 0.1, center.y);
+  float on = step(aSeed.w, forest * 0.9 + 0.1);
   float windy = smoothstep(2.5, 6.0, uWind.z);
   float dist = distance(center, uCamPos);
-  vec3 e = abs(rel) / box;
-  float edge = (1.0 - smoothstep(0.3, 0.5, e.x)) * (1.0 - smoothstep(0.3, 0.5, e.y)) * (1.0 - smoothstep(0.3, 0.5, e.z));
+  vec2 e = abs(rel) / box;
+  float edge = (1.0 - smoothstep(0.3, 0.5, e.x)) * (1.0 - smoothstep(0.3, 0.5, e.y));
   float alpha = on * windy * edge * (1.0 - smoothstep(6.0, 9.0, dist)) * smoothstep(0.3, 0.8, dist);
+
+  float kind = floor(flip_hash11(aSeed.w * 37.0 + aSeed.x * 11.0) * 3.0);
+  // 実寸: 松葉の束 5〜9cm・樹皮の小片 3〜5cm・枯れ草 6〜10cm（長さ）。板の半分の大きさで持つ
+  float sz = kind < 0.5 ? (0.026 + 0.018 * aSeed.z)
+           : kind < 1.5 ? (0.016 + 0.010 * aSeed.z)
+                        : (0.030 + 0.020 * aSeed.z);
+  // 縦横比。針と枯れ草は細長い（＝画面の面積が小さく、黄色い板に見えない）
+  float aspect = kind < 0.5 ? 0.34 : kind < 1.5 ? 0.72 : 0.22;
+
   float ang = t * (2.0 + 3.0 * aSeed.x) + ph.y;
   vec3 axis = normalize(vec3(aSeed.x - 0.5, aSeed.y - 0.5, aSeed.z - 0.5) + vec3(0.01, 0.02, 0.03));
   vec3 lx = rot(vec3(1.0, 0.0, 0.0), axis, ang);
   vec3 ly = rot(vec3(0.0, 1.0, 0.0), axis, ang);
-  float size = 0.020 + 0.024 * aSeed.z;
   vFm = wx_flipMask(center);
-  vec3 pos = center + (lx * position.x + ly * (position.y - 0.5)) * size * 2.0;
+  vec3 pos = center + (lx * position.x * aspect + ly * (position.y - 0.5)) * sz * 2.0;
   if (vFm > 0.001) {
     float px = dist * uWxPixel;
     vec3 right = wx_camRight(viewMatrix);
     vec3 up = wx_camUp(viewMatrix);
-    vec3 mpos = center + (right * position.x + up * (position.y - 0.5)) * max(size, px * 10.0) * 2.0;
+    vec3 mpos = center + (right * position.x + up * (position.y - 0.5)) * max(sz, px * 10.0) * 2.0;
     pos = mix(pos, mpos, vFm);
   }
-  vec3 vel = wind3 + vec3(0.0, -fall, 0.0) + vec3(cos(t * 1.7 + ph.x) * 1.7, 0.0, -sin(t * 1.3 + ph.z) * 1.3) * 0.4;
+  float vy = lift * 1.5 * pow(max(bob, 1e-3), 0.5) * 0.5 * sin(t * (0.35 + 0.5 * aSeed.y) + ph.y) * (0.35 + 0.5 * aSeed.y);
+  vec3 vel = wind3 + vec3(0.0, vy, 0.0) + vec3(cos(t * 1.7 + ph.x) * 1.7, 0.0, -sin(t * 1.3 + ph.z) * 1.3) * 0.4;
   vec3 vv = mat3(viewMatrix) * vel;
   vVel = vv.xy * 0.25;
-  vN = cross(lx, ly);
-  vCol = mix(vec3(0.36, 0.2, 0.06), vec3(0.62, 0.45, 0.1), aSeed.w);
+  vec3 nrm = cross(lx, ly);
+  vN = nrm;
+  // 舞うものは「向きが変わると見え方が変わる」。真横を向いた瞬間はほとんど見えない
+  vec3 vdir = normalize(center - uCamPos);
+  float facing = abs(dot(normalize(nrm), vdir));
+  vKind = vec2(kind, facing);
+  // 乾いた林床の色（彩度 0.30〜0.38）。黄色い広葉樹の葉はやめた
+  vec3 needle = vec3(0.150, 0.128, 0.098);   // 枯れた松葉: 赤みの少ない焦茶
+  vec3 bark   = vec3(0.148, 0.132, 0.116);   // 樹皮: ほぼ灰
+  vec3 straw  = vec3(0.196, 0.170, 0.128);   // 枯れ草: くすんだ麦わら
+  vCol = kind < 0.5 ? needle : (kind < 1.5 ? bark : straw);
+  vCol *= 0.72 + 0.5 * aSeed.z;
   vQ = position.xy;
   vAlpha = alpha;
   vWorld = center;
@@ -305,21 +337,63 @@ varying float vFm;
 varying vec3 vN;
 varying vec3 vCol;
 varying vec2 vVel;
+varying vec2 vKind;
 void main(){
   vec2 q = vec2(vQ.x, vQ.y - 0.5) * 2.0;
-  float d = abs(q.x) - 0.6 * (1.0 - q.y * q.y);
-  float a = 1.0 - smoothstep(-0.03, 0.03, d);
-  a *= step(abs(q.y), 1.0);
-  float rib = 1.0 - smoothstep(0.0, 0.06, abs(q.x)) * 0.35;
+  float kind = vKind.x;
+  float a, shade;
+  if (kind < 0.5) {
+    // 松葉の束: 細い針が 3 本、根元（q.y = -1）でまとまって先で開く
+    float open = 0.10 + 0.42 * (q.y * 0.5 + 0.5);
+    float d = 1e9;
+    for (int i = 0; i < 3; i++) {
+      float o = (float(i) - 1.0) * open;
+      d = min(d, abs(q.x - o));
+    }
+    a = 1.0 - smoothstep(0.05, 0.16, d);
+    a *= step(abs(q.y), 1.0) * (1.0 - smoothstep(0.86, 1.0, abs(q.y)));
+    shade = 0.72 + 0.42 * (1.0 - smoothstep(0.0, 0.10, d));   // 針の丸み
+  } else if (kind < 1.5) {
+    // 樹皮の小片: 角ばった薄片。縁が割れている
+    float n = flip_vnoise(q * 2.3 + 5.0);
+    float d = max(abs(q.x) - 0.78 + 0.22 * n, abs(q.y) - 0.82 + 0.18 * flip_vnoise(q.yx * 3.1));
+    a = 1.0 - smoothstep(-0.04, 0.06, d);
+    // 樹皮の筋（縦の木目）。一様な塗りに見せない
+    shade = 0.62 + 0.66 * flip_vnoise(vec2(q.x * 7.0, q.y * 1.6));
+  } else {
+    // 枯れ草の切れ端: 細長い帯がねじれている（中ほどでくびれる）
+    float w = 0.62 * (1.0 - 0.55 * abs(sin(q.y * 2.2 + 1.0)));
+    a = 1.0 - smoothstep(w - 0.06, w + 0.06, abs(q.x));
+    a *= 1.0 - smoothstep(0.90, 1.0, abs(q.y));
+    shade = 0.66 + 0.5 * (1.0 - abs(q.x) / max(w, 1e-3));
+  }
   float sunUp = smoothstep(-0.05, 0.05, uSunDir.y);
-  float ndl = abs(dot(normalize(vN), uSunDir));
-  vec3 col = vCol * rib * (uSkyAmbient * 0.7 + uGroundAmbient * 0.3 + uSunColor * 0.32 * ndl * sunUp + vec3(0.8, 0.85, 1.0) * uLightning * 0.06);
-  // 葉は空より明るくならない（閃光で白い点になり「空に浮かぶ埃」に見えていた）。
-  // 空を背にすれば暗いシルエット、地面を背にすればうっすら明るい葉になる
-  col = min(col, flip_skyColor(normalize(vWorld - uCamPos)) * 0.75);
+  vec3 N = normalize(vN);
+  // 表と裏で明るさが違う（裏返ると暗くなる）。舞うものはこれで「回っている」と分かる
+  float sgn = dot(N, uSunDir);
+  float ndl = max(sgn, 0.0) + max(-sgn, 0.0) * 0.22;
+  // 上を向いた面は空を、下を向いた面は地面を映す
+  float up = N.y * 0.5 + 0.5;
+  vec3 amb = mix(uGroundAmbient * 0.55, uSkyAmbient * 0.95, up);
+  vec3 col = vCol * shade * (amb + uSunColor * 0.30 * ndl * sunUp + vec3(0.8, 0.85, 1.0) * uLightning * 0.05);
+  // くずは空より明るくならない（閃光で白い点になり「空に浮かぶ埃」に見えていた）
+  vec3 skyB = flip_skyColor(normalize(vWorld - uCamPos));
+  col = min(col, skyB * 0.72);
   col = flip_applyAerial(col, vWorld);
   float soft = wx_soft(gl_FragCoord.xy, gl_FragCoord.z, 0.08);
   float alpha = vAlpha * a * soft * exp(-wx_fogOD(uCamPos, vWorld));
+  // 真横を向いた瞬間は薄い（厚さがほぼゼロの板なので）。ちらつきが「舞っている」に見える
+  alpha *= 0.25 + 0.75 * vKind.y;
+  // 空を背にした小さなくずは、雨のカーテン越しの逆光で色も形も飛ぶ。
+  // 背景が「空」かどうかは線形深度で見る。遠景の山は 4km 台までなので、
+  // fog.ts と同じ「8500m 超え＝空」の線引きを使う（3000m で切ると遠くの山も空と判定して
+  // 尾根の定点でくずが丸ごと消える。実際に消えた）
+  float bg = wx_sceneDepth(gl_FragCoord.xy);
+  float onSky = smoothstep(6000.0, 8500.0, bg);
+  alpha *= 1.0 - 0.88 * onSky;
+  // 彩度も落とす（空を背にした 1〜2mm の粒に色は残らない）
+  float y = dot(col, vec3(0.2126, 0.7152, 0.0722));
+  col = mix(col, vec3(y), onSky * 0.85);
   float m = wx_mathDot(q, vVel) * soft * step(0.001, vAlpha);
   col = mix(col, FLIP_LINE, vFm);
   alpha = mix(alpha, m * 0.9, vFm);

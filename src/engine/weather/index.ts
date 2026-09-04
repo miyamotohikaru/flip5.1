@@ -1,4 +1,4 @@
-// 天気の表現。雨（筋・しぶき・ヴェール）・地表霧のむら・稲光・花粉・蛍・葉・風の見える化。
+// 天気の表現。雨（筋・しぶき・波紋）・地表霧のむら・稲光・花粉・蛍・林床のくず・風の見える化。
 // 契約:
 //   - 状態は env.weather（cloud / rain / fog / wind / wetness / storm / gust）。ここでは見た目だけを担当
 //   - env.lightning（flash / lastStrikeTime / position / strikeIndex）と uniforms.uLightning / uLightningPos / uGust は
@@ -44,7 +44,7 @@ export type WeatherCounts = {
   dust: number;
   /** 夜の蛍 */
   fireflies: number;
-  /** 風に飛ぶ葉 */
+  /** 風に舞う林床のくず（松葉の束・樹皮の小片・枯れ草。針葉樹の森なので広葉樹の落ち葉は出さない） */
   leaves: number;
 };
 
