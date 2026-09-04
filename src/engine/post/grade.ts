@@ -43,6 +43,7 @@ uniform float uAutoStrength;
 uniform float uAutoRef;
 uniform vec2 uAutoRange;
 uniform float uGroundCap;
+uniform float uGroundCapPow;
 uniform float uWarmth;
 uniform float uSaturation;
 uniform vec3 uNeutral;
@@ -331,7 +332,12 @@ void main(){
   // 「日なたの草は表示線形 0.13〜0.20」（docs/CRITIC.md）の上側だけに効かせるための仕掛け
   if (uGroundCap > 0.0) {
     float lg = exp2(adapt.y) * uExposure;
-    autoScale = min(autoScale, uGroundCap / max(lg, 1e-5));
+    float capScale = uGroundCap / max(lg, 1e-5);
+    // 上限までの余裕（1 以下なら超過）。べきを掛けて「超えているほど強く」押さえる＝やわらかい膝。
+    // uGroundCapPow = 1 なら単純な min() と同じ。上限そのものを下げると、上限のすぐ下にいる
+    // 定点（noon / cloudy）まで同じだけ暗くなってしまうので、超過の量で差をつける
+    float k = min(1.0, capScale / max(autoScale, 1e-5));
+    autoScale *= pow(k, uGroundCapPow);
   }
   // 数式ビューの色（FLIP_BG / FLIP_LINE）は「紙とインク」なので、露出を掛けない。
   // 掛けると夜（露出 30）で青黒い紙が水色に飛ぶ。裏返った画素だけ露出 1 に寄せる
@@ -417,6 +423,8 @@ export function gradeUniforms(): Record<string, THREE.IUniform> {
     uAutoRange: { value: new THREE.Vector2(0.7, 1.45) },
     /** 近景（地面側）の露出後の明るさの上限。0 で無効 */
     uGroundCap: { value: 0 },
+    /** 上限を超えた分の押さえ方（1 = 単純な頭打ち、>1 = 超えるほど強く） */
+    uGroundCapPow: { value: 1 },
     uWarmth: { value: 0 },
     uSaturation: { value: 0.96 },
     /** 天気ごとの白バランス（嵐のマゼンタを中性へ）。既定は無変換 */

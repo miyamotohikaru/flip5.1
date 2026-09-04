@@ -241,6 +241,7 @@ export class Post {
     // 上側だけに効かせる。下げる方向にしか働かないので、暗い定点は 1 も動かない。
     // 数式ビューは白い線が地面を埋めるので掛けない
     u.uGroundCap.value = env.flip > 0.5 || this.dbg.has("nograde") ? 0 : this.groundCap;
+    u.uGroundCapPow.value = this.groundCapPow;
     // 嵐だけ白バランスで中性に寄せる（批評R6: 非閃光フレームの空の R−G を ±4 へ）。
     // 空担当がオゾンを落とすと晴天の薄明の青紫まで失うため、post 側で嵐だけ補正する。
     // smoothstep で立ち上げるので、rain プリセット（storm 0.15）はほぼ素通し
@@ -278,7 +279,9 @@ export class Post {
    * 近景（地面側）の露出後の明るさの上限。0 で無効。
    * `?gcap=` で上書きできる（較正用）
    */
-  groundCap = 0.257;
+  groundCap = 0.262;
+  /** 上限を超えた分の押さえ方（1 = 単純な頭打ち、>1 = 超えるほど強く） */
+  groundCapPow = 1.8;
 
   /** 一人称で被写界深度を掛けるか（近くを見ているときだけ） */
   private dofWanted(photo: boolean): boolean {
