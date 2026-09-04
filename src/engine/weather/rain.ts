@@ -4,6 +4,7 @@ import * as THREE from "three";
 import { LAYER } from "../core/pipeline";
 import { hash2 } from "../core/noise";
 import { WX_COMMON, WX_QUAD_ATTR, WX_FLIP_VS } from "./glsl";
+import { Ripples } from "./ripples";
 import type { Weather } from "./index";
 
 /** インスタンス化した板（x∈[-0.5,0.5], y∈[0,1]）。aSeed = 4つのハッシュ、aIndex = 通し番号 */
@@ -150,7 +151,7 @@ ${WX_QUAD_ATTR}
 uniform vec3 uCamPos;
 uniform float uRain;
 uniform float uSplashGrid;
-/** x = 一辺（m）, y = 1 なら水面の波紋・0 なら陸のしぶき */
+/** x = 一辺（m）。y は「陸か水か」だったが、水面の波紋は ripples.ts の画素シェーダへ移したので常に 0 */
 uniform vec2 uSplashMode;
 varying vec2 vQ;
 varying float vLife;
@@ -257,14 +258,14 @@ void main(){
 export class Rain {
   streaks: THREE.Mesh;
   splashes: THREE.Mesh;
-  /** 湖面の波紋（陸のしぶきとは別の格子。広く薄く撒く） */
+  /** 湖面の波紋（画面いっぱいの 1 パス。ripples.ts）。
+   *  水担当が法線リングを入れるときは `weather.rain.ripples.visible = false` でここを止める */
   ripples: THREE.Mesh;
+  rippleFx: Ripples;
   streakMat: THREE.ShaderMaterial;
   splashMat: THREE.ShaderMaterial;
-  rippleMat: THREE.ShaderMaterial;
   private streakGeo: THREE.InstancedBufferGeometry;
   private splashGeo: THREE.InstancedBufferGeometry;
-  private rippleGeo: THREE.InstancedBufferGeometry;
   private maxStreaks: number;
   private maxSplashes: number;
 
@@ -313,27 +314,9 @@ export class Rain {
     this.splashes.name = "weather.splash";
     w.group.add(this.splashes);
 
-    // 湖面の波紋: 60m 四方に薄く撒く（岸から離れた水面まで「雨が当たっている」と分かるように）
-    const rgrid = Math.ceil(Math.sqrt(this.maxSplashes * 3));
-    this.rippleGeo = makeQuadInstances(rgrid * rgrid, 311);
-    this.rippleMat = new THREE.ShaderMaterial({
-      uniforms: w.bind({ uSplashGrid: { value: rgrid }, uSplashMode: { value: new THREE.Vector2(60, 1) } }),
-      vertexShader: SPLASH_VERT,
-      fragmentShader: SPLASH_FRAG,
-      transparent: true,
-      depthWrite: false,
-      depthTest: true,
-      blending: THREE.NormalBlending,
-      premultipliedAlpha: true,
-      side: THREE.DoubleSide,
-    });
-    this.ripples = new THREE.Mesh(this.rippleGeo, this.rippleMat);
-    this.ripples.frustumCulled = false;
-    this.ripples.layers.set(LAYER.TRANSPARENT);
-    this.ripples.renderOrder = 69;
-    this.ripples.castShadow = false;
-    this.ripples.name = "weather.ripple";
-    w.group.add(this.ripples);
+    // 湖面の波紋。板を撒くのはやめて、画面いっぱいの 1 パスで格子のセルごとに評価する（ripples.ts）
+    this.rippleFx = new Ripples(w);
+    this.ripples = this.rippleFx.mesh;
   }
 
   update() {
@@ -344,6 +327,6 @@ export class Rain {
     this.streaks.visible = n > 8;
     this.streakGeo.instanceCount = Math.max(n, 1);
     this.splashes.visible = wt.rain > 0.03;
-    this.ripples.visible = wt.rain > 0.03;
+    this.rippleFx.update();
   }
 }
