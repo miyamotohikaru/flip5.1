@@ -66,6 +66,13 @@ for (const t of targets) {
   const t0 = Date.now();
   await page.goto(url, { waitUntil: "networkidle0", timeout: 120000 });
   await page.waitForFunction(() => window.__flip && window.__flip.ready, { timeout: 120000 });
+  // 入場する URL では、入口（黒板つき）が DOM から消えるまで待つ。
+  // 機が混んでいると 1.1 秒のフェードが終わる前に撮れて、**チョークの式が世界の上に写る**
+  // （2026-09-04 に storm で発生。155ms/frame のとき）。撮り直しでは出ないので気づきにくい。
+  if (/[?&](shot|auto)=/.test(url)) {
+    await page.waitForFunction(() => !document.querySelector(".landing"), { timeout: 30000 })
+      .catch(() => console.log("  ※ 入口が消えるのを待てなかった（この絵は採点に使わないこと）"));
+  }
   await sleep(flag("wait") ? wait : (t.wait ?? wait));
   const stats = await page.evaluate(() => {
     const w = window.__flip;
