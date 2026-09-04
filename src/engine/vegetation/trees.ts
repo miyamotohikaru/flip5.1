@@ -360,8 +360,10 @@ export class Trees {
       }
       c.visible = true;
       const t = Math.min(1, Math.max(0, (d - far * 0.06) / (far * 0.55)));
-      // 最遠でも 45% は残す。15% まで間引くと、林が「1 本ずつ離れて立つ黒い点」になる
-      const frac = 1 - 0.55 * t * t * (3 - 2 * t);
+      // 最遠でも 78% は残す。45% まで間引くと、遠くの林で樹冠がつながらず
+      // 「1 本ずつ数えられる粒の散らばり」になる（統合担当の要件 4）。
+      // インポスターは 1 本 2 三角形なので、本数を戻しても三角形は 1% も動かない
+      const frac = 1 - 0.22 * t * t * (3 - 2 * t);
       c.count = Math.max(1, Math.ceil(info.full * frac));
     }
   }
