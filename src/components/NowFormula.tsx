@@ -33,8 +33,11 @@ export default function NowFormula({ world, active, compact }: Props) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.code !== "KeyG" || e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
-      const tag = (e.target as HTMLElement | null)?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      // 文字を打ち込む欄だけ素通りさせる（range まで止めると、実験室のつまみを触ったあと G が効かなくなる）
+      const el = e.target as HTMLElement | null;
+      const tag = el?.tagName;
+      if (tag === "TEXTAREA" || el?.isContentEditable) return;
+      if (tag === "INPUT" && (el as HTMLInputElement).type !== "range") return;
       setOn((v) => {
         if (!v) wake();
         return !v;
