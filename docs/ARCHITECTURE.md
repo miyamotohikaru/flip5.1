@@ -63,6 +63,18 @@ URL パラメータ（`src/engine/core/params.ts`）:
 `?seed=12345` 世界のシード（既定 20271337 ＝ 今の谷）／ `?lab=1` 実験室を開いて始める ／
 `?p=terrain.amp:1.4,sky.mie:2` 実験室のつまみ（`src/engine/lab/params.ts`）。
 
+**切り分け用（バグの担当を決める前に必ず通す）:**
+`?dbg=noveg` 草も木も出さない ／ `nograss` ／ `notrees` ／ `imponly` 遠景の板だけ ／ `norocks` ／
+`nosunocc` 地平の遮蔽なし ／ `noshadow` ／ `noref` 映り込みなし ／ `nocopy` ／ `notrans` ／ `nopost` ポスト前の絵。
+`?tdbg=1..14` 地形の層別（`terrain/glsl.ts` の `uTerrainDebug`）:
+1 太陽の見え方 ／ 2 AO ／ 3 法線 ／ 4 cavity ／ 5 地平角 ／ 6 影なし ／ 7 林床・土・ガレ ／
+8 地色だけ ／ 9 細部なし ／ 12 砂・土・ガレのマスク ／ **13 距離帯** ／ **14 画素の足跡**。
+
+**13 と 14 は 2026-09-04 に足した。** 「遠景ににじみが出ている」と思った矩形が実は 9〜45m の足元だった、
+という取り違えが 3 ラウンド続いたため。**矩形を指摘する前に 13 で距離を、14 で 1 画素が地面で覆う長さを測る。**
+浅い角度では 1 画素が奥行き方向にだけ潰れて 12〜50cm を覆うので、距離ゲートでは模様を守れない
+（`lodFine` / `lodMid` がミップ相当の役をする）。
+
 ### シード（`core/seed.ts`）
 **全部の乱数はひとつの数から生える。** `setSeed(n)` / `getSeed()` / `subSeed(用途)` / `seedOffset(用途, i)`。
 用途は terrain（地形の置換表・角度の表）/ noise（共通ノイズの置換表）/ place（配置のハッシュの塩）/
