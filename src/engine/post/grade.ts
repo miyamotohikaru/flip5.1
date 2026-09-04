@@ -42,8 +42,11 @@ uniform float uExposure;
 uniform float uAutoStrength;
 uniform float uAutoRef;
 uniform vec2 uAutoRange;
+uniform float uGroundCap;
 uniform float uWarmth;
 uniform float uSaturation;
+uniform vec3 uNeutral;
+uniform float uTintFix;
 uniform float uContrast;
 uniform float uPivot;
 uniform float uLift;
@@ -181,6 +184,19 @@ vec3 gradeColor(vec3 c){
   // 彩度
   l = post_luma(c);
   c = mix(vec3(l), c, uSaturation);
+  // 天気ごとの色みの補正（いまは嵐だけ）。嵐の空は雨のカーテンの散乱と
+  // 大気の緑の吸収でマゼンタ（＝緑の欠け）に転ぶ。
+  // ① 緑–マゼンタ軸だけを取る: G を R と B の中点へ寄せる。転びの量に比例するので、
+  //    転びの弱いフレームを行き過ぎて緑にすることがない（固定ゲインだとそれが起きる）
+  // ② そのうえで白バランスの微調整。他の天気では uTintFix=0・uNeutral=(1,1,1) で無変換
+  if (uTintFix > 0.0) {
+    float lBefore = post_luma(c);
+    c.g = mix(c.g, 0.5 * (c.r + c.b), uTintFix);
+    c *= uNeutral;
+    // 色みだけを動かし、明るさは 1 も変えない（他の担当が明るさの変化を追わずに済むように）
+    float lAfter = post_luma(c);
+    c *= lAfter > 1e-5 ? lBefore / lAfter : 1.0;
+  }
   return c;
 }
 
@@ -306,10 +322,17 @@ void main(){
   c += lensFlare(uv, sunVis);
 
   // 自動露出（env.exposure を基準に ±）。露出後の平均輝度が uAutoRef から離れた分だけ、部分的に寄せる
-  float logAvg = texture2D(tAdapt, vec2(0.5)).r;
-  float L = exp2(logAvg) * uExposure;
+  vec2 adapt = texture2D(tAdapt, vec2(0.5)).rb;   // r = 全体の log 平均, b = 地面側の log 平均
+  float L = exp2(adapt.x) * uExposure;
   float autoScale = pow(uAutoRef / max(L, 1e-5), uAutoStrength * (1.0 - uFlip * 0.8));
   autoScale = clamp(autoScale, uAutoRange.x, uAutoRange.y);
+  // 近景の頭打ち: 地面（近景の草）の露出後の明るさが uGroundCap を超えないところまで露出を下げる。
+  // 下げる方向にしか働かないので、暗い定点（dawn / night / storm / forest）は 1 も動かない。
+  // 「日なたの草は表示線形 0.13〜0.20」（docs/CRITIC.md）の上側だけに効かせるための仕掛け
+  if (uGroundCap > 0.0) {
+    float lg = exp2(adapt.y) * uExposure;
+    autoScale = min(autoScale, uGroundCap / max(lg, 1e-5));
+  }
   // 数式ビューの色（FLIP_BG / FLIP_LINE）は「紙とインク」なので、露出を掛けない。
   // 掛けると夜（露出 30）で青黒い紙が水色に飛ぶ。裏返った画素だけ露出 1 に寄せる
   float totalExp = mix(uExposure * autoScale, 1.0, fm);
@@ -392,8 +415,14 @@ export function gradeUniforms(): Record<string, THREE.IUniform> {
     uAutoStrength: { value: 0.45 },
     uAutoRef: { value: 0.5 },
     uAutoRange: { value: new THREE.Vector2(0.7, 1.45) },
+    /** 近景（地面側）の露出後の明るさの上限。0 で無効 */
+    uGroundCap: { value: 0 },
     uWarmth: { value: 0 },
     uSaturation: { value: 0.96 },
+    /** 天気ごとの白バランス（嵐のマゼンタを中性へ）。既定は無変換 */
+    uNeutral: { value: new THREE.Vector3(1, 1, 1) },
+    /** 緑–マゼンタ軸の補正（G を R と B の中点へ寄せる割合）。既定は無変換 */
+    uTintFix: { value: 0 },
     uContrast: { value: 1.04 },
     /** コントラストの軸（ガンマ空間）。屋外の中間調 */
     uPivot: { value: 0.42 },

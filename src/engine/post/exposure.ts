@@ -1,5 +1,6 @@
 // 自動露出と自動ピント。
-//   計測: ブルームの最小段（1/64）を 1 画素で読み切り、「やや下寄り・空を軽く」の log 平均輝度を出す。
+//   計測: ブルームの最小段（1/64）を 1 画素で読み切り、「やや下寄り・空を軽く」の log 平均輝度と、
+//         「地面側だけ」の log 平均（近景の頭打ち用）を出す。
 //         同時に画面中央の深度から焦点距離（m）を出す
 //   追従: 1×1 の RT をピンポンして、時定数付きで寄せる（明→暗はゆっくり、暗→明は速く）
 //   CPU へは数フレームに 1 回だけ非同期で読み戻す（被写界深度のパスを飛ばす判断と stats 用）
@@ -16,8 +17,9 @@ uniform vec2 uDepthTexel;
 uniform float uNear;
 uniform float uFar;
 void main(){
-  // 輝度: 中央に重み
+  // 輝度: 中央に重み。あわせて「地面側だけ」の log 平均も取る（下の頭打ちに使う）
   float sum = 0.0, tw = 0.0;
+  float gsum = 0.0, gtw = 0.0;
   for (int y = 0; y < 40; y++) {
     if (float(y) >= uLumSize.y) break;
     for (int x = 0; x < 72; x++) {
@@ -30,11 +32,18 @@ void main(){
       float w = exp(-dot(d, d) * 4.0) + 0.10;
       w *= mix(1.0, 0.45, smoothstep(0.55, 0.85, uv.y));
       float l = post_luma(texture2D(tLum, uv).rgb);
-      sum += log2(max(l, 1e-5)) * w;
+      float ll = log2(max(l, 1e-5));
+      sum += ll * w;
       tw += w;
+      // 近景（画面の下 1/3・左右の中央 50%）。批評が「日なたの草」を測っているのと同じ範囲。
+      // ここがどれだけ明るいかを別に測り、合成側で頭打ちに使う
+      float gw = (1.0 - smoothstep(0.20, 0.36, uv.y)) * (1.0 - smoothstep(0.20, 0.30, abs(uv.x - 0.5)));
+      gsum += ll * gw;
+      gtw += gw;
     }
   }
   float logLum = sum / tw;
+  float logGround = gsum / max(gtw, 1e-4);
   // 焦点: 中央の 5×5（3px 間隔）の対数平均距離
   float fs = 0.0;
   for (int j = -2; j <= 2; j++) {
@@ -44,7 +53,7 @@ void main(){
     }
   }
   float focus = exp2(fs / 25.0);
-  gl_FragColor = vec4(logLum, focus, 0.0, 1.0);
+  gl_FragColor = vec4(logLum, focus, logGround, 1.0);
 }
 `;
 
@@ -62,8 +71,9 @@ void main(){
   float kf = 1.0 - exp(-uDt * 5.0);
   float lum = mix(p.x, n.x, kl);
   float focus = exp2(mix(log2(max(p.y, 0.05)), log2(max(n.y, 0.05)), kf));
-  if (uSnap > 0.5) { lum = n.x; focus = n.y; }
-  gl_FragColor = vec4(lum, focus, 0.0, 1.0);
+  float ground = mix(p.z, n.z, kl);
+  if (uSnap > 0.5) { lum = n.x; focus = n.y; ground = n.z; }
+  gl_FragColor = vec4(lum, focus, ground, 1.0);
 }
 `;
 
@@ -78,6 +88,8 @@ export class Exposure {
   /** CPU に読み戻した値（数フレーム遅れ） */
   avgLum = 0.18;
   focus = 5;
+  /** 地面側だけの平均輝度（CPU に読み戻した値）。近景の頭打ちの調整用 */
+  groundLum = 0.18;
   private frames = 0;
   private reading = false;
   private readBuf: Float32Array | Uint16Array;
@@ -139,6 +151,7 @@ export class Exposure {
         .then(() => {
           if (Number.isFinite(buf[0])) this.avgLum = Math.pow(2, buf[0]);
           if (Number.isFinite(buf[1]) && buf[1] > 0) this.focus = buf[1];
+          if (Number.isFinite(buf[2])) this.groundLum = Math.pow(2, buf[2]);
         })
         .catch(() => {})
         .finally(() => {

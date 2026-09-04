@@ -274,6 +274,13 @@ body.bb-on .loading-log {
   color: rgba(233, 245, 235, 0.72);
   margin-bottom: 1px;
 }
+/* 式の下の一言（いまは「mtn が 0 なのは山脈の外だから」だけ）。出典行より上、本文より小さく */
+.bbnow-note {
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  color: rgba(226, 242, 231, 0.62);
+  margin-top: 2px;
+}
 .bbnow-src {
   font-family: var(--font-mono, monospace);
   font-size: 10px;

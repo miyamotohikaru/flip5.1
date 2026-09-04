@@ -12,6 +12,7 @@ import type { Env } from "../core/env";
 import { heightAt, normalAt, WORLD } from "../core/heightfield";
 import { forestDensity } from "../vegetation/vegmap";
 import { waveParams } from "./formulas";
+import { E, formulaById, type Node } from "../../data/formulas";
 
 export type LabelKind = "terrain" | "lake" | "sky" | "tree";
 
@@ -21,8 +22,8 @@ export type WorldLabel = {
   title: string;
   /** 見出し（欧文） */
   latin: string;
-  /** 数式（等幅。短く） */
-  lines: string[];
+  /** 数式。入口の黒板と同じ線文字で書くので、文字列ではなく木（Node）で持つ */
+  nodes: Node[][];
   /** ひとことの説明（和文。専門知識ゼロの人向け） */
   note: string;
   /** 世界座標 */
@@ -36,7 +37,10 @@ export type WorldLabel = {
 };
 
 const DEG = Math.PI / 180;
-const MINUS = "−";
+
+// ふだに貼る式は、黒板と同じ src/data/formulas.ts から取る（二重に書くと必ずずれる）
+const HEIGHT = formulaById("terrain.h")!.body;
+const WAVE = formulaById("water.wave")!.body;
 
 /** 角 a（rad）方向、距離 d の水平座標 */
 function at(px: number, pz: number, a: number, d: number): [number, number] {
@@ -108,11 +112,12 @@ export function buildLabels(env: Env, compact: boolean): WorldLabel[] {
       kind: "lake",
       title: "湖",
       latin: "LAKE",
-      lines: compact
-        ? ["h(x,t) = Σₖ ĥ(k,t)·e^(i k·x)", `ω = √(9.81k + 7.4e${MINUS}5k³)`]
+      nodes: compact
+        ? [WAVE, E(`ω(k) = \\r{9.81k + 7.4·10^{-5}k^{3}}`)]
         : [
-            "h(x,t) = Σₖ ĥ(k,t)·e^(i k·x)",
-            `ω(k) = √(9.81k + 7.4e${MINUS}5k³)   λₚ = ${w.lambdaP.toFixed(2)} m`,
+            WAVE,
+            E(`ω(k) = \\r{9.81k + 7.4·10^{-5}k^{3}}`),
+            E(`λ_p = ${w.lambdaP.toFixed(2)} m`),
           ],
       note: "波は風の強さから計算",
       pos: new THREE.Vector3(lakeHit[0], lake + 1.1, lakeHit[1]),
@@ -133,12 +138,12 @@ export function buildLabels(env: Env, compact: boolean): WorldLabel[] {
       kind: "terrain",
       title: "地形",
       latin: "TERRAIN",
-      lines: compact
-        ? ["h(x,z) = base + mtn + fine", `ここ h = ${hh.toFixed(1)} m`]
+      nodes: compact
+        ? [HEIGHT, E(`h = ${hh.toFixed(1)} m`)]
         : [
-            "h(x,z) = base + mtn + fine",
-            "mtn = ridged₅(warp(x,z))·amp(方角)",
-            `ここ h = ${hh.toFixed(1)} m`,
+            HEIGHT,
+            E(`mtn = R(\\F{warp}{x,z})·\\F{amp}{θ}`),
+            E(`h = ${hh.toFixed(1)} m`),
           ],
       note: "山の形は 1 本の関数",
       pos: new THREE.Vector3(terHit[0], hh + 16, terHit[1]),
@@ -159,11 +164,14 @@ export function buildLabels(env: Env, compact: boolean): WorldLabel[] {
       kind: "tree",
       title: "木",
       latin: "TREES",
-      lines: compact
-        ? ["φ = j·137.5° + 2πb/n", `δ = 8° + 30°·(1${MINUS}u)`]
+      // ここは「失敗した式（δ = 8° + 30°(1-u), n_B = 6）」を貼ってしまっていた。
+      // formulas.ts の直したほう（輪生 12〜16 本）に合わせる。**嘘を書かない**
+      nodes: compact
+        ? [E(`φ_{j,b} = 2.39996·j + \\f{2πb}{n_B}`), E(`δ(u) = 15° + 35°(1-u)`)]
         : [
-            "φ = j·137.5° + 2πb/n     枝の向き",
-            `δ = 8° + 30°·(1 ${MINUS} u)      垂れ角`,
+            E(`φ_{j,b} = 2.39996·j + \\f{2πb}{n_B}`),
+            E(`δ(u) = 15° + 35°(1-u) ± 10°`),
+            E(`n_B = 12~16`),
           ],
       note: "枝は幹から生える規則",
       pos: new THREE.Vector3(treeHit[0], treeHit[2] + 20, treeHit[1]),
@@ -191,11 +199,14 @@ export function buildLabels(env: Env, compact: boolean): WorldLabel[] {
     kind: "sky",
     title: "空",
     latin: "SKY",
-    lines: compact
-      ? [`L = ∫ T·(σᴿpᴿ + σᴹpᴹ)·E☉ ds`, `σᴿ ∝ e^(${MINUS}h/8km)`]
+    nodes: compact
+      ? [
+          E(`L = \\I{0}{D}{T·(σ^{R}p^{R} + σ^{M}p^{M})·E_☉}{s}`),
+          E(`σ^{R} ∝ e^{-h/8km}`),
+        ]
       : [
-          `L(ω) = ∫₀ᴰ T·(σᴿpᴿ(θ) + σᴹpᴹ(θ))·E☉ ds`,
-          `σᴿ = (5.8, 13.6, 33.1)e${MINUS}3·e^(${MINUS}h/8km)`,
+          E(`L(ω) = \\I{0}{D}{T·(σ^{R}p^{R}(θ) + σ^{M}p^{M}(θ))·E_☉}{s}`),
+          E(`σ^{R} = (5.8, 13.6, 33.1)·10^{-3}·e^{-h/8km}`),
         ],
     note: "空の色は光の散らばり",
     pos: skyPos,

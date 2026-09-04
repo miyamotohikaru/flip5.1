@@ -96,6 +96,11 @@ export default function NowFormula({ world, active, compact }: Props) {
 
   const f = formulaById(id);
   const show = active && on && !hidden;
+  // 「山の式なのに mtn が 0」は批評が R3 から 5 ラウンド挙げている誤読。山脈の外にいるだけなので一言添える
+  const note =
+    id === "terrain.h" && values.mtn !== undefined && Math.abs(values.mtn) < 0.05
+      ? "mtn が 0 なのは、いま山脈の外にいるから"
+      : null;
   // 入場前・?nohud=1 では DOM ごと出さない（世界の描画に一切のせない）
   if (!active || !f || !f.now) return null;
   return (
@@ -105,6 +110,7 @@ export default function NowFormula({ world, active, compact }: Props) {
           <span>いま計算していること — {f.title}</span>
         </div>
         <FormulaSvg nodes={f.now} size={compact ? 14 : 16.5} seed={11} values={values} grain={false} />
+        {note && <div className="bbnow-note">{note}</div>}
         <div className="bbnow-src">{f.src}</div>
       </div>
     </div>
