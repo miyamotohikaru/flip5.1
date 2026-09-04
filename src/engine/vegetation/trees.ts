@@ -28,11 +28,11 @@ function tierSettings(q: QualitySettings): Tier {
     case "mid":
       // 携帯は 3m の木までインポスターに落ちていた（批評 R6 の携帯 forest）。
       // high の 0.65 倍 → 0.85 倍へ。三角形は 39 万しか使っていないので余裕がある
-      return { r0: 29, r1: 76, band: 7, capNear: 120, capMid: 280, cell: 10, impCell: 216, chunk: 768, shadowR: 182, capShadow: 330 };
+      return { r0: 29, r1: 76, band: 7, capNear: 120, capMid: 280, cell: 10, impCell: 240, chunk: 768, shadowR: 182, capShadow: 330 };
     case "ultra":
-      return { r0: 65, r1: 170, band: 10, capNear: 320, capMid: 1100, cell: 7.5, impCell: 252, chunk: 1024, shadowR: 330, capShadow: 2400 };
+      return { r0: 65, r1: 170, band: 10, capNear: 320, capMid: 1100, cell: 7.5, impCell: 288, chunk: 1024, shadowR: 330, capShadow: 2400 };
     default:
-      return { r0: 40, r1: 104, band: 8, capNear: 220, capMid: 640, cell: 8, impCell: 252, chunk: 1024, shadowR: 260, capShadow: 520 };
+      return { r0: 40, r1: 104, band: 8, capNear: 220, capMid: 640, cell: 8, impCell: 288, chunk: 1024, shadowR: 260, capShadow: 520 };
   }
 }
 
