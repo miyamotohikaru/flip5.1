@@ -59,6 +59,8 @@ export class Water {
   shoreDecalEnabled = true;
   /** 調査用: ?dbg=nowater で水を全部止める（負荷の差分を測る） */
   private disabled = typeof location !== "undefined" && /[?&]dbg=[^&]*nowater/.test(location.search);
+  /** 調査用: ?dbg=noshore で岸の濡れ砂デカールだけ止める（水際の線がどちらのものかを切り分ける） */
+  private noShore = typeof location !== "undefined" && /[?&]dbg=[^&]*noshore/.test(location.search);
   private reflCamera = new THREE.PerspectiveCamera();
   private textureMatrix = new THREE.Matrix4();
   private lastTime = -1;
@@ -111,6 +113,8 @@ export class Water {
       uExtinction: { value: new THREE.Vector3(0.42, 0.13, 0.085) },
       uDebug: { value: typeof location !== "undefined" ? Number((/[?&]wdbg=(\d+)/.exec(location.search) ?? [0, 0])[1]) : 0 },
       uScatterColor: { value: new THREE.Vector3(0.022, 0.115, 0.14) },
+      // 近景のうねり（shaders.ts の water_chop）。?dbg=nochop で 0 ＝ 切り分け用
+      uChopAmt: { value: typeof location !== "undefined" && /[?&]dbg=[^&]*nochop/.test(location.search) ? 0 : 1 },
     };
     bindEnvUniforms(uniforms, env);
     this.material = new THREE.ShaderMaterial({
@@ -309,7 +313,7 @@ export class Water {
     this.mesh.position.set(cam.x, WORLD.lakeLevel, cam.z);
     // 岸のデカール: 湖の近くにいるときだけ
     const nearLake = Math.hypot(cam.x, cam.z) < lakeRadiusMean() + 500 && Math.abs(cam.y - WORLD.lakeLevel) < 120;
-    this.shore.update(pipeline, this.camFwd, this.shoreDecalEnabled && nearLake && !under);
+    this.shore.update(pipeline, this.camFwd, this.shoreDecalEnabled && !this.noShore && nearLake && !under);
   }
 
   dispose() {
