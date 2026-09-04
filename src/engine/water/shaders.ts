@@ -3,8 +3,9 @@
 // GGX の太陽のギラつき → 泡 → 空気遠近 → 裏返し。
 // 共有 uniforms は env.uniforms（uTime, uWind, uRain, uStorm, uSunDir, uSunColor, uSkyAmbient, uCamPos, uLakeLevel …）。
 
-/** 頂点・フラグメント共通: 風の斑（cat's paw）・浅瀬の波 */
+/** 頂点・フラグメント共通: 風の斑（cat's paw）・浅瀬の波・近景のうねり */
 export const WATER_COMMON = /* glsl */ `
+uniform float uChopAmt;   // 近景のうねりの強さ（既定 1。?dbg=nochop で 0）
 // 風の斑。風向に長く伸びた斑が流れ、無風〜微風ではさざ波が斑の中だけに立つ。強風では一面に
 float water_gust(vec2 xz, vec2 wd, float speed, float t){
   vec2 perp = vec2(-wd.y, wd.x);
@@ -28,6 +29,57 @@ vec2 water_shoreWave(vec2 xz, float depth, float t, float speed){
   float env = smoothstep(0.0, 0.6, depth) * (1.0 - smoothstep(4.0, 30.0, depth));
   float amp = (0.012 + 0.05 * smoothstep(1.0, 10.0, speed)) * env;
   return vec2(amp * cos(ph), ph);
+}
+
+// ---- 近景のうねり（λ1.15 / 0.78 / 0.52 / 0.35 m）--------------------------------
+// なぜ FFT と別に持つか（批評R7 sunset_water「目線の近景の水面にうねりが 1 本も無い」5 ラウンド）:
+//   同じ波長帯は FFT のカスケード1（タイル 7.3m、k > 2π/1.25）が持っているが、
+//   ① 風速 2m/s では有義波高が 1.93cm しかなく、
+//   ② そこへ風の斑 water_gust が 0.08〜0.53 を掛ける（凪の斑に入ると 1/12）。
+//   結果、近景の起伏は 1〜5mm しかなく、目線 2.1m から見た 4〜25m の水面では
+//   稜線が 1 本も立たない（＝板）。実測: 下半分の行平均の残差 RMS 7.4e-3、稜線 0 本。
+// 物理の言い分:
+//   λ0.3〜1.2m の重力波は、その場の突風が止んでも吹送距離ぶん溜まって走り続ける
+//   （cat's paw で消えるのは λ<10cm の表面張力波のほう）。だから gust では消さない。
+//   浅瀬に入った重力波は屈折で稜線が岸線と平行になるので、進む向きは「岸へ」（vShoreDir）、
+//   位相は岸線からの符号付き距離 sd で測る（water_shoreWave と同じ作り）。
+// g0/g1 は「消し始め／消し終わり」を波長の何倍の足跡で置くか。画素と頂点で別（下の呼び出し側を見ること）。
+//   **1 波長に 6 標本を切ったら描いてはいけない。** g0=0.16 / g1=0.55（1 波長に 6 〜 1.8 標本）で
+//   試したところ、批評R7 の noon で湖の全面に「等高線のような同心の輪」が出た。あれは λ1.15m の波
+//   そのものではなく、λ が画素の 3 倍しかない所で出るモアレ。寄せ波（λ9m）が使っている比
+//   0.30/9 = 0.033 と 1.4/9 = 0.156（1 波長に 30 〜 6.4 標本）に合わせると消える。
+// 返り値: x = 高さ(m), y = 岸方向の傾き, z = 画素で解けずに落とした分の傾きの分散（粗さへ回す）
+vec3 water_chop(vec2 xz, float sd, float t, float speed, float fp, float g0, float g1){
+  float amp0 = 0.0060 + 0.0075 * smoothstep(0.5, 7.0, speed);   // 2m/s: 0.75cm（Hs 換算 3cm 前後）
+  // 稜線をうねらせる位相のゆらぎ（湖を一周する同心の輪にしないため）。
+  // λ28m でおおきく蛇行、λ11m と λ5m で崩す。**3 本を全成分で使い回す**
+  // （成分ごとに 2 本ずつ引くと 8 回になり、近景いっぱいの sunset_water で 0.3〜0.9ms 使う）
+  vec3 jn = vec3(flip_gnoise(xz * 0.035 + 7.3),
+                 flip_gnoise(xz * 0.090 + 21.1),
+                 flip_gnoise(xz * 0.190 + 3.1));
+  float h = 0.0, sl = 0.0, lost = 0.0;
+  for (int i = 0; i < 4; i++){
+    float fi = float(i);
+    float lam = (i == 0 ? 1.15 : (i == 1 ? 0.78 : (i == 2 ? 0.52 : 0.35)));
+    float k = 6.2831853 / lam;
+    float om = sqrt(9.81 * k + 0.000074 * k * k * k);            // 分散関係（重力＋表面張力）
+    float amp = amp0 * pow(lam / 1.15, 0.85);
+    // 重みを成分ごとに変えて、蛇行が 4 本ぴったり揃わないようにする。振れ幅は合わせて ±1.1 波長
+    vec3 w = (i == 0 ? vec3(0.75, 0.25, 0.10) : (i == 1 ? vec3(-0.55, 0.60, 0.20)
+            : (i == 2 ? vec3(0.60, -0.35, 0.35) : vec3(-0.40, 0.45, -0.45))));
+    float ph = (sd + dot(jn, w) * lam) * k - om * t + fi * 2.1;
+    float vis = 1.0 - smoothstep(lam * g0, lam * g1, fp);
+    h  += amp * cos(ph) * vis;
+    sl += -amp * k * sin(ph) * vis;
+    lost += 0.5 * (amp * k) * (amp * k) * (1.0 - vis * vis);
+  }
+  return vec3(h, sl, lost);
+}
+// 近景のうねりの効く範囲。浅すぎる所（岸）と深い所（沖）で消す × カメラからの距離
+// 深さ 26m で切るのは、water_shoreDist が深さ 33m で飽和して「位相が一定の広い板」になるため
+float water_chopEnv(float depth, float dist){
+  return uChopAmt * smoothstep(0.10, 0.90, depth) * (1.0 - smoothstep(8.0, 26.0, depth))
+       * (1.0 - smoothstep(30.0, 110.0, dist));
 }
 `;
 
@@ -80,6 +132,15 @@ void main(){
   vec3 disp = vec3((d0.x + d1.x) * uWaveAmp.z, d0.z + d1.z, (d0.y + d1.y) * uWaveAmp.z) * shoreFade;
   vec2 sw = water_shoreWave(world.xz, depth, uTime, uWind.z);
   disp.y += sw.x * (1.0 - smoothstep(40.0, 140.0, dist));
+  // 近景のうねり（実体の変位。近景では輪郭が地平線に対して上下しないと板に見える）。
+  // メッシュは極座標格子なので 1 セルの大きさは半径にほぼ比例する（等比 1.0242・周 256 分割 →
+  // 半径の 2.45%）。それを「足跡」として渡し、格子で解けない成分は頂点では動かさない
+  // （動かすとカメラが進むたびに頂点が跳ねる）。1 波長に 10 〜 4 セルで抜く。傾きの分は画素シェーダが持つ
+  float chopEnv = water_chopEnv(depth, dist);
+  if (chopEnv > 0.002) {
+    vec3 chop = water_chop(world.xz, water_shoreDist(depth), uTime, uWind.z, dist * 0.0245, 0.10, 0.24);
+    disp.y += chop.x * chopEnv;
+  }
   world += disp;
   vWorld = world;
   vDisp = disp;
@@ -113,7 +174,7 @@ uniform vec4 uWaterA;     // reflValid, reflLodMax, foamAmount, causticStrength
 uniform vec4 uWaterB;     // underwater, tanHalfFovV, rainDetail, lambdaP
 uniform vec3 uExtinction;
 uniform vec3 uScatterColor;
-uniform float uDebug;   // 調査用 ?wdbg=1 法線 2 水の色 3 映り込み 4 屈折の元 5 分散 6 泡の元 7 太陽・月のギラつき 8 泡と岸の透け 9 水中の光路長
+uniform float uDebug;   // 調査用 ?wdbg=1 法線 2 水の色 3 映り込み 4 屈折の元 5 分散 6 泡の元 7 太陽・月のギラつき 8 泡と岸の透け 9 水中の光路長 10 近景のうねり 11 映り込みのぼけの折れ目（等値線）
 uniform vec3 uWind;
 uniform vec3 uSkyAmbient;
 uniform float uRain;
@@ -254,6 +315,20 @@ void main(){
     slope += -amp * k * sin(sw.y) * vShoreDir
            * (1.0 - smoothstep(40.0, 140.0, dist)) * (1.0 - smoothstep(0.30, 1.4, fp));
   }
+  // 近景のうねり（λ1.15〜0.35m）。稜線は岸線と平行なので傾きは vShoreDir 方向。
+  // 解けなくなった成分は描かず、その傾きの分散を粗さへ回す（消えた所が鏡に戻らないように）
+  // 効かない所（沖・深い所・遠く）では 4 成分の評価ごと飛ばす。
+  // chopEnv は距離と深さだけの関数なので、隣り合う画素はほぼ同じ分岐に入る
+  float chopEnv = water_chopEnv(vDepthA, dist);
+  vec3 chop = vec3(0.0);
+  float varChop = 0.0;
+  if (chopEnv > 0.002) {
+    chop = water_chop(vWorld.xz, water_shoreDist(vDepthA), uTime, wind, fp, 0.033, 0.156);
+    slope += chop.y * chopEnv * vShoreDir;
+    varChop = chop.z * chopEnv * chopEnv;
+  }
+  // 調査用 ?wdbg=10: R = 近景のうねりの高さ(±2.5cm を 0..1)、G = その傾き、B = 効いている範囲
+  if (uDebug > 9.5 && uDebug < 10.5) { gl_FragColor = vec4(chop.x * 20.0 + 0.5, abs(chop.y) * 3.0, chopEnv, 1.0); return; }
   // 雨の波紋（法線のリング）。輪の波長は 10cm しかないので、1 画素で解けなくなったら描かない
   // （描くと 1 画素ごとに法線が暴れ、スペキュラが 2px の市松ノイズになる）。約 10m 以遠で切れる
   float ringRes = 1.0 - smoothstep(0.02, 0.12, fp);        // 1 = 輪が解ける
@@ -274,7 +349,7 @@ void main(){
   // 解析的に、しかも ringRes と連続につながる形で足す
   float varRing = 0.0075 * uRain * (1.0 - ringRes) * calmShore;
   // 粗さ²
-  float a2 = 0.0009 + var + varCap + varRing;
+  float a2 = 0.0009 + var + varCap + varRing + varChop;
   float sigma = sqrt(0.5 * var + 0.00005);
 
   vec3 sunL = uSunColor;
@@ -313,7 +388,9 @@ void main(){
     zb = mix(zb, sceneZ, bad);
     float alongR = max(zb / cosV - rayS, 0.0);
     float vert = alongR * sinDown;
-    if (uDebug > 8.5) { gl_FragColor = vec4(alongR * 0.0015, vert * 0.006, bad * 0.03, 1.0); return; }
+    // 9 だけで抜ける（前は 8.5 より大きいなら全部、だったので wdbg=10 以降がここに吸い込まれ、
+    //  別の絵を「その番号の絵」だと思って読む事故になっていた）
+    if (uDebug > 8.5 && uDebug < 9.5) { gl_FragColor = vec4(alongR * 0.0015, vert * 0.006, bad * 0.03, 1.0); return; }
     // 上流（コピーした景色）の異常値を水中に通さない。湖底の草・小石の鏡面が 1 画素の
     // 白／マゼンタの点になって残るのを防ぐ（発生源は地形・植生側）
     vec3 refr = clamp(texture2D(tSceneColor, ruv).rgb, vec3(0.0), vec3(8.0));
@@ -343,29 +420,59 @@ void main(){
     // 一方、細かいさざ波（varCap）は遠いほど像を崩す ＝ 遠方が鏡そのものにならない
     // （風 3m/s・300m 先で σ ≈ 0.06。近くは像の形が残る）
     float farMix = 0.18 + 0.55 * smoothstep(60.0, 320.0, dist);
-    float sigmaR = sqrt(0.30 * var + farMix * varCap + 0.30 * varRing + 0.00004);
+    float sigmaR = sqrt(0.30 * var + farMix * varCap + 0.30 * varRing + 0.30 * varChop + 0.00004);
     float pixAng = 2.0 * uWaterB.y / uReflSize.y;
     float blurPx = 2.0 * sigmaR / pixAng;
-    // タップ 5 本の隙間をミップで埋める。埋めないと明るい物が「等間隔の横縞」に分裂する
-    // （夜の湖面のバンディング。隙間 = 0.5·spread、その 0.45 倍をならす）
-    float tapGapPx = 0.5 * min(2.0 * sigmaR, 0.10) / pixAng;
-    float lod = clamp(max(log2(max(blurPx * max(sinDown, 0.06), 1.0)),
-                          log2(max(tapGapPx * 0.45, 1.0))), 0.0, uWaterA.y);
     // 5 タップの縦ずらしを広げすぎると、映った山の形まで平らな灰色に潰れる（雨・曇天で
     // 「映り込みが消えた」に見える）。広い方のぼけはミップ（lod）に任せ、ずらしは 0.10 rad まで
     float spread = min(2.0 * sigmaR, 0.10);
+    // 下向きのタップが地平線を割らないように、**ずらし幅そのものを連続に縮める**。
+    // 以前は下で Rk.y = max(Rk.y, 0.012) と固く止めていた。すると視線が伏せ角 0.012 rad
+    // （＝カメラ高 3.74m なら 310m 以遠）を切る所で中央のタップまで 0.012 に張り付き、
+    // 映る先が「向こう岸の尾根」から「尾根の上の空」へ跳ぶ。夜はそこだけ月明かりの空を拾うので、
+    // 水面の上端に幅 2〜4px の明るい横線が出ていた（批評R7 night「y≈595 の横一直線の継ぎ目」）。
+    // 実測でも段は 3 段あり、y≈590（中央のタップ）／y≈621（k=-1）／y≈652（k=-2）＝
+    // R.y が 0.012 ＋ 0.5·spread·|k| を切る行に、予測どおり並んでいた。
+    float spr = min(spread, max(R.y - 0.004, 0.0) * 0.85);
+    // タップ 5 本の隙間をミップで埋める。埋めないと明るい物が「等間隔の横縞」に分裂する
+    // （夜の湖面のバンディング。隙間 = 0.5·spr、その 0.45 倍をならす）
+    float tapGapPx = 0.5 * spr / pixAng;
+    // 縮めた分（spread − spr）はミップで埋め戻さない。埋め戻すと 180m 以遠の映り込みが
+    // 一様な灰色に潰れ、「向こう岸の尾根が水面に映らない」＝批評R7 night の「映り込みが弱い」
+    // そのものになる（試したら岸線直下の行内コントラストが 75.6e-3 → 70.9e-3 に落ちた）。
+    // 伏せた視線で映り込みが縦に圧縮される分は、下の blurPx·sinSoft の項がすでに持っている。
+    //
+    // sinDown の下限は max(…, 0.06) だと、伏せ角 0.06（カメラ高 3.74m なら 62m）の 1 行に
+    // ぼけ量の折れ目ができる。同じ下限を持つなめらかな形（√(s²+0.06²)）にする
+    float sinSoft = sqrt(sinDown * sinDown + 0.0036);
+    float lod = clamp(max(log2(max(blurPx * sinSoft, 1.0)),
+                          log2(max(tapGapPx * 0.45, 1.0))), 0.0, uWaterA.y);
+    // 調査用 ?wdbg=11: 横一直線の継ぎ目の犯人捜し。**等値線で出す**（露出 6・AgX を通ると
+    // 生の値は白飛びして読めない。等値線なら段差がそのまま「線の途切れ」として見える）。
+    //   R = lod の 0.25 ごとの等値線 ／ G = spread が 0.10 で頭打ちになっている所
+    //   B = 地平線を割らないようにずらし幅を縮めた所（spr < spread）
+    if (uDebug > 10.5 && uDebug < 11.5) {
+      float cl = step(0.5, fract(lod * 4.0)) * 0.16;
+      float cs = step(0.0999, spread) * 0.16;
+      float cc = step(spr, spread * 0.999) * 0.16;   // ずらし幅を地平線で縮めた所
+      gl_FragColor = vec4(cl, cs, cc, 1.0); return;
+    }
     // 「映る物までの距離」の見当。平らな水面なら鏡像カメラは水面上の点で主カメラと一致するので、
     // L をいくつにしても像は自分の画素（suv）に戻る。L は「波で像がどれだけずれるか」だけを決める。
     // 以前の 6·dist+10 は遠くで像が RT の外へ飛び、clamp した縁が引き伸ばされて継ぎ目になっていた
-    float dRefl = min(6.0 * dist + 10.0, 140.0);
+    // min(…, 140) は 21.7m の 1 行に折れ目を作る（近景の水面を横切る線）。同じ 10m〜140m を
+    // なめらかに渡す指数の飽和にする（dist=0 で 9.7m、遠方で 140m）
+    float dRefl = 140.0 * (1.0 - exp(-(6.0 * dist + 10.0) / 140.0));
     vec2 base = suv;
     vec3 refl = vec3(0.0);
     float wsum = 0.0;
     for (int k = -2; k <= 2; k++){
       float fk = float(k);
       float wk = 3.0 - abs(fk);
-      vec3 Rk = R + vec3(0.0, fk * 0.5 * spread, 0.0);
-      Rk.y = max(Rk.y, 0.012);
+      vec3 Rk = R + vec3(0.0, fk * 0.5 * spr, 0.0);
+      // spr は上で地平線を割らないように縮めてあるので、ここは「波の面が向こうを向いていて
+      // 反射が下を向いた」ときだけの保険。0.012（0.7°）は 310m 先の水面に段を作るので 0.0015（0.09°）
+      Rk.y = max(Rk.y, 0.0015);
       vec2 off = projectRefl(vWorld + Rk * dRefl) - base;
       // RT からはみ出す分は「縮める」（clamp すると縁の色が伸びて継ぎ目になる）
       vec2 room = max(mix(base - 0.003, 0.997 - base, step(0.0, off)), vec2(0.0));
