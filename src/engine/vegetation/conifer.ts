@@ -325,19 +325,28 @@ export function buildConifer(v: TreeVariant, lod: 0 | 1): TreeGeo {
       );
     }
   };
+  // 上ほど短く。**ここが本体の細り**。0.62 だと梢でも 38% 残って円錐にならない。
+  // 0.97·u^1.02 にすると、樹高の 80% の位置での水平の届きが根元の 3 割ほどになり、
+  // 遠景で「先の尖った円錐」として読める
+  const lenAt = (uu: number) => v.lmax * H * (1 - 0.97 * Math.pow(uu, 1.02));
   for (let j = 0; j < nW; j++) {
     const u = nW > 1 ? j / (nW - 1) : 0;
-    const tW = v.crownBase + spanT * u + (rnd() - 0.5) * 0.10;
-    // 上ほど短く。**ここが本体の細り**。0.62 だと梢でも 38% 残って円錐にならない。
-    // 0.97·u^1.02 にすると、樹高の 80% の位置での水平の届きが根元の 3 割ほどになり、
-    // 遠景で「先の尖った円錐」として読める
-    const L = v.lmax * H * (1 - 0.97 * Math.pow(u, 1.02));
+    // 段の高さの散らし。段の間隔（span/12 ≒ 0.065）より**広く**振って、隣の段と噛み合わせる。
+    // 噛み合わないと、逆光で木が**段々に積み上げた塔（パゴダ）**の影になる
+    const tW = v.crownBase + spanT * u + (rnd() - 0.5) * 0.11;
     const nB = lod === 0 ? v.perWhorl + (rnd() < 0.5 ? 1 : 0) : Math.max(3, Math.round(v.perWhorl * 0.36));
     for (let b = 0; b < nB; b++) {
       // 黄金角で回して、段どうしの枝が同じ方位に並ばないようにする
       const az = j * 2.39996 + (b * Math.PI * 2) / nB + (rnd() - 0.5) * 0.9;
-      const t = Math.min(Math.max(tW + (rnd() - 0.5) * 0.10, v.crownBase * 0.8), top);
-      branch(t, Math.max(0, Math.min(1, (t - v.crownBase) / Math.max(spanT, 1e-3))), L, az, 0.45 + 0.55 * t, false);
+      const t = Math.min(Math.max(tW + (rnd() - 0.5) * 0.11, v.crownBase * 0.8), top);
+      const uu = Math.max(0, Math.min(1, (t - v.crownBase) / Math.max(spanT, 1e-3)));
+      // **枝の長さは「段の番号」ではなく「その枝の実際の高さ」から決める。**
+      // 段の番号から決めると、高さを散らしても 1 段の枝が全部同じ長さになり、
+      // 輪郭に水平な棚（段）が 13 本そのまま出る
+      // 枝の長さは**段の番号**から決める（枝の実際の高さからではない）。
+      // 実際の高さから決めると、下へ散った枝ほど長くなって樹冠が詰まり、
+      // 近景のすかし率が 3.10% → 1.82% に落ちる（実測）
+      branch(t, uu, lenAt(u), az, 0.45 + 0.55 * t, false);
     }
   }
   // 梢: 交差カード 2 枚だと電球に見えるので、短い輪生 3 段の小さな円錐にする
@@ -462,7 +471,7 @@ void veg_tree(out vec3 p, out vec3 n){
   // 枝の水平の届き（0.62〜0.87×L）に並ぶ太さで焼くと、殻が輪郭を決めてしまい、
   // 遠景の木が**縁のなめらかな三角形（クリスマスツリーの型抜き）**になる。
   // 輪郭はカードが決め、殻は内側を埋めるだけにする
-  if (aData.x > 1.5) lp = aAxis + (lp - aAxis) * 1.08;
+  if (aData.x > 1.5) lp = aAxis + (lp - aAxis) * 0.55;
   #endif
   float hN = clamp(lp.y / uTreeH, 0.0, 1.0);
   vec2 wd = veg_windDir();

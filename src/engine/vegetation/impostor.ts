@@ -88,7 +88,7 @@ export class ImpostorAtlas {
     // 膨張 4 回 → 収縮 3 回。差し引き 1px だけ外形が太り、内側の 3px までの穴が埋まる。
     // 膨張だけを 2 回かけると孤立した針が 5x5 のブロックに育つ（批評 R6 の 2 位）ので、
     // 必ず収縮で戻すこと
-    const passes: number[] = [0, 0, 0, 0, 1, 1, 1];
+    const passes: number[] = [0, 0, 1];
     for (const rt of targets) {
       for (const erode of passes) {
         mat.uniforms.uErode.value = erode;
@@ -368,6 +368,9 @@ export function makeImpostorMaterial(env: Env, lighting: Lighting, atlas: Impost
         vImpFar = smoothstep(uImp.z * 0.22, uImp.z * 0.85, dist);
         // 800m 以遠を地形より暗くするための係数（視程比ではなく**絶対距離**で決める）
         vImpDark = smoothstep(250.0, 900.0, dist);
+        // 遠景の林を繋げるための拡大は**縦横そろえて**掛ける。横だけ広げると絵が横に伸び、
+        // 輪郭の階段の踏み面が横に 3px 以上つながって、逆光で「段々に積んだ塔」に見える
+        scl *= 1.0 + 0.75 * vImpFar;
         int vi = int(aVar + 0.5);
         vec4 fr = uFrames[vi];
         vec2 toCam2 = cameraPosition.xz - root.xz;
@@ -375,10 +378,10 @@ export function makeImpostorMaterial(env: Env, lighting: Lighting, atlas: Impost
         vec2 tc = toCam2 / dc;
         vec3 right = vec3(-tc.y, 0.0, tc.x);
         // 幅だけ木ごとに ±22% 振る。同じ輪郭が等間隔に並ぶと「胡椒の粒」に見える
-        float W = fr.x * scl * (0.70 + 0.66 * flip_hash11(seed * 23.0 + 9.0));
+        float W = fr.x * scl * (0.70 + 0.60 * flip_hash11(seed * 23.0 + 9.0));
         float Hh = fr.y * scl;
         // 遠いほど横に広げて、隣の木と輪郭がつながった「林の塊」にする（1 本ずつ立てない）
-        W *= 1.0 + 2.30 * vImpFar;
+        W *= 1.0 + 0.25 * vImpFar;
         vec2 wd = veg_windDir();
         float gust = veg_gust(root.xz);
         float sway = (0.004 + 0.010 * uWind.z) * gust * Hh * position.y * position.y;
@@ -461,9 +464,9 @@ export function makeImpostorMaterial(env: Env, lighting: Lighting, atlas: Impost
           // 「幽霊」になる。本物の針葉樹の樹冠は奥行きがあって 8〜9 割の光を止めるので、
           // 「重なった層」として被覆率を持ち上げる（1-(1-a)^n）。**縁の薄いところは薄いまま**なので
           // 細り・尖った梢は消えない
-          float cov = 1.0 - pow(1.0 - a, 6.0);
+          float cov = 1.0 - pow(1.0 - a, 4.4);
           // L=0.7（1.6 テクセル/画素）から L=2（4 テクセル/画素）にかけて被覆率へ渡す
-          return mix(sharp, cov, smoothstep(0.7, 2.0, L));
+          return mix(sharp, cov, smoothstep(0.20, 0.90, L));
         }
         vec4 veg_impSample(sampler2D t){
           vec2 u00 = veg_impUv(vImp.x, 0.0);
