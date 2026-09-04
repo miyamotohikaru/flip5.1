@@ -32,13 +32,14 @@ export type TreeVariant = {
 // 輪生（同じ高さに枝が輪になって並ぶ）を「見せない」のが要点。
 // 段数を減らして 1 段あたりの枝を増やし、枝ごとに高さ・長さ・垂れ角をばらけさせると、
 // 段々の皿ではなく「もじゃもじゃした円錐」になる。
-// 1 段あたりの枝は **枝 1 本のカード枚数を 9 → 13 に増やしたぶん減らして**、
-// 木 1 本の三角形（＝カードの総数）を変えないようにしてある
+// **1 段あたりの枝を減らしてはいけない。** 9 → 6 にしたら、樹冠の内側の暗い殻を隠す
+// 針葉が足りなくなり、中景の木が「針葉の見えないなめらかな薄緑の円錐（アイスクリームの
+// コーン）」になった（`forest` (380,40)-(820,450) の「のっぺり」画素 0.4% → 3.1%）。
 export const TREE_VARIANTS: TreeVariant[] = [
-  { H: 15, crownBase: 0.16, lmax: 0.155, whorls: 13, perWhorl: 6, sideRatio: 0.50, seed: 1 },
-  { H: 12.5, crownBase: 0.05, lmax: 0.19, whorls: 13, perWhorl: 5, sideRatio: 0.50, seed: 2 },
-  { H: 17, crownBase: 0.10, lmax: 0.16, whorls: 14, perWhorl: 6, sideRatio: 0.45, seed: 3 },
-  { H: 10, crownBase: 0.03, lmax: 0.21, whorls: 12, perWhorl: 5, sideRatio: 0.55, seed: 4 },
+  { H: 15, crownBase: 0.16, lmax: 0.155, whorls: 13, perWhorl: 9, sideRatio: 0.50, seed: 1 },
+  { H: 12.5, crownBase: 0.05, lmax: 0.19, whorls: 13, perWhorl: 7, sideRatio: 0.50, seed: 2 },
+  { H: 17, crownBase: 0.10, lmax: 0.16, whorls: 14, perWhorl: 9, sideRatio: 0.45, seed: 3 },
+  { H: 10, crownBase: 0.03, lmax: 0.21, whorls: 12, perWhorl: 7, sideRatio: 0.55, seed: 4 },
 ];
 
 
@@ -154,12 +155,11 @@ export function buildConifer(v: TreeVariant, lod: 0 | 1): TreeGeo {
       // 実効 0.54×L となり、枝の水平の届き（0.59〜0.87×L）に並んで、
       // 20〜60m の木が**縁のなめらかな緑の円錐**になる（実測・`forest` で確認）。
       // 葉と葉の 1px の隙間から空が抜ける（＝ピンホール）のを内側の暗い面で塞ぐ
-      // 半径は 0.14 → 0.16。**ここを 0.34 にしてはいけない**: 実行時に 1.6 倍まで太らせると
-      // 実効 0.54×L となり、枝の水平の届き（0.59〜0.87×L）に並んで、
-      // 20〜60m の木が**縁のなめらかな緑の円錐**になる（実測・`forest` で確認）。
-      // 葉と葉の 1px の隙間から空が抜ける（＝ピンホール）のを内側の暗い面で塞ぐ。
-      // **焼き込みでは逆に細らせる**（下の VEG_BAKE を参照）
-      const rr = v.lmax * H * (1 - 0.97 * Math.pow(u, 1.02)) * 0.34 * (1 - Math.pow(u, 6));
+      // 半径は **0.14**（前のラウンドで「殻が輪郭になる」のを直したときの値。ここを動かさない）。
+      // 枝は 50〜66° 垂れるので水平の届きは枝長のおよそ半分しかない。
+      // 実行時にこれを 0.34 まで太らせたら、中景の木が「なめらかな薄緑の円錐」になった。
+      // **焼き込みだけ 3.4 倍**にして実効 0.476×L で樹冠の内側を埋める（下の VEG_BAKE）
+      const rr = v.lmax * H * (1 - 0.97 * Math.pow(u, 1.02)) * 0.14 * (1 - Math.pow(u, 6));
       for (let k = 0; k <= shellSeg; k++) {
         const a = (k / shellSeg) * Math.PI * 2;
         const ca = Math.cos(a), sa = Math.sin(a);
@@ -275,25 +275,24 @@ export function buildConifer(v: TreeVariant, lod: 0 | 1): TreeGeo {
     // 枝 1 本を「大きな 1 枚のカード」で表すと、10〜40m で紙を貼った棒に見える（批評 R3 の 3 位）。
     // 面積 1/3 の小さなカードを 3 枚、枝に沿って位置をずらし、向きと捻りを変えて出す。
     // 総面積はほぼ同じだが、輪郭が細かくなって「もじゃもじゃした枝」に見える
-    // 1 枚が大きいと「板」に見える。**1 枚 60〜90px の色紙が数えられる**のが 3 ラウンド続いた
-    // 欠点（批評R7 の 4 番①）。枝あたりの枚数を 9 → 13 に増やし、1 枚の寸法を半分にする。
-    // そのぶん 1 段あたりの枝を 9 → 6 に減らしてあるので、三角形の総数は変わらない
-    const nCards = lod === 0 ? (spire ? 4 : 13) : 1;
+    // 1 枚が大きいと「板」に見える（批評R7 の 4 番①）。ただし**枚数を増やすために枝を減らすと
+    // 樹冠の内側の殻が透けて円錐に見える**ので、枚数は 9 のまま、1 枚の寸法だけ 0.87 倍にする
+    const nCards = lod === 0 ? (spire ? 3 : 9) : 1;
     for (let ci = 0; ci < nCards; ci++) {
-      const along = nCards === 1 ? 0 : (0.02 + (0.90 / nCards) * ci) * Lb;
-      const len = nCards === 1 ? Lb : Lb * (0.150 + 0.072 * rnd()) * (1 - 0.03 * ci);
+      const along = nCards === 1 ? 0 : (0.02 + (0.88 / nCards) * ci) * Lb;
+      const len = nCards === 1 ? Lb : Lb * (0.240 + 0.105 * rnd()) * (1 - 0.04 * ci);
       // 枝の向きから左右に振る（枝先が扇状に分かれる）
       const yawOff = nCards === 1 ? 0 : (rnd() - 0.5) * 0.62;
       const dc = d.clone().applyAxisAngle(up, yawOff).normalize();
       // いちばん内側の 2 枚は幹に沿って強く垂らす。これが無いと幹が上から下まで
       // 1 本の棒として見通せる（統合担当の指摘・R6）
       let inner = 1.0;
-      if (nCards > 1 && ci < 4) {
+      if (nCards > 1 && ci < 3) {
         const side = new THREE.Vector3().crossVectors(dc, up).normalize();
         dc.applyAxisAngle(side, -(0.45 + 0.25 * rnd())).normalize();
-        // 幹に沿って垂れる 4 枚は一回り大きく。ここが小さいと幹が上から下まで
+        // 幹に沿って垂れる 3 枚は一回り大きく。ここが小さいと幹が上から下まで
         // 1 本のピンクの棒として見通せる（批評 R6 の 6 番）
-        inner = 1.18;
+        inner = 1.38;
       }
       // 幅方向は「下」。カードごとに捻りを変えて、平らな面が揃わないようにする
       let dn = new THREE.Vector3().crossVectors(new THREE.Vector3().crossVectors(dc, up).normalize(), dc).normalize();
@@ -442,17 +441,19 @@ void veg_tree(out vec3 p, out vec3 n){
     return;
   }
   vec3 lp = position * mix(1.0, 0.92, backdrop);
-  // 樹冠の内側の殻は**遠いほど太らせる**。近景で太いと「のっぺりした緑の壁」に見え、
-  // 遠景で細いと葉と葉の 1px の隙間から空が抜けて白い点（ピンホール）になる
+  // 樹冠の内側の殻は**遠いほど少しだけ太らせる**（実効 0.077×L 〜 0.182×L）。
+  // 近景で太いと殻がそのまま輪郭になって「なめらかな円錐」に見え、
+  // 遠景で細いと葉と葉の 1px の隙間から空が抜けて白い点（ピンホール）になる。
+  // **1.0 を超えさせないこと**（0.14×1.3 = 0.182×L が上限。枝の水平の届きは 0.59〜0.87×L）
   #ifndef VEG_BAKE
-  if (aData.x > 1.5) lp = aAxis + (lp - aAxis) * mix(0.55, 1.00, smoothstep(9.0, 18.0, dist));
+  if (aData.x > 1.5) lp = aAxis + (lp - aAxis) * mix(0.55, 1.30, smoothstep(9.0, 18.0, dist));
   #endif
   #ifdef VEG_BAKE
   // 焼き込みのときは殻を**細らせる**。殻は 8 面のなめらかな円錐なので、
   // 枝の水平の届き（0.62〜0.87×L）に並ぶ太さで焼くと、殻が輪郭を決めてしまい、
   // 遠景の木が**縁のなめらかな三角形（クリスマスツリーの型抜き）**になる。
   // 輪郭はカードが決め、殻は内側を埋めるだけにする
-  if (aData.x > 1.5) lp = aAxis + (lp - aAxis) * 1.4;
+  if (aData.x > 1.5) lp = aAxis + (lp - aAxis) * 3.4;
   #endif
   float hN = clamp(lp.y / uTreeH, 0.0, 1.0);
   vec2 wd = veg_windDir();
@@ -544,9 +545,14 @@ vec4 veg_treeAlbedo(out float relief){
   relief = 0.0;
   if (vTree.y > 0.5) return vec4(FLIP_LINE, 1.0);
   if (vTree.z > 1.5) {
-    // 樹冠の内側の殻。葉の 0.35 倍の暗さ（葉の隙間から見える「奥の影」）
+    // 樹冠の内側の殻。葉の 0.35 倍の暗さ（葉の隙間から見える「奥の影」）。
+    // **1 色の面にしない。** 殻は 8 面のなめらかな円錐なので、針葉の隙間から見えたときに
+    // 「アイスクリームのコーン」として読めてしまう。針葉と同じ細かさのむらを乗せて、
+    // 見えても「葉の奥のざらざらした暗がり」に見えるようにする
+    float shellM = flip_vnoise(vBark * 26.0) * 0.62 + flip_vnoise(vBark * 78.0) * 0.38;
+    relief = shellM;
     vec3 deep = vec3(0.030, 0.066, 0.030) * (0.8 + 0.4 * flip_hash11(vTree.w * 5.0 + 1.0));
-    return vec4(deep, 1.0);
+    return vec4(deep * (0.5 + 1.05 * shellM), 1.0);
   }
   if (vTree.z < 0.5) return vec4(veg_bark(vBark, vTree.w, relief), 1.0);
   // アルファのミップは textures.ts が被覆率を保つように作ってあるので、ここでは持ち上げない
