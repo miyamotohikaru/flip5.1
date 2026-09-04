@@ -30,6 +30,24 @@ export const ATMO_COMMON = /* glsl */ `
 //                     散乱を増やすのと違って空を明るくしないので、太陽まわりが白く飛ばない
 #define FLIP_MIE_S vec3(0.86, 1.0, 1.16)
 #define FLIP_MIE_A vec3(0.43, 1.0, 2.44)
+// 切り分け用のつまみ（sky/debug.ts が ?dbg= のときだけ #define で上書きする）。既定は本番の値。
+// **sky/debug.ts の ATMO_TUNE と同じ数にすること**（CPU 側の太陽の色・露出が同じ式で動く）
+#ifndef FLIP_ABSK_DRY
+#define FLIP_ABSK_DRY 0.75
+#endif
+#ifndef FLIP_ABSK_WET
+#define FLIP_ABSK_WET 1.30
+#endif
+#ifndef FLIP_O3_K
+#define FLIP_O3_K 0.78
+#endif
+#ifndef FLIP_MIE_GROW
+#define FLIP_MIE_GROW 0.0
+#endif
+// 1 にすると R7 の式（湿度を hazeKm で読む）に戻す。?dbg=skyr7 の前後比較用。既定 0 で畳まれる
+#ifndef FLIP_WET_R7
+#define FLIP_WET_R7 0.0
+#endif
 #define FLIP_RG 6360.0
 #define FLIP_RT 6460.0
 #define FLIP_TRANS_W 256.0
@@ -40,6 +58,8 @@ export const ATMO_COMMON = /* glsl */ `
 #define FLIP_AERIAL_D 16.0
 uniform sampler2D uSkyTransLut;
 uniform vec4 uSkyParams;
+// 天気の靄 0..1（相対湿度の代わり）。吸湿成長はこれで決まる。LUT シェーダからも読む
+uniform float uFog;
 // 実験室のつまみ（core/env.ts の uLabSky）。x = ミー, y = レイリー, z = オゾン。既定は 1
 uniform vec4 uLabSky;
 #define FLIP_RGROUND (FLIP_RG + uSkyParams.w)
@@ -54,17 +74,28 @@ void flip_atmoMedium(float h, out vec3 sR, out vec3 sM, out vec3 sE){
   float dO = max(0.0, 1.0 - abs(hr - 25.0) / 15.0);
   // uLabSky = 実験室のつまみ（既定は全部 1 ＝ 何も変わらない）
   sR = vec3(5.802, 13.558, 33.1) * 1e-3 * dR * uLabSky.y;
-  // ミー（エアロゾル）。黄昏に「橙の帯」が出る量。cpu.ts の extinction() と同じ値にすること
-  // 靄が濃い＝湿った空気ほど粒子は水を含んで膨らみ、吸収が弱く散乱が強くなる（吸湿成長）。
-  // 単一散乱アルベドが 0.75 → 0.95 に上がる。ここを一定にしていたため、
-  // 靄の濃い嵐で緑だけが余計に食われ（オゾンの緑吸収と重なる）、空が藤色に寄っていた
-  float absK = mix(0.75, 0.22, smoothstep(0.025, 0.075, uSkyParams.z));
+  // ミー（エアロゾル）。黄昏に「橙の帯」が出る量。cpu.ts の extinction() と同じ値にすること。
+  //
+  // 吸湿成長（潮解）は**相対湿度**で決まる。RH 70〜80% を超えると粒子が水を含んで急に膨らむので、
+  // 地表のミストと同じ曲線 smoothstep(0.5, 1.0, uFog) を使う。
+  // **uSkyParams.z（hazeKm）で決めてはいけない**: あれは太陽が低いとき 2.5 倍に水増ししてある
+  // 「光路の長さ」のつまみなので、湿度と読むと「太陽が低い＝湿っている」という誤りになる
+  // （批評R7 の dawn の退行の原因。晴天の黄昏まで湿った扱いになっていた）。
+  //
+  // 水の殻が付くと:
+  //   ・散乱が増える（mW。水は可視光を吸わず粒も大きいので**灰色**＝ Angstrom 指数 → 0）
+  //   ・吸収する芯（砂塵・褐色炭素）は無くならない。むしろ殻がレンズになって**吸収は強まる**
+  //     （coating enhancement, Bond & Bergstrom 2006 の Eabs ≈ 1.3〜1.6）。
+  // R5 はここを逆向き（湿ると吸収が消える）にしていたので、薄明の橙が丸ごと抜けた。
+  float wet = mix(smoothstep(0.5, 1.0, uFog), smoothstep(0.025, 0.075, uSkyParams.z), FLIP_WET_R7);
+  float absK = mix(FLIP_ABSK_DRY, FLIP_ABSK_WET, wet);
   float mS = (1.0e-2 * dM + dH * 0.70) * uLabSky.x;
+  float mW = dH * FLIP_MIE_GROW * wet * uLabSky.x;
   float mA = (4.0e-3 * dM + dH * absK) * uLabSky.x;
-  sM = FLIP_MIE_S * mS;
+  sM = FLIP_MIE_S * mS + vec3(mW);
   // オゾン（Chappuis 帯）は緑を最も強く食う。ここが強いと薄明の空が藤色に寄る。
   // この大気はエアロゾルが多い設定なので、Hillaire の基準値の 0.78 倍で釣り合わせる
-  sE = sR + FLIP_MIE_S * mS + FLIP_MIE_A * mA + vec3(0.65, 1.881, 0.085) * 0.78e-3 * dO * uLabSky.z;
+  sE = sR + sM + FLIP_MIE_A * mA + vec3(0.65, 1.881, 0.085) * (FLIP_O3_K * 1.0e-3) * dO * uLabSky.z;
 }
 float flip_phaseR(float c){ return 0.0596831 * (1.0 + c * c); }
 // Cornette-Shanks
@@ -130,13 +161,15 @@ float flip_camR(vec3 camPos){ return FLIP_RGROUND + max(camPos.y, -60.0) * 0.001
 export const FLIP_ATMOSPHERE_PBR = /* glsl */ `
 #ifndef FLIP_ATMOSPHERE_INCLUDED
 #define FLIP_ATMOSPHERE_INCLUDED
+#ifndef FLIP_AERIAL_FLOOR
+#define FLIP_AERIAL_FLOOR 0.02
+#endif
 ${ATMO_COMMON}
 uniform vec3 uSunDir;
 uniform vec3 uSunColor;
 uniform vec3 uMoonDir;
 uniform vec3 uMoonColor;
 uniform vec3 uCamPos;
-uniform float uFog;
 uniform float uCloud;
 uniform float uStorm;
 uniform float uHour;
@@ -228,7 +261,7 @@ vec3 flip_applyAerial(vec3 color, vec3 worldPos){
   vec4 a = flip_aerial(worldPos);
   // 透過率に下限 0.02 を残す。最遠でも「その場所の色」が 2% 残るので、
   // 3km の山が空と同じ値になって輪郭だけの幽霊になることがない（批評R6 上位10）
-  return color * max(a.a, 0.02) + a.rgb;
+  return color * max(a.a, FLIP_AERIAL_FLOOR) + a.rgb;
 }
 
 // 雲の影（0 = 影, 1 = 日なた）。マップは原点中心・一辺 uSkyParams.x m
