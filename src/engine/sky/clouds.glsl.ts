@@ -163,17 +163,31 @@ uniform vec3 uAmbTop;
 uniform vec3 uAmbBottom;
 varying vec2 vUv;
 
+// 太陽（月）へ向かう光の減衰。**歩幅は 40→274m の 4 歩＝合計 534m しか進まない。**
+// 高い太陽なら層を抜けるのに十分だが、**太陽が地平にあると層の中を何 km も横に進む**ので、
+// 534m で測った厚さは本当の 3〜17% にしかならない。すると厚い嵐の雲でも odL が小さく出て、
+// 局所的に薄い所だけが直射で光り、空に大きな白い塊が浮く（批評R7「レンズの指紋」）。
+// 直すのに歩数は増やさない（雲は 1 画素あたり最大 128 歩、その中から呼ばれる）。
+// 歩いた 534m を「平均密度の標本」とみなし、層を抜けるまでの本当の距離で外挿する。
+#ifndef FLIP_CLOUD_LSPAN
+#define FLIP_CLOUD_LSPAN 9000.0
+#endif
 float cl_lightMarch(vec3 p, vec3 L, float base, float top){
-  float od = 0.0, t = 0.0, dt = 40.0;
+  float od = 0.0, t = 0.0, dt = 40.0, walked = 0.0;
   for (int i = 0; i < 4; i++){
     t += dt;
     vec3 q = p + L * t;
     float hf = (q.y - base) / (top - base);
     if (hf < 0.0 || hf > 1.0) break;
     od += cl_density(q, hf, cl_weather(q.xz), false) * dt;
+    walked = t;
     dt *= 1.9;
   }
-  return od;
+  // 光の向きに層を抜けるまでの距離（水平に近いほど長い）。上限は数値の暴走止め
+  float span = L.y > 0.02 ? (top - p.y) / L.y : (L.y < -0.02 ? (p.y - base) / -L.y : FLIP_CLOUD_LSPAN);
+  span = min(span, FLIP_CLOUD_LSPAN);
+  // 層を抜けきる前に 4 歩を使い切っていたら、残りを同じ平均密度で足す
+  return od * (1.0 + max(span - walked, 0.0) / max(walked, 1.0));
 }
 // 多重散乱の近似（Wrenninge）: 減衰・消散・位相の異方性を段ごとに弱めた和
 float cl_scatter(float od, float cosT){

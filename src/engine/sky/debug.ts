@@ -14,6 +14,7 @@
 //   ?dbg=skyo3k:1.0    … オゾンの倍率を掃く（既定 ATMO_TUNE.o3K）
 //   ?dbg=skygrow:0.4   … 吸湿成長で増える灰色の散乱を掃く（既定 ATMO_TUNE.mieGrow）
 //   ?dbg=skyms:1.0     … 多重散乱 LUT の強さ（既定 ATMO_TUNE.msK。Hillaire の Psi の倍率）
+//   ?dbg=cloudspan:3000 … 雲の中を光が進む距離の上限 m（既定 ATMO_TUNE.cloudLightSpan）
 //   ?dbg=nosun         … 太陽・月の直射をゼロにする（地面を空の光だけで照らす）
 //   ?dbg=noamb         … 半球光と環境マップをゼロにする（地面を直射だけで照らす）
 // nosun / noamb は「地面の明るさのうち何 % が空から来ているか」を測るための対。
@@ -47,6 +48,11 @@ export const ATMO_TUNE = {
   o3K: 0.78,
   /** 空気遠近の透過率の下限（3km の山が空と同じ値の幽霊にならないように） */
   aerialFloor: 0.02,
+  /**
+   * 雲の中を「光源へ向かって」進む距離の上限 m（cl_lightMarch）。
+   * 太陽が地平にあると層の中を何 km も進むので、ここが短いと厚い雲が斑に光る（レンズの指紋）
+   */
+  cloudLightSpan: 9000,
 };
 
 function urlDbg(): Set<string> {
@@ -81,6 +87,7 @@ export const SKY_DBG = {
   msK: num("skyms", ATMO_TUNE.msK),
   o3K: num("skyo3k", all || dbg.has("skyo3") ? 1.0 : ATMO_TUNE.o3K),
   aerialFloor: all || dbg.has("skynofloor") ? 0.0 : ATMO_TUNE.aerialFloor,
+  cloudLightSpan: num("cloudspan", ATMO_TUNE.cloudLightSpan),
 };
 
 /** 光を片方だけにする（切り分け用。描画の式は変えず、光源の強さだけをゼロにする） */
@@ -104,6 +111,7 @@ export const SKY_DBG_PREFIX = !CHANGED
         ["FLIP_MS", SKY_DBG.msK],
         ["FLIP_O3_K", SKY_DBG.o3K],
         ["FLIP_AERIAL_FLOOR", SKY_DBG.aerialFloor],
+        ["FLIP_CLOUD_LSPAN", SKY_DBG.cloudLightSpan],
       ] as [string, number][])
         .map(([k, v]) => `#ifndef ${k}\n#define ${k} ${v.toFixed(4)}\n#endif\n`)
         .join("");
