@@ -84,7 +84,8 @@ export class Terrain {
     env.uniforms.uHeightParts.value = env.heightmap.parts;
     this.uDetail = { value: q.tier === "ultra" || q.tier === "high" ? 1 : q.tier === "mid" ? 0.55 : 0.25 };
     // 調査用 ?tdbg（1 太陽の見え方 2 AO 3 法線 4 cavity 5 地平角 6 山の影なし 7 林床/土/ガレ 8 地色 9 細部なし 12 砂/土/ガレ
-    //           13 距離帯 14 画素の足跡＝1 画素が地面で覆う長さ。「何 m の地面か」「模様が画素を切っていないか」を見る）
+    //           13 距離帯 14 画素の足跡＝1 画素が地面で覆う長さ。「何 m の地面か」「模様が画素を切っていないか」を見る
+    //           15 浜のマスクの 3 ゲート（赤=岸線からの距離 緑=湖面からの高さ 青=傾き）＝浜の幅をどれが決めているか）
     const dbg = typeof location !== "undefined" ? Number(new URLSearchParams(location.search).get("tdbg") ?? 0) : 0;
     this.uDebug = { value: Number.isFinite(dbg) ? dbg : 0 };
     this.material = this.buildMaterial();
