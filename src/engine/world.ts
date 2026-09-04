@@ -2,7 +2,7 @@
 import * as THREE from "three";
 import { Env, type WeatherPresetName } from "./core/env";
 import { registerChunks } from "./core/chunks";
-import { bakeHeightmap, heightAt, startPosition } from "./core/heightfield";
+import { heightAt, startPosition } from "./core/heightfield";
 import { detectTier, isMobileDevice, QUALITY, type QualitySettings } from "./core/quality";
 import { parseParams, type Params } from "./core/params";
 import { Pipeline } from "./core/pipeline";
@@ -15,11 +15,32 @@ import { Weather } from "./weather";
 import { Post } from "./post";
 import { Audio } from "./audio";
 import { Controls } from "./controls";
+import { Runtime } from "./controls/runtime";
+import { bakeHeightmapAsync, type BakeMode } from "./controls/bake";
+import { Lab } from "./lab/rebuild";
+import { LAB } from "./lab/store";
+import { readLabParamsFromLocation } from "./lab/params";
+import { setTerrainTune } from "./core/height";
+import { getSeed } from "./core/seed";
 
-export type WorldEvent = "ready" | "progress" | "frame" | "enter" | "exit" | "flip";
+export type WorldEvent = "ready" | "progress" | "frame" | "enter" | "exit" | "flip" | "photo" | "contextlost" | "contextrestored" | "tier";
 type Listener = (payload?: unknown) => void;
 
-export type Stats = { fps: number; frameMs: number; tier: string; drawCalls: number; triangles: number; width: number; height: number };
+export type Stats = {
+  /** 実効 fps（rAF の間隔、1 秒の移動平均） */
+  fps: number;
+  /** CPU 側のフレーム時間（ms、直近 60 フレームの平均） */
+  frameMs: number;
+  tier: string;
+  drawCalls: number;
+  triangles: number;
+  width: number;
+  height: number;
+  /** 動的解像度の倍率（0.5〜1.0） */
+  renderScale: number;
+  /** 実測で決めた「次回起動時の段階」（今回は変わらない）。null なら据え置き */
+  tierNext: string | null;
+};
 
 export class World {
   renderer: THREE.WebGLRenderer;
@@ -37,22 +58,31 @@ export class World {
   post!: Post;
   audio: Audio;
   controls!: Controls;
+  /** 操作・性能監視・堅牢性の配線（controls/runtime.ts） */
+  runtime!: Runtime;
+  /** 実験室（つまみとシード）。UI から触る。閉じている間は何もしない */
+  lab!: Lab;
+  /** この世界のシード（?seed=）。全部の乱数がここから生えている */
+  seed = getSeed();
+  /** 動的解像度の倍率（controls/performance が変える）。resize() で pixelRatio に掛かる */
+  renderScale = 1;
+  /** ハイトマップの焼き方と所要時間（起動時間の確認用） */
+  bakeInfo: { mode: BakeMode; ms: number; workers: number } = { mode: "sync", ms: 0, workers: 0 };
   ready = false;
   running = false;
   private listeners = new Map<WorldEvent, Set<Listener>>();
   private lastT = 0;
   private raf = 0;
   private frameTimes: number[] = [];
-  stats: Stats = { fps: 0, frameMs: 0, tier: "high", drawCalls: 0, triangles: 0, width: 0, height: 0 };
+  stats: Stats = { fps: 0, frameMs: 0, tier: "high", drawCalls: 0, triangles: 0, width: 0, height: 0, renderScale: 1, tierNext: null };
 
   constructor(public canvas: HTMLCanvasElement) {
     registerChunks();
+    // 実験室のつまみ（?p=…）は、ハイトマップを焼く前・植生を並べる前に読む
+    readLabParamsFromLocation();
+    setTerrainTune({ amp: LAB.terrainAmp, ridge: LAB.terrainRidge, erode: LAB.terrainErode });
     this.params = parseParams(typeof location !== "undefined" ? location.search : "");
     this.env.isMobile = isMobileDevice();
-    const tier = this.params.tier ?? detectTier();
-    this.env.tier = tier;
-    this.q = QUALITY[tier];
-    this.stats.tier = tier;
     this.renderer = new THREE.WebGLRenderer({
       canvas,
       antialias: false,
@@ -62,6 +92,11 @@ export class World {
       depth: true,
       preserveDrawingBuffer: false,
     });
+    // 段階の判定は描画用のコンテキストで行う（判定用にもう 1 つ作らない。iOS は上限が小さい）
+    const tier = this.params.tier ?? detectTier(this.renderer.getContext());
+    this.env.tier = tier;
+    this.q = QUALITY[tier];
+    this.stats.tier = tier;
     this.renderer.toneMapping = THREE.AgXToneMapping;
     this.renderer.toneMappingExposure = 1.0;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -87,7 +122,7 @@ export class World {
     this.listeners.get(ev)!.add(fn);
     return () => this.listeners.get(ev)?.delete(fn);
   }
-  private emit(ev: WorldEvent, payload?: unknown) {
+  emit(ev: WorldEvent, payload?: unknown) {
     this.listeners.get(ev)?.forEach((fn) => fn(payload));
   }
 
@@ -95,8 +130,12 @@ export class World {
   async build() {
     const env = this.env;
     this.emit("progress", { step: "地形の数式を計算しています", p: 0 });
-    await new Promise((r) => setTimeout(r, 30));
-    const hm = bakeHeightmap(this.q.heightmapRes);
+    // Web Worker で焼く（メインスレッドを止めない）。p は 0..0.5、step に行数の % を添える
+    const baked = await bakeHeightmapAsync(this.q.heightmapRes, (p) =>
+      this.emit("progress", { step: `地形の数式を計算しています ${Math.round(p * 100)}%`, p: p * 0.5 }),
+    );
+    const hm = baked.heightmap;
+    this.bakeInfo = { mode: baked.mode, ms: baked.ms, workers: baked.workers };
     env.heightmap = hm;
     env.uniforms.uHeightmap.value = hm.texture;
     env.uniforms.uHeightmapInfo.value.set(4096, 1 / 4096, hm.res, 800);
@@ -109,14 +148,24 @@ export class World {
     this.terrain = new Terrain(this.scene, env, this.lighting, this.q);
     this.water = new Water(this.scene, env, this.q);
     this.vegetation = new Vegetation(this.scene, env, this.lighting, this.q);
-    this.weather = new Weather(this.scene, env, this.lighting, this.q);
+    this.weather = new Weather(this.scene, env, this.lighting, this.q, this.pipeline);
     this.post = new Post(env, this.q);
     this.controls = new Controls(env, this.canvas, this.audio);
+    this.runtime = new Runtime(this);
+    this.lab = new Lab(this);
+    this.lab.applyUniforms();
 
     const start = startPosition();
     const p = this.params;
-    if (p.pos) this.controls.setPose(p.pos[0], p.pos[1], p.pos[2], p.look?.[0] ?? 0, p.look?.[1] ?? 0);
-    else this.controls.setPose(start.x, start.z, undefined, start.yaw, 3);
+    // ?pos だけ・?look だけでも効くようにする（撮影で片方だけ指定することが多い）
+    if (p.pos || p.look) {
+      const x = p.pos ? p.pos[0] : start.x;
+      const z = p.pos ? p.pos[1] : start.z;
+      const y = p.pos ? p.pos[2] : undefined;
+      this.controls.setPose(x, z, y, p.look?.[0] ?? start.yaw, p.look?.[1] ?? 3);
+    } else {
+      this.controls.setPose(start.x, start.z, undefined, start.yaw, 3);
+    }
     if (p.flipRadius !== undefined) env.flipRadius = p.flipRadius;
     env.flipCenter.copy(this.controls.position);
 
@@ -134,7 +183,7 @@ export class World {
   resize = () => {
     const w = this.canvas.clientWidth || window.innerWidth;
     const h = this.canvas.clientHeight || window.innerHeight;
-    const pr = Math.min(window.devicePixelRatio || 1, this.q.maxPixelRatio) * this.q.renderScale;
+    const pr = Math.min(window.devicePixelRatio || 1, this.q.maxPixelRatio) * this.q.renderScale * this.renderScale;
     this.renderer.setPixelRatio(pr);
     this.renderer.setSize(w, h, false);
     const pw = Math.floor(w * pr), ph = Math.floor(h * pr);
@@ -192,11 +241,28 @@ export class World {
     this.env.setWeather(w);
   }
 
-  /** 写真: 現在の画面をそのまま PNG に */
+  /** 写真: 今のカメラで 2 倍解像度（上限 4096）に描き直し、全ポストを掛けて PNG に（post/photo.ts）。画面はちらつかない */
   async takePhoto(): Promise<Blob | null> {
-    this.frame();
+    if (!this.ready) return null;
     this.audio.shutter();
-    return new Promise((resolve) => this.canvas.toBlob((b) => resolve(b), "image/png"));
+    const cam = this.env.camera;
+    return this.post.takePhoto({
+      width: this.pipeline.width,
+      height: this.pipeline.height,
+      resize: (w, h) => {
+        this.pipeline.resize(w, h);
+        this.water.resize(w, h);
+        this.post.resize(w, h);
+      },
+      render: (target) => {
+        const dbg = this.params.dbg;
+        this.pipeline.renderOpaque(cam);
+        if (!dbg.includes("noref")) this.water.renderReflection(this.pipeline, cam);
+        if (!dbg.includes("nocopy")) this.pipeline.copyScene(cam);
+        if (!dbg.includes("notrans")) this.pipeline.renderTransparent(cam);
+        this.post.render(this.pipeline, target, { photo: true });
+      },
+    });
   }
 
   frame() {
@@ -224,7 +290,7 @@ export class World {
     if (!dbg.includes("noref")) this.water.renderReflection(this.pipeline, cam);
     if (!dbg.includes("nocopy")) this.pipeline.copyScene(cam);
     if (!dbg.includes("notrans")) this.pipeline.renderTransparent(cam);
-    if (!dbg.includes("nopost")) this.post.render(this.pipeline, null);
+    this.post.render(this.pipeline, null); // ?dbg=nopost は post 側で「そのままトーンマップ」に切り替わる
     r.setRenderTarget(null);
 
     const ms = performance.now() - t0;
@@ -235,6 +301,7 @@ export class World {
     this.stats.fps = dt > 0 ? 1 / dt : 0;
     this.stats.drawCalls = r.info.render.calls;
     this.stats.triangles = r.info.render.triangles;
+    this.runtime.frame(t0, ms); // 実効 fps・動的解像度（stats.fps / renderScale / tierNext を書く）
     this.emit("frame", this.stats);
   }
 
@@ -245,7 +312,9 @@ export class World {
   dispose() {
     this.stop();
     window.removeEventListener("resize", this.resize);
+    this.runtime?.dispose();
     this.controls.dispose();
+    this.audio.dispose?.();
     this.pipeline.dispose();
     this.renderer.dispose();
   }

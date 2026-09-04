@@ -1,0 +1,318 @@
+/* 黒板（ガリレオ演出）。globals.css には触らない（UI 担当とぶつからないよう別ファイル） */
+
+.bb {
+  position: fixed;
+  inset: 0;
+  z-index: 18; /* .landing(20) の下、canvas の上 */
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity 1.15s ease;
+}
+.bb.bb-out {
+  opacity: 0;
+}
+.bb > svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* 「黒板をぜんぶ見る」: 前面に出て、縦に流して読む */
+.bb.bb-full {
+  z-index: 34;
+  pointer-events: auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  background: #131d19;
+  animation: bb-in 0.32s ease both;
+}
+.bb.bb-full > svg {
+  width: 100%;
+  height: auto;
+}
+@keyframes bb-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.bb-close {
+  position: fixed;
+  z-index: 35;
+  top: calc(14px + var(--safe-t, 0px));
+  right: calc(16px + var(--safe-r, 0px));
+  appearance: none;
+  height: 34px;
+  padding: 0 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(226, 242, 232, 0.34);
+  background: rgba(12, 22, 18, 0.72);
+  color: rgba(233, 242, 234, 0.92);
+  font: inherit;
+  font-size: 13px;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.bb-close:hover {
+  border-color: rgba(226, 242, 232, 0.7);
+}
+
+/* 板の地。緑黒 ＋ むら（タイル1枚を敷き詰めるだけ。画面全体のフィルタは掛けない） */
+.bb-ground {
+  fill: #16211c;
+  transition: opacity 1.4s ease;
+}
+
+/* 拭き跡の横筋（板であることの手掛かり） */
+.bb-sweep {
+  opacity: 0.045;
+  stroke-linecap: round;
+}
+
+/* 木枠とチョーク受け（画像は使わない。全部 CSS のグラデーション） */
+.bb-frame {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+.bb-frame::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 13px solid #4a3524;
+  border-image: linear-gradient(150deg, #63482f 0%, #3a2917 34%, #5c4229 62%, #2e2011 100%) 1;
+  box-shadow: inset 0 0 0 2px rgba(0, 0, 0, 0.6), inset 0 0 60px rgba(0, 0, 0, 0.45);
+}
+.bb-tray {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 15px;
+  background: linear-gradient(180deg, #6a4c31 0%, #4a3420 45%, #2b1d10 100%);
+  box-shadow: 0 -3px 7px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 236, 205, 0.14);
+}
+.bb-chalk {
+  position: absolute;
+  bottom: 4px;
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(180deg, #f3f7ef, #c9d3c4);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+.bb-eraser {
+  position: absolute;
+  right: 11%;
+  bottom: 3px;
+  width: 42px;
+  height: 9px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #6d5a45 0%, #4b3a29 55%, #d9e2d5 55%, #b9c6b6 100%);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+}
+@media screen and (max-width: 620px) {
+  .bb-frame::before {
+    border-width: 9px;
+  }
+  .bb-tray {
+    height: 12px;
+  }
+  .bb-eraser {
+    width: 32px;
+    height: 7px;
+  }
+}
+
+.bb path {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+/* チョークの粉（フィルタ無し。太く薄い線を1本重ねるだけ） */
+.bb-dust {
+  opacity: 0.09;
+}
+
+/* 書き取り: stroke-dashoffset を 0 へ。JS では毎フレーム触らない */
+.bb-w {
+  stroke-dasharray: var(--l) 20000;
+  stroke-dashoffset: var(--l0);
+  animation: bb-draw var(--t) linear var(--d) both;
+}
+@keyframes bb-draw {
+  from {
+    stroke-dashoffset: var(--l0);
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+/* 書いている間だけ合成を分ける。畳んだら外す（貼りっぱなしにしない） */
+.bb-line:not(.bb-flat) {
+  will-change: contents;
+}
+.bb-still .bb-w {
+  animation: none;
+  stroke-dashoffset: 0;
+}
+
+  /* 黒板消しで拭いた筋 */
+.bb-wipe {
+  opacity: 0.2;
+  stroke-linecap: round;
+}
+
+/* 失敗した式: 打ち消したあと、うっすら残す（消して終わりにしない）。
+   打ち消し線と消し跡（.bb-struck）は薄くしない ― 消した痕跡が主役だから */
+.bb-fail .bb-line > g:not(.bb-struck) {
+  animation: bb-dim 1.6s ease var(--fd) both;
+}
+@keyframes bb-dim {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0.72;
+  }
+}
+.bb-still .bb-fail .bb-line > g:not(.bb-struck) {
+  animation: none;
+  opacity: 0.72;
+}
+
+/* 項の光り（実験室のスライダーから） */
+.bb g[data-term].hot path {
+  stroke: url(#bbChalkHot);
+}
+
+/* 添え書き（和文はシステムフォントの小さな走り書き） */
+.bb-note {
+  font-family: var(--font-jp, sans-serif);
+  font-size: 10.8px;
+  /* 和文は線文字を作れないのでシステムフォント。ただし塗りはチョークの粒（板の上の字に見せる） */
+  fill: url(#bbChalkDim);
+  fill-opacity: 0.85;
+  letter-spacing: 0.03em;
+}
+.bb-head {
+  font-family: var(--font-jp, sans-serif);
+  font-size: 15px;
+  fill: url(#bbChalk);
+  letter-spacing: 0.24em;
+}
+.bb-src {
+  font-family: var(--font-mono, monospace);
+  font-size: 9.5px;
+  fill: url(#bbChalkDim);
+  fill-opacity: 0.5;
+  letter-spacing: 0.01em;
+}
+.bb-title {
+  font-family: var(--font-jp, sans-serif);
+  font-size: 13px;
+  fill: url(#bbChalkDim);
+  fill-opacity: 0.8;
+  letter-spacing: 0.3em;
+}
+
+/* 入口の地の暗幕は黒板があるとき弱める（globals.css は書き換えない） */
+body.bb-on .landing {
+  background: linear-gradient(180deg, rgba(6, 14, 11, 0.34) 0%, rgba(5, 12, 9, 0.46) 55%, rgba(4, 10, 8, 0.72) 100%);
+}
+body.bb-on .loading-log {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bb-w {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
+  .bb-fail .bb-line > g:not(.bb-struck) {
+    animation: none;
+    opacity: 0.72;
+  }
+}
+
+/* 世界の中の隅「いま計算していること」。
+   黒板と同じチョークの字を、小さな石板の上に。printf に見せない */
+.bbnow {
+  position: fixed;
+  z-index: 11;
+  left: calc(var(--gutter, 22px) + var(--safe-l, 0px));
+  bottom: calc(60px + var(--safe-b, 0px));
+  max-width: min(34vw, 420px);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 0.7s ease, transform 0.7s ease;
+}
+.bbnow.show {
+  opacity: 1;
+  transform: none;
+}
+.bbnow.faint {
+  opacity: 0.5;
+}
+.bbnow-slate {
+  padding: 7px 12px 5px;
+  border-radius: 7px;
+  border: 1px solid rgba(198, 224, 208, 0.16);
+  background: linear-gradient(180deg, rgba(13, 24, 19, 0.62), rgba(9, 17, 13, 0.72));
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
+}
+.bbnow-head {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: rgba(233, 245, 235, 0.72);
+  margin-bottom: 1px;
+}
+/* 式の下の一言（いまは「mtn が 0 なのは山脈の外だから」だけ）。出典行より上、本文より小さく */
+.bbnow-note {
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  color: rgba(226, 242, 231, 0.62);
+  margin-top: 2px;
+}
+.bbnow-src {
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  letter-spacing: 0;
+  color: rgba(214, 236, 222, 0.46);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 1px;
+}
+.bbnow svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+@media screen and (max-width: 620px) {
+  /* 携帯では下に「ふりっぷする」の主ボタン・ジャイロ・操作ヒントが並ぶので、その上へ逃がす。
+     幅も詰めて、画面の下半分を文字で埋めない（批評R4「文字と UI が画面の 69%」） */
+  .bbnow {
+    max-width: calc(100vw - 24px);
+    bottom: calc(196px + var(--safe-b, 0px));
+  }
+  .bbnow-head {
+    font-size: 10.5px;
+  }
+}
+
+/* 入口のボタンが 3 つになるので、狭い画面では折り返す */
+body.bb-on .landing-actions {
+  flex-wrap: wrap;
+  row-gap: 10px;
+}
+body.bb-on .landing-actions .about-link {
+  white-space: nowrap;
+}

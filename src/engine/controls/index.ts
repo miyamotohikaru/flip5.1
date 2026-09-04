@@ -1,12 +1,38 @@
-// 一人称の操作。PointerLock（WASD/矢印＋マウス）とタッチ（左：移動スティック、右：ドラッグで見回し）。
-// 地面の高さ（heightAt）に沿って歩く。操作担当が 端末別の負荷調整（動的解像度）・スプリント・慣性・
-// 段差の当たり・水際の減速・バイブレーション・ゲームパッド などを作り込む。
+// 一人称の操作の本体。キーボード＋マウス（PointerLock）／タッチ（仮想スティック＋ドラッグ見回し）／
+// ゲームパッド／ジャイロ を 1 つの「歩き」にまとめ、地形（heightAt）に沿って歩く。
+//   手触り: 押して 0.15s で最高速、離して 0.25s で停止（直線的な加減速。指数関数の「ふわっ」を避ける）。
+//   走り（Shift / RT / スティック倒し切り）で視野角が 6° 広がる。
+//   頭の揺れ: 歩幅に合わせた上下（歩ごとに沈む）＋左右の 8 の字＋わずかなロール。走りで大きく、止まると滑らかに収束。
+//   斜面: 登りは遅く（5°→35° で最大 60% 減）、35° を超えると登れず滑る。下りは少し速い。
+//   水際: 湖面 +0.15m の濡れた砂から減速し、深さ 0.35m（足首の上）より深くは進めない。
+//   マウス感度は DPI・画面倍率に依存しない（生のカウント × sensitivity）。視線のピッチは ±85°。
+//   Esc などでポインタロックが外れたら onExit（world が "exit" を emit する）。
+// UI が読むもの: stick（仮想スティックの中心・つまみ・押されているか）、lookTouch、sprinting、gyroEnabled、gamepadConnected。
 import * as THREE from "three";
 import type { Env } from "../core/env";
 import { heightAt, WORLD } from "../core/heightfield";
+import { clamp, smoothstep } from "../core/noise";
 import type { Audio } from "../audio";
+import { KeyboardMouse } from "./input";
+import { TouchInput, type StickState, type LookTouchState } from "./touch";
+import { GamepadInput } from "./gamepad";
+import { Gyro } from "./gyro";
 
 export type Surface = "grass" | "rock" | "sand" | "water";
+export type { StickState, LookTouchState };
+
+const DEG = Math.PI / 180;
+const TAN35 = Math.tan(35 * DEG);
+const PITCH_LIMIT = 85 * DEG;
+/** これより深い水には入れない（m）= 足首の上まで */
+const MAX_DEPTH = 0.35;
+/** 斜面の勾配を測る幅（m） */
+const GRAD_EPS = 0.6;
+
+const wrapAngle = (a: number) => {
+  const t = (a + Math.PI) % (2 * Math.PI);
+  return (t < 0 ? t + 2 * Math.PI : t) - Math.PI;
+};
 
 export class Controls {
   yaw = 0;
@@ -14,175 +40,389 @@ export class Controls {
   position = new THREE.Vector3();
   velocity = new THREE.Vector3();
   eyeHeight = 1.68;
-  speed = 3.4;
-  sprint = 6.5;
+  /** 歩く速さ（m/s） */
+  speed = 3.8;
+  /** 走る速さ（m/s） */
+  sprint = 6.6;
+  /** 押してから最高速までの秒数／離してから止まるまでの秒数 */
+  accelTime = 0.15;
+  decelTime = 0.25;
+  /** マウス感度（rad／カウント。0.06°）。画面倍率に依存しない。800dpi で 1 回転 ≈ 7.5 インチ */
+  sensitivity = 0.00105;
+  /** タッチの見回し感度（rad／CSS px） */
+  touchSensitivity = 0.0045;
+  /** ゲームパッド右スティックの回転速度（rad/s、水平／垂直） */
+  padYawRate = 2.6;
+  padPitchRate = 1.7;
+  invertY = false;
+  /** 走りで広がる視野角（度） */
+  sprintFovBoost = 6;
+  /** 通常の視野角（度）。写真モードなどで変えたいときはここを変える */
+  baseFov: number;
+  /** いまの視野角（度） */
+  fov: number;
   locked = false;
   enabled = false;
-  touchActive = false;
-  /** 歩行の位相（足音・頭の揺れ） */
+  /** いま走っている */
+  sprinting = false;
+  /** 歩行の位相（足音・頭の揺れ）。π ごとに 1 歩 */
   bobPhase = 0;
   bobAmount = 0;
-  private keys = new Set<string>();
-  private moveStick = new THREE.Vector2();
-  private lookDelta = new THREE.Vector2();
-  private touches = new Map<number, { x: number; y: number; sx: number; sy: number; role: "move" | "look" }>();
-  private lastStep = 0;
+  /** いまの足元 */
+  surface: Surface = "grass";
+  /** 進行方向の斜度（度、上りが正）／水深（m、湖面より下が正）／急斜面を滑っている */
+  slopeDeg = 0;
+  waterDepth = 0;
+  sliding = false;
   onStep?: (surface: Surface) => void;
-  private dom: HTMLElement;
+  /** ポインタロックが外れた（Esc）。world が "exit" を emit する */
+  onExit?: () => void;
+  /** マウス固定（PointerLock）を使う設定か。既定は false＝ドラッグで見回す */
+  pointerLockMode = false;
+  /** マウス固定の入切が変わった（UI がボタンの状態を合わせる） */
+  onPointerLockChange?: (on: boolean) => void;
+  /** ゲームパッド A */
+  onFlip?: () => void;
+  /** ゲームパッド Y */
+  onPhoto?: () => void;
+  /** 視野角を変えた（CSM のフラスタムを更新してもらう） */
+  onProjectionChange?: () => void;
+  /** 仮想スティックの状態（UI が描く）。同じオブジェクトを毎フレーム書き換える */
+  readonly stick: StickState;
+  /** 見回しのタッチ（UI が印を出したければ） */
+  readonly lookTouch: LookTouchState;
+  /** キーボードとマウス（UI がドラッグの通知を受け取るため公開） */
+  km: KeyboardMouse;
+  private touch: TouchInput;
+  private pad = new GamepadInput();
+  private gyro = new Gyro();
+  private moveStick = new THREE.Vector2();
+  private releaseSpeed = 0;
+  private sprintT = 0;
+  /** 止まった瞬間の小さな沈み込み（減衰ばね） */
+  private settleY = 0;
+  private settleV = 0;
+  private peakSpeed = 0;
+  private fwd = new THREE.Vector3();
+  private right = new THREE.Vector3();
+  private wish = new THREE.Vector3();
 
   constructor(public env: Env, public canvas: HTMLCanvasElement, public audio: Audio) {
-    this.dom = canvas;
-    window.addEventListener("keydown", this.onKey);
-    window.addEventListener("keyup", this.onKey);
-    document.addEventListener("pointerlockchange", () => {
-      this.locked = document.pointerLockElement === this.canvas;
-    });
-    canvas.addEventListener("mousemove", (e) => {
-      if (!this.locked) return;
-      this.lookDelta.x += e.movementX;
-      this.lookDelta.y += e.movementY;
-    });
-    canvas.addEventListener("touchstart", this.onTouchStart, { passive: false });
-    canvas.addEventListener("touchmove", this.onTouchMove, { passive: false });
-    canvas.addEventListener("touchend", this.onTouchEnd, { passive: false });
-    canvas.addEventListener("touchcancel", this.onTouchEnd, { passive: false });
+    this.baseFov = env.camera.fov;
+    this.fov = this.baseFov;
+    this.km = new KeyboardMouse(canvas);
+    this.km.onLockChange = (locked, programmatic) => {
+      this.locked = locked;
+      if (!locked && !programmatic) {
+        // Esc でマウスが解放された。世界からは出ず、ドラッグで見回す方式に戻すだけ。
+        // （ここで enabled を落とすと、カーソルも HUD も触れないまま閉じ込められる）
+        this.pointerLockMode = false;
+        this.onPointerLockChange?.(false);
+      }
+    };
+    this.km.onClick = () => {
+      // 「マウス固定」を選んでいる人が Esc の後に画面を押したら、掴み直す
+      if (!this.env.isMobile && this.pointerLockMode && !this.locked) this.km.requestLock();
+    };
+    this.touch = new TouchInput(canvas, () => this.enabled);
+    this.stick = this.touch.stick;
+    this.lookTouch = this.touch.look;
   }
 
+  /** 一度でもタッチ操作された */
+  get touchActive() {
+    return this.touch.used;
+  }
+  get gyroEnabled() {
+    return this.gyro.enabled;
+  }
+  get gyroAvailable() {
+    return this.gyro.available;
+  }
+  get gamepadConnected() {
+    return this.pad.state.connected;
+  }
+  /** 押されているキー（e.code）。計測ツールが状態を注入するのにも使う */
+  get keys() {
+    return this.km.keys;
+  }
+  get isSprinting() {
+    return this.sprinting;
+  }
+  /** unadjustedMovement が効いているか */
+  get rawMouse() {
+    return this.km.unadjusted;
+  }
+
+  /** ジャイロで見回す（iOS は許可ダイアログが出るので、UI のボタン＝ユーザー操作の中で呼ぶ） */
+  enableGyro(): Promise<boolean> {
+    return this.gyro.enable();
+  }
+  disableGyro() {
+    this.gyro.disable();
+  }
+
+  /** キーの状態を外から入れる（計測ツール用） */
+  setKey(code: string, down: boolean) {
+    if (down) this.km.keys.add(code);
+    else this.km.keys.delete(code);
+  }
+  /** マウスの移動量（カウント）を外から足す（計測ツール・自動歩行用） */
+  addLook(dx: number, dy: number) {
+    this.km.dx += dx;
+    this.km.dy += dy;
+  }
+
+  /**
+   * 位置と向きを決め打ちする（定点撮影・`?pos=x,z[,y]`）。
+   * **y を渡したら「目線の高さ」として扱う。** そうしないと下の毎フレームの処理が
+   * `地面 + eyeHeight` へ 1〜2 フレームで引き戻すので、渡した y が黙って捨てられる
+   * （`sunset_water` は `pos: [x, z, 0.6]` なのに実際は 2.107m だった。2026-09-04 に水担当が発見）。
+   */
   setPose(x: number, z: number, y: number | undefined, yawDeg: number, pitchDeg: number) {
+    if (y !== undefined) this.eyeHeight = Math.max(0.15, y - heightAt(x, z));
     this.position.set(x, y ?? heightAt(x, z) + this.eyeHeight, z);
     this.yaw = THREE.MathUtils.degToRad(yawDeg);
     this.pitch = THREE.MathUtils.degToRad(pitchDeg);
+    this.velocity.set(0, 0, 0);
+    this.bobAmount = 0;
+    this.settleY = this.settleV = this.peakSpeed = 0;
     this.apply();
   }
 
-  /** 入場。パソコンは PointerLock を要求（ユーザー操作の中で呼ぶこと） */
+  /**
+   * 入場。既定ではマウスを固定しない（ドラッグで見回す）。
+   * カーソルが消えると HUD のボタンもブラウザのタブも触れなくなるため、固定は任意にした。
+   */
   enter() {
     this.enabled = true;
-    if (!this.env.isMobile) {
-      try {
-        const p = this.canvas.requestPointerLock({ unadjustedMovement: true } as unknown as PointerLockOptions) as unknown;
-        if (p && typeof (p as Promise<void>).catch === "function") (p as Promise<void>).catch(() => this.canvas.requestPointerLock());
-      } catch {
-        this.canvas.requestPointerLock();
-      }
-    }
+    if (!this.env.isMobile && this.pointerLockMode) this.km.requestLock();
+  }
+
+  /** マウス固定（PointerLock）の切り替え。ユーザー操作の中で呼ぶこと。 */
+  setPointerLock(on: boolean) {
+    if (this.env.isMobile) return;
+    this.pointerLockMode = on;
+    if (on) this.km.requestLock();
+    else this.km.releaseLock();
+    this.onPointerLockChange?.(on);
   }
 
   exit() {
-    if (this.locked) document.exitPointerLock();
+    this.enabled = false;
+    this.releaseAll();
+    this.km.releaseLock();
   }
 
-  private onKey = (e: KeyboardEvent) => {
-    if (e.type === "keydown") this.keys.add(e.code);
-    else this.keys.delete(e.code);
-  };
+  /** キー・タッチを全部離した扱いにする（タブ切替・ロック解除など） */
+  releaseAll() {
+    this.km.releaseAll();
+    this.touch.reset();
+    this.sprinting = false;
+  }
 
-  private onTouchStart = (e: TouchEvent) => {
-    if (!this.enabled) return;
-    e.preventDefault();
-    this.touchActive = true;
-    for (const t of Array.from(e.changedTouches)) {
-      const role = t.clientX < window.innerWidth * 0.45 ? "move" : "look";
-      this.touches.set(t.identifier, { x: t.clientX, y: t.clientY, sx: t.clientX, sy: t.clientY, role });
-    }
-  };
-  private onTouchMove = (e: TouchEvent) => {
-    if (!this.enabled) return;
-    e.preventDefault();
-    for (const t of Array.from(e.changedTouches)) {
-      const s = this.touches.get(t.identifier);
-      if (!s) continue;
-      if (s.role === "look") {
-        this.lookDelta.x += (t.clientX - s.x) * 2.2;
-        this.lookDelta.y += (t.clientY - s.y) * 2.2;
-      }
-      s.x = t.clientX;
-      s.y = t.clientY;
-    }
-  };
-  private onTouchEnd = (e: TouchEvent) => {
-    for (const t of Array.from(e.changedTouches)) this.touches.delete(t.identifier);
-  };
-
+  /** 移動入力（x: 右、y: 前、長さ ≤ 1）。キーボード＋仮想スティック＋ゲームパッド */
   get moveInput(): THREE.Vector2 {
     const v = this.moveStick.set(0, 0);
-    const k = this.keys;
+    const k = this.km.keys;
     if (k.has("KeyW") || k.has("ArrowUp")) v.y += 1;
     if (k.has("KeyS") || k.has("ArrowDown")) v.y -= 1;
     if (k.has("KeyA") || k.has("ArrowLeft")) v.x -= 1;
     if (k.has("KeyD") || k.has("ArrowRight")) v.x += 1;
-    for (const s of this.touches.values()) {
-      if (s.role !== "move") continue;
-      const dx = (s.x - s.sx) / 60, dy = -(s.y - s.sy) / 60;
-      v.x += THREE.MathUtils.clamp(dx, -1, 1);
-      v.y += THREE.MathUtils.clamp(dy, -1, 1);
+    const s = this.touch.stick;
+    if (s.active) {
+      v.x += s.dx;
+      v.y += s.dy;
+    }
+    const g = this.pad.state;
+    if (g.connected) {
+      v.x += g.move.x;
+      v.y += g.move.y;
     }
     if (v.lengthSq() > 1) v.normalize();
     return v;
   }
 
-  get isSprinting() {
-    return this.keys.has("ShiftLeft") || this.keys.has("ShiftRight");
+  update(dt: number) {
+    dt = Math.min(dt, 0.1);
+    const active = this.enabled;
+    const gp = this.pad.poll(dt);
+    if (active) {
+      if (gp.flip) this.onFlip?.();
+      if (gp.photo) this.onPhoto?.();
+    }
+
+    // --- 見回し ---
+    const m = this.km.consume();
+    const tl = this.touch.consume(dt);
+    const g = this.gyro.consume();
+    if (active) {
+      const inv = this.invertY ? -1 : 1;
+      const dyaw = -(m.dx * this.sensitivity) - tl.dx * this.touchSensitivity - gp.look.x * this.padYawRate * dt + g.yaw;
+      const dpitch = (-(m.dy * this.sensitivity) - tl.dy * this.touchSensitivity - gp.look.y * this.padPitchRate * dt) * inv + g.pitch;
+      this.yaw = wrapAngle(this.yaw + dyaw);
+      this.pitch = clamp(this.pitch + dpitch, -PITCH_LIMIT, PITCH_LIMIT);
+    }
+
+    // --- 移動の入力 ---
+    const inp = active ? this.moveInput : this.moveStick.set(0, 0);
+    const yaw = this.yaw;
+    const fwd = this.fwd.set(-Math.sin(yaw), 0, -Math.cos(yaw));
+    const right = this.right.set(Math.cos(yaw), 0, -Math.sin(yaw));
+    const wish = this.wish.set(0, 0, 0).addScaledVector(fwd, inp.y).addScaledVector(right, inp.x);
+    let wishLen = wish.length();
+    const k = this.km.keys;
+    const wantSprint = active && (k.has("ShiftLeft") || k.has("ShiftRight") || this.touch.sprint || gp.sprint) && inp.y > 0.25;
+    this.sprinting = wantSprint && wishLen > 0.1;
+    // 走りはスティックの倒し具合に関係なく全速（向きだけスティックから）
+    if (this.sprinting && wishLen < 1) {
+      wish.multiplyScalar(1 / wishLen);
+      wishLen = 1;
+    }
+
+    // --- 足元の地形 ---
+    const px = this.position.x, pz = this.position.z;
+    const h0 = heightAt(px, pz);
+    const gx = (heightAt(px + GRAD_EPS, pz) - heightAt(px - GRAD_EPS, pz)) / (2 * GRAD_EPS);
+    const gz = (heightAt(px, pz + GRAD_EPS) - heightAt(px, pz - GRAD_EPS)) / (2 * GRAD_EPS);
+    const gmag = Math.hypot(gx, gz);
+    const steep = gmag > TAN35;
+    this.waterDepth = WORLD.lakeLevel - h0;
+
+    // --- 目標速度（斜面と水で減速） ---
+    const spd = this.sprinting ? this.sprint : this.speed;
+    let slopeFactor = 1, s = 0;
+    if (wishLen > 1e-4) {
+      s = (gx * wish.x + gz * wish.z) / wishLen; // 進行方向 1m あたりの上り（tan）
+      slopeFactor = s > 0 ? 1 - 0.6 * smoothstep(0.09, TAN35, s) : 1 + 0.18 * smoothstep(0.09, 0.58, -s);
+      if (steep && s > 0) {
+        // 急斜面: 登る成分を消す（等高線に沿ってしか動けない）
+        const nx = gx / gmag, nz = gz / gmag;
+        const up = wish.x * nx + wish.z * nz;
+        wish.x -= nx * up;
+        wish.z -= nz * up;
+      }
+    }
+    this.slopeDeg = Math.atan(s) / DEG;
+    const waterFactor = 1 - 0.5 * smoothstep(-0.15, MAX_DEPTH, this.waterDepth);
+    const tx = wish.x * spd * slopeFactor * waterFactor;
+    const tz = wish.z * spd * slopeFactor * waterFactor;
+    const tLen = Math.hypot(tx, tz);
+
+    // --- 加減速（直線的。押して accelTime、離して decelTime） ---
+    const v = this.velocity;
+    const curLen = Math.hypot(v.x, v.z);
+    if (tLen > 1e-4) this.releaseSpeed = Math.max(tLen, curLen);
+    const dvx = tx - v.x, dvz = tz - v.z;
+    const dLen = Math.hypot(dvx, dvz);
+    if (dLen > 1e-6) {
+      const rate = tLen > 1e-4 ? Math.max(tLen, this.speed) / this.accelTime : Math.max(this.releaseSpeed, this.speed) / this.decelTime;
+      const kk = Math.min(1, (rate * dt) / dLen);
+      v.x += dvx * kk;
+      v.z += dvz * kk;
+    }
+    if (Math.hypot(v.x, v.z) < 1e-3 && tLen < 1e-4) v.x = v.z = 0;
+
+    // --- 急斜面では滑り落ちる ---
+    let slideX = 0, slideZ = 0;
+    this.sliding = false;
+    if (steep) {
+      const kk = 1.6 * smoothstep(TAN35, TAN35 + 0.4, gmag);
+      slideX = (-gx / gmag) * kk;
+      slideZ = (-gz / gmag) * kk;
+      this.sliding = kk > 0.05;
+    }
+
+    // --- 位置の更新（登れない斜面・深い水・歩ける範囲で止め、境界に沿って滑る） ---
+    const mx = (v.x + slideX) * dt, mz = (v.z + slideZ) * dt;
+    const blocked = this.tryMove(mx, mz);
+    if (blocked.x) v.x = 0;
+    if (blocked.z) v.z = 0;
+
+    // --- 目線の高さ（地面に追従。小さな段差は滑らかに） ---
+    const ground = Math.max(heightAt(this.position.x, this.position.z), WORLD.lakeLevel - MAX_DEPTH);
+    const targetY = ground + this.eyeHeight;
+    this.position.y += (targetY - this.position.y) * (1 - Math.exp(-dt * 22));
+
+    // --- 頭の揺れ・視野角・足音 ---
+    const speedH = Math.hypot(v.x, v.z);
+    const moveT = clamp(speedH / this.speed, 0, 1);
+    const sprintNow = clamp((speedH - this.speed) / (this.sprint - this.speed), 0, 1);
+    this.sprintT += (sprintNow - this.sprintT) * (1 - Math.exp(-dt * 6));
+    const bobTarget = speedH > 0.3 ? moveT : 0;
+    this.bobAmount += (bobTarget - this.bobAmount) * (1 - Math.exp(-dt * (bobTarget > this.bobAmount ? 7 : 6)));
+    if (speedH > 0.3) {
+      const stepsPerSec = THREE.MathUtils.lerp(1.85, 2.9, sprintNow) * clamp(speedH / this.speed, 0.4, 1);
+      const prev = this.bobPhase;
+      this.bobPhase += dt * Math.PI * stepsPerSec;
+      if (Math.floor(this.bobPhase / Math.PI) !== Math.floor(prev / Math.PI) && this.bobAmount > 0.3) {
+        this.surface = this.surfaceAt(this.position.x, this.position.z);
+        this.onStep?.(this.surface);
+        this.audio.footstep(this.surface);
+      }
+    }
+    // 走ってから止まると、体が一度わずかに沈んで戻る（0.45 秒で収束）
+    if (speedH > 1.5) this.peakSpeed = Math.max(this.peakSpeed, speedH);
+    else if (speedH < 0.3 && this.peakSpeed > 0) {
+      this.settleV -= 0.3 * (this.peakSpeed / this.sprint);
+      this.peakSpeed = 0;
+    }
+    if (this.settleY !== 0 || this.settleV !== 0) {
+      const k = 200, c = 20;
+      this.settleV += (-k * this.settleY - c * this.settleV) * dt;
+      this.settleY += this.settleV * dt;
+      if (Math.abs(this.settleY) < 1e-4 && Math.abs(this.settleV) < 1e-3) this.settleY = this.settleV = 0;
+    }
+    const fovTarget = this.baseFov + this.sprintFovBoost * this.sprintT;
+    this.fov += (fovTarget - this.fov) * (1 - Math.exp(-dt * 8));
+    this.apply();
   }
 
-  update(dt: number) {
-    if (!this.enabled) {
-      this.apply();
-      return;
+  /** 位置を (mx, mz) だけ動かそうとする。ぶつかったら軸ごとに試して境界に沿わせる。戻り値は止められた軸 */
+  private tryMove(mx: number, mz: number): { x: boolean; z: boolean } {
+    const p = this.position;
+    const x0 = p.x, z0 = p.z;
+    if (this.canStand(x0 + mx, z0 + mz, mx, mz)) {
+      this.place(x0 + mx, z0 + mz);
+      return { x: false, z: false };
     }
-    // 見回し
-    const sens = 0.0022;
-    this.yaw += this.lookDelta.x * sens;
-    this.pitch -= this.lookDelta.y * sens;
-    this.pitch = THREE.MathUtils.clamp(this.pitch, -1.45, 1.45);
-    this.lookDelta.set(0, 0);
+    if (Math.abs(mx) > 1e-9 && this.canStand(x0 + mx, z0, mx, 0)) {
+      this.place(x0 + mx, z0);
+      return { x: false, z: true };
+    }
+    if (Math.abs(mz) > 1e-9 && this.canStand(x0, z0 + mz, 0, mz)) {
+      this.place(x0, z0 + mz);
+      return { x: true, z: false };
+    }
+    return { x: true, z: true };
+  }
 
-    // 移動（yaw=0 で −Z を向く）
-    const inp = this.moveInput;
-    const fwd = new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
-    const right = new THREE.Vector3(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
-    const target = new THREE.Vector3().addScaledVector(fwd, inp.y).addScaledVector(right, inp.x);
-    const spd = this.isSprinting ? this.sprint : this.speed;
-    target.multiplyScalar(spd);
-    const k = 1 - Math.exp(-dt * 9);
-    this.velocity.x += (target.x - this.velocity.x) * k;
-    this.velocity.z += (target.z - this.velocity.z) * k;
-    let nx = this.position.x + this.velocity.x * dt;
-    let nz = this.position.z + this.velocity.z * dt;
-    // 歩ける範囲
+  private place(x: number, z: number) {
+    // 歩ける範囲（円）に押し戻す
+    const r = Math.hypot(x, z);
+    if (r > WORLD.walkRadius) {
+      x *= WORLD.walkRadius / r;
+      z *= WORLD.walkRadius / r;
+    }
+    this.position.x = x;
+    this.position.z = z;
+  }
+
+  /** (nx, nz) に立てるか。深い水と、移動方向に 35° を超える上りはだめ */
+  private canStand(nx: number, nz: number, dx: number, dz: number): boolean {
     const r = Math.hypot(nx, nz);
     if (r > WORLD.walkRadius) {
       nx *= WORLD.walkRadius / r;
       nz *= WORLD.walkRadius / r;
     }
-    // 急斜面は登れない
-    const hNew = heightAt(nx, nz);
-    const hOld = heightAt(this.position.x, this.position.z);
-    const slope = (hNew - hOld) / Math.max(Math.hypot(nx - this.position.x, nz - this.position.z), 1e-4);
-    if (slope > 1.1) {
-      nx = this.position.x;
-      nz = this.position.z;
+    const h = heightAt(nx, nz);
+    if (h < WORLD.lakeLevel - MAX_DEPTH) return false;
+    const dl = Math.hypot(dx, dz);
+    if (dl > 1e-3) {
+      const rise = (h - heightAt(nx - dx, nz - dz)) / dl;
+      if (rise > TAN35) return false;
     }
-    this.position.x = nx;
-    this.position.z = nz;
-    // 水の中は水面下に沈みすぎない（浅瀬まで）
-    const ground = Math.max(heightAt(nx, nz), WORLD.lakeLevel - 1.2);
-    const targetY = ground + this.eyeHeight;
-    this.position.y += (targetY - this.position.y) * (1 - Math.exp(-dt * 12));
-
-    // 頭の揺れと足音
-    const moving = this.velocity.length();
-    const bobTarget = THREE.MathUtils.clamp(moving / this.speed, 0, 1.6);
-    this.bobAmount += (bobTarget - this.bobAmount) * (1 - Math.exp(-dt * 6));
-    const prevPhase = this.bobPhase;
-    this.bobPhase += dt * (1.9 + moving * 0.55) * Math.PI * Math.min(this.bobAmount, 1) * 2;
-    if (Math.floor(this.bobPhase / Math.PI) !== Math.floor(prevPhase / Math.PI) && this.bobAmount > 0.25) {
-      const surface = this.surfaceAt(nx, nz);
-      this.lastStep = this.env.time;
-      this.onStep?.(surface);
-      this.audio.footstep(surface);
-    }
-    this.apply();
+    return true;
   }
 
   surfaceAt(x: number, z: number): Surface {
@@ -195,18 +435,28 @@ export class Controls {
 
   private apply() {
     const cam = this.env.camera;
-    const bob = Math.sin(this.bobPhase) * 0.035 * this.bobAmount;
-    const sway = Math.sin(this.bobPhase * 0.5) * 0.012 * this.bobAmount;
-    cam.position.set(this.position.x, this.position.y + bob, this.position.z);
-    cam.rotation.set(0, 0, 0, "YXZ");
-    cam.rotation.y = this.yaw;
-    cam.rotation.x = this.pitch;
-    cam.rotation.z = sway;
+    const A = this.bobAmount, st = this.sprintT, phi = this.bobPhase;
+    // 歩ごとに沈む上下（0..−amp）と、2 歩で 1 往復する左右（8 の字）＋わずかなロールと頷き
+    const vertAmp = 0.025 + 0.04 * st;
+    const latAmp = 0.012 + 0.02 * st;
+    const bobY = (-Math.cos(2 * phi) - 1) * 0.5 * vertAmp * A + this.settleY;
+    const bobX = Math.sin(phi) * latAmp * A;
+    const roll = Math.sin(phi) * (0.3 + 0.7 * st) * DEG * A;
+    const nod = -Math.cos(2 * phi) * 0.1 * DEG * A;
+    const rx = Math.cos(this.yaw), rz = -Math.sin(this.yaw);
+    cam.position.set(this.position.x + rx * bobX, this.position.y + bobY, this.position.z + rz * bobX);
+    cam.rotation.set(this.pitch + nod, this.yaw, roll, "YXZ");
+    if (Math.abs(cam.fov - this.fov) > 1e-3) {
+      cam.fov = this.fov;
+      cam.updateProjectionMatrix();
+      this.onProjectionChange?.();
+    }
     cam.updateMatrixWorld();
   }
 
   dispose() {
-    window.removeEventListener("keydown", this.onKey);
-    window.removeEventListener("keyup", this.onKey);
+    this.km.dispose();
+    this.touch.dispose();
+    this.gyro.disable();
   }
 }

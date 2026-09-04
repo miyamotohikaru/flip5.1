@@ -10,6 +10,9 @@
 //   ?flipr=300     … 裏返しの波の半径（m）
 //   ?q=high        … 品質段階
 //   ?shot=<name>   … 下の SHOTS に定義した定点
+//   ?seed=12345    … 世界のシード（core/seed.ts。ここが読む前に seed.ts が location から読んでいる）
+//   ?p=terrain.amp:1.4,sky.mie:2 … 実験室のつまみ（engine/lab/params.ts）
+//   ?lab=1         … 実験室を開いた状態で始める
 import type { WeatherPresetName, QualityTier } from "./env";
 import { startPosition } from "./heightfield";
 
@@ -21,16 +24,25 @@ export type ShotDef = {
   weather: WeatherPresetName;
   /** x, z（y は地面＋目線）。y を明示するときは第3要素 */
   pos: [number, number] | [number, number, number];
-  /** yaw（0 = −Z を向く、右回りが正）、pitch（上が正）。度 */
+  /** yaw（0 = −Z を向く。three.js の rotation.y と同じで、上から見て左回り＝反時計回りが正）、pitch（上が正）。度 */
   look: [number, number];
   flip?: number;
   flipRadius?: number;
+  /**
+   * 時間を止めずに撮る定点（秒）。雨・雪・粒子・稲光のような「動くもの」は freeze=1 の
+   * 定点だけでは破綻が構造的に隠れるので、入場から live 秒だけ流してから撮る。
+   * tools/shoot.mjs はこの秒数を待ち時間に使う。
+   */
+  live?: number;
 };
 
 const start = startPosition();
 
 export const SHOTS: ShotDef[] = [
   { name: "golden", desc: "開始地点・夕方の湖と山脈", hour: 17.4, weather: "clear", pos: [start.x, start.z], look: [0, 4] },
+  // 2026-09-03: 一度この2点を「太陽が横から当たる位置」へ移したが、批評（ラウンド3）に
+  // 「影が無いと指摘された当のラウンドで物差しを動かすのは利益相反」「新しい2点は写真として旧2点より悪い」
+  // と判定されたため、元に戻した。横から当たる構図は noon_side / cloudy_side として別に足してある。
   { name: "noon", desc: "真昼の草地と針葉樹", hour: 12.2, weather: "clear", pos: [start.x + 60, start.z + 30], look: [-35, -2] },
   { name: "dawn", desc: "夜明けの霧の湖", hour: 5.9, weather: "mist", pos: [start.x - 40, start.z + 10], look: [20, 3] },
   { name: "cloudy", desc: "曇りの午後・斜面の森", hour: 14.5, weather: "cloudy", pos: [start.x + 220, start.z + 180], look: [-60, 6] },
@@ -40,6 +52,13 @@ export const SHOTS: ShotDef[] = [
   { name: "sunset_water", desc: "水面すれすれの夕日", hour: 18.0, weather: "clear", pos: [start.x + 10, start.z - 12, 0.6], look: [-30, 2] },
   { name: "forest", desc: "森の中（幹と下草）", hour: 16.0, weather: "clear", pos: [start.x + 180, start.z + 420], look: [200, 0] },
   { name: "ridge", desc: "尾根から谷を見下ろす", hour: 10.0, weather: "clear", pos: [start.x - 900, start.z + 700], look: [60, -10] },
+  { name: "noon_side", desc: "真昼・太陽が横から当たる草地", hour: 12.2, weather: "clear", pos: [start.x + 260, start.z + 350], look: [100, 2] },
+  { name: "cloudy_side", desc: "曇りの午後・木の近く", hour: 14.5, weather: "cloudy", pos: [start.x + 430, start.z + 470], look: [128, 3] },
+  // 動くもの（雨・粒子・稲光）は時間を止めた定点では隠れてしまうので、流したまま撮る2枚。
+  // 稲光は 12.5 秒に 1 回（落雷は t=3.6 / 19.6 / 32.9 …秒）。
+  // storm_live は「閃光の無いふつうの嵐」を、storm_bolt は「落雷の瞬間」を代表する
+  { name: "storm_live", desc: "嵐・時間を止めず11秒後（閃光の無い嵐の空）", hour: 18.2, weather: "storm", pos: [start.x - 300, start.z + 260], look: [45, 8], live: 11 },
+  { name: "storm_bolt", desc: "嵐・落雷の瞬間（3.7秒後）", hour: 18.2, weather: "storm", pos: [start.x - 300, start.z + 260], look: [45, 8], live: 3.8 },
   { name: "flip_half", desc: "裏返しの波が半分まで来たところ", hour: 17.4, weather: "clear", pos: [start.x, start.z], look: [0, 4], flip: 1, flipRadius: 260 },
   { name: "flip_full", desc: "全部が数式になった状態", hour: 17.4, weather: "clear", pos: [start.x, start.z], look: [0, 4], flip: 1, flipRadius: 6000 },
 ];
@@ -56,9 +75,11 @@ export type Params = {
   flipRadius?: number;
   tier?: QualityTier;
   shot?: ShotDef;
+  /** 実験室（いじる）を開いた状態で始める */
+  lab: boolean;
   /** 描画の負荷計測を出す */
   stats: boolean;
-  /** デバッグ: 描画段階を飛ばす（noref / nocopy / notrans / nopost / noshadow） */
+  /** デバッグ: 描画段階を飛ばす（noref / nocopy / notrans / nopost / noshadow = CSM の落ち影 / nosunocc = 林が落とす帯） */
   dbg: string[];
 };
 
@@ -68,6 +89,7 @@ export function parseParams(search: string): Params {
     auto: q.get("auto") === "1",
     nohud: q.get("nohud") === "1",
     freeze: q.get("freeze") === "1",
+    lab: q.get("lab") === "1",
     stats: q.get("stats") === "1",
     dbg: (q.get("dbg") ?? "").split(",").filter(Boolean),
   };
@@ -78,7 +100,8 @@ export function parseParams(search: string): Params {
       p.shot = s;
       p.auto = true;
       p.nohud = q.get("nohud") !== "0";
-      p.freeze = q.get("freeze") !== "0";
+      // live の定点は既定で時間を流す（?freeze=1 で明示的に止められる）
+      p.freeze = s.live !== undefined ? q.get("freeze") === "1" : q.get("freeze") !== "0";
       p.hour = s.hour;
       p.weather = s.weather;
       p.pos = [s.pos[0], s.pos[1], s.pos[2]];

@@ -1,172 +1,307 @@
 "use client";
-// 世界（three.js）を載せる画面。入口と HUD もここ。UI 担当が作り込む土台。
-import { useEffect, useRef, useState, useCallback } from "react";
-import MobileBreak from "./MobileBreak";
+// 世界（three.js）を載せる画面と、その前後の「言葉と画面」の司令塔。
+// World からは on("progress" | "ready" | "enter" | "flip" | "frame") と、少数の操作だけを使う。
+// React の state は毎フレーム更新しない（frame は 500ms に 1 回に間引く）。
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { World, Stats } from "@/engine/world";
 import type { WeatherPresetName } from "@/engine/core/env";
+import { extras } from "@/engine/ui/controlsApi";
+import Landing from "./Landing";
+import Blackboard from "./Blackboard";
+import NowFormula from "./NowFormula";
+import Hud from "./Hud";
+import FormulaOverlay from "./FormulaOverlay";
+import WorldLabels from "./WorldLabels";
+import PhotoMode, { type PhotoHandle } from "./PhotoMode";
+import About from "./About";
+import Lab from "./Lab";
+import Joystick from "./Joystick";
 
 type Phase = "loading" | "ready" | "in";
+type Hint = "on" | "fade" | "off";
 
-export default function WorldView() {
+/** 操作ヒントを出しておく時間（作者の指示で 8 秒 → 40 秒。読む前に消えていた） */
+const HINT_MS = 40000;
+/** 入口のフェード（CSS の transition と合わせる） */
+const FADE_MS = 1100;
+
+export default function WorldView({ sourceLines }: { sourceLines: number | null }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const worldRef = useRef<World | null>(null);
+  const photoRef = useRef<PhotoHandle>(null);
+  const [world, setWorld] = useState<World | null>(null);
   const [phase, setPhase] = useState<Phase>("loading");
-  const [progress, setProgress] = useState("");
+  const [landingGone, setLandingGone] = useState(false);
+  const [progress, setProgress] = useState({ step: "", p: 0 });
+  const [heightmapRes, setHeightmapRes] = useState(2048);
   const [stats, setStats] = useState<Stats | null>(null);
   const [hour, setHour] = useState(17.35);
   const [weather, setWeather] = useState<WeatherPresetName>("clear");
   const [flip, setFlip] = useState(false);
   const [muted, setMuted] = useState(false);
   const [nohud, setNohud] = useState(false);
+  // 定点撮影（?shot=）は HUD を消すが、世界の中の数式のふだは「画の中身」なので残す
+  const [keepLabels, setKeepLabels] = useState(false);
   const [showStats, setShowStats] = useState(false);
+  const [about, setAbout] = useState(false);
+  const [board, setBoard] = useState(false); // 黒板をぜんぶ見る
+  const [lab, setLab] = useState(false);
+  const [locked, setLocked] = useState(false);
+  const [grabbing, setGrabbing] = useState(false);
+  const [hint, setHint] = useState<Hint>("off");
+  const [isMobile, setIsMobile] = useState(false);
+  const [compact, setCompact] = useState(false);
+  const [auto, setAuto] = useState(false);
+  const [gyro, setGyro] = useState<"none" | "off" | "on">("none");
+  const phaseRef = useRef<Phase>("loading");
+  const aboutRef = useRef(false);
+  const boardRef = useRef(false);
+  phaseRef.current = phase;
+  aboutRef.current = about;
+  boardRef.current = board;
 
+  // 世界を作る
   useEffect(() => {
     let disposed = false;
-    let world: World | null = null;
+    let w: World | null = null;
     (async () => {
       const { World } = await import("@/engine/world");
       if (disposed || !canvasRef.current) return;
-      world = new World(canvasRef.current);
-      worldRef.current = world;
-      window.__flip = world;
-      setNohud(world.params.nohud);
-      setShowStats(world.params.stats);
-      setHour(world.env.hour);
-      world.on("progress", (p) => setProgress((p as { step: string }).step));
-      world.on("ready", () => setPhase(world!.params.auto ? "in" : "ready"));
-      world.on("enter", () => setPhase("in"));
-      world.on("flip", (f) => setFlip((f as number) > 0.5));
-      let last = 0;
-      world.on("frame", (s) => {
-        const now = performance.now();
-        if (now - last > 500) {
-          last = now;
-          setStats({ ...(s as Stats) });
-          setHour(world!.env.hour);
-        }
+      w = new World(canvasRef.current);
+      worldRef.current = w;
+      window.__flip = w;
+      setWorld(w);
+      setNohud(w.params.nohud);
+      setKeepLabels(!!w.params.shot);
+      setShowStats(w.params.stats);
+      if (w.params.lab) setLab(true);
+      setAuto(w.params.auto);
+      setIsMobile(w.env.isMobile);
+      setHeightmapRes(w.q.heightmapRes);
+      setHour(w.env.hour);
+      if (w.params.weather) setWeather(w.params.weather);
+      if ((w.params.flip ?? 0) > 0.5) setFlip(true);
+      w.on("progress", (p) => setProgress(p as { step: string; p: number }));
+      w.on("ready", () => {
+        const x = extras(w!.controls);
+        setGyro(typeof x.enableGyro === "function" ? (x.gyroEnabled ? "on" : "off") : "none");
+        setPhase(w!.params.auto ? "in" : "ready");
       });
-      await world.build();
+      w.on("enter", () => {
+        setPhase("in");
+        // ドラッグ中はカーソルを「掴んだ形」にする
+        const km = (w!.controls as unknown as { km?: { onDragChange?: (d: boolean) => void } }).km;
+        if (km) km.onDragChange = (d) => setGrabbing(d);
+        const c = w!.controls as unknown as { onPointerLockChange?: (on: boolean) => void };
+        c.onPointerLockChange = (on) => setLocked(on);
+      });
+      w.on("flip", (f) => setFlip((f as number) > 0.5));
+      let last = 0;
+      const wantStats = w.params.stats;
+      w.on("frame", (s) => {
+        const now = performance.now();
+        if (now - last < 500) return;
+        last = now;
+        if (wantStats) setStats({ ...(s as Stats) });
+        setHour(w!.env.hour);
+      });
+      await w.build();
     })();
     return () => {
       disposed = true;
-      world?.dispose();
+      w?.dispose();
       worldRef.current = null;
     };
   }, []);
 
+  // 世界ができる前の端末判定（入口の操作ヒント用）。できたら env.isMobile が上書きする
+  useEffect(() => {
+    if (window.matchMedia("(hover: none) and (pointer: coarse)").matches) setIsMobile(true);
+    const mq = window.matchMedia("(max-width: 620px)");
+    const upd = () => setCompact(mq.matches);
+    upd();
+    mq.addEventListener("change", upd);
+    return () => mq.removeEventListener("change", upd);
+  }, []);
+
+  // PointerLock の状態（Esc で解放されたら「クリックで操作にもどる」を出す）
+  useEffect(() => {
+    const onLock = () => setLocked(document.pointerLockElement === canvasRef.current);
+    document.addEventListener("pointerlockchange", onLock);
+    return () => document.removeEventListener("pointerlockchange", onLock);
+  }, []);
+
+  // 入場: 入口をフェードで外し、ヒントを 8 秒だけ
+  useEffect(() => {
+    if (phase !== "in") return;
+    setHint("on");
+    const t1 = window.setTimeout(() => setHint("fade"), HINT_MS);
+    const t2 = window.setTimeout(() => setHint("off"), HINT_MS + 1400);
+    const t3 = window.setTimeout(() => setLandingGone(true), FADE_MS);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
+    };
+  }, [phase]);
+
+  const enter = useCallback(() => {
+    const w = worldRef.current;
+    if (!w || !w.ready || phaseRef.current !== "ready") return;
+    w.enter(true);
+  }, []);
+
+  const toggleMute = useCallback(() => {
+    const w = worldRef.current;
+    if (!w) return;
+    w.audio.setMuted(!w.audio.muted);
+    setMuted(w.audio.muted);
+  }, []);
+
+  const toggleLab = useCallback(() => setLab((v) => !v), []);
+  const openAbout = useCallback(() => {
+    worldRef.current?.exit();
+    setAbout(true);
+  }, []);
+  const closeAbout = useCallback(() => setAbout(false), []);
+
+  // キーボード
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const w = worldRef.current;
-      if (!w || !w.ready) return;
-      if (e.code === "KeyF") w.toggleFlip();
-      if (e.code === "KeyM") { w.audio.setMuted(!w.audio.muted); setMuted(w.audio.muted); }
-      if (e.code === "KeyP") void photo();
-      if (e.code === "KeyH") setNohud((v) => !v);
-      if (e.code === "KeyT") { w.env.hourSpeed = w.env.hourSpeed ? 0 : 0.25; }
+      if (!w || !w.ready || e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
+      const el = e.target as HTMLElement | null;
+      const tag = el?.tagName;
+      // **文字を打ち込む欄だけ素通りさせる。** ここで range（実験室のつまみ）まで止めていたため、
+      // つまみを 1 度触るとフォーカスが input に残り、**F も L も P も効かなくなっていた**（実測）。
+      // つまみは矢印キーしか使わないので、英字と ? を通しても取り合いにならない。
+      if (tag === "TEXTAREA" || el?.isContentEditable) return;
+      if (tag === "INPUT" && (el as HTMLInputElement).type !== "range") return;
+      if (aboutRef.current) return; // About は自分で Esc を扱う
+      if (boardRef.current) return; // 黒板を読んでいる間は入場のキーを効かせない
+      if (e.key === "?") {
+        openAbout();
+        return;
+      }
+      switch (e.code) {
+        case "KeyF":
+          if (phaseRef.current === "in") w.toggleFlip();
+          break;
+        case "KeyM":
+          toggleMute();
+          break;
+        case "KeyP":
+          if (phaseRef.current === "in") void photoRef.current?.take();
+          break;
+        case "KeyH":
+          if (phaseRef.current === "in") setNohud((v) => !v);
+          break;
+        case "KeyL":
+          if (phaseRef.current === "in") toggleLab();
+          break;
+        case "KeyT":
+          w.env.hourSpeed = w.env.hourSpeed ? 0 : 0.25;
+          break;
+        case "Enter":
+        case "Space":
+          if (phaseRef.current === "ready" && tag !== "BUTTON") {
+            e.preventDefault();
+            enter();
+          }
+          break;
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [enter, toggleMute, openAbout, toggleLab]);
 
-  const enter = useCallback(() => {
-    worldRef.current?.enter(true);
-  }, []);
-
-  const photo = useCallback(async () => {
-    const w = worldRef.current;
-    if (!w) return;
-    const blob = await w.takePhoto();
-    if (!blob) return;
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `suushiki-no-zekkei-${Date.now()}.png`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-  }, []);
+  // 携帯では実験室を開いている間、下中央の「ふりっぷする」を隠す（CSS が .lab-open を見る）
+  useEffect(() => {
+    document.body.classList.toggle("lab-open", lab);
+    return () => document.body.classList.remove("lab-open");
+  }, [lab]);
 
   const onHour = (h: number) => {
     setHour(h);
     worldRef.current?.setHour(h);
   };
-  const onWeather = (w: WeatherPresetName) => {
-    setWeather(w);
-    worldRef.current?.setWeather(w);
+  const onWeather = (wn: WeatherPresetName) => {
+    setWeather(wn);
+    worldRef.current?.setWeather(wn);
+  };
+  const onGyro = async () => {
+    const x = extras(worldRef.current?.controls);
+    if (!x.enableGyro) return;
+    if (gyro === "on") {
+      x.disableGyro?.();
+      setGyro("off");
+      return;
+    }
+    try {
+      const ok = await x.enableGyro();
+      setGyro(ok ? "on" : "off");
+    } catch {
+      setGyro("off");
+    }
+  };
+  // マウス固定（PointerLock）の切り替え。既定はドラッグで見回す方式。
+  const onLock = () => {
+    const c = worldRef.current?.controls;
+    if (!c) return;
+    c.setPointerLock(!c.pointerLockMode);
+    setLocked(c.pointerLockMode);
   };
 
-  const hh = Math.floor(hour), mm = Math.floor((hour - hh) * 60);
-  const clock = `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+  const inWorld = phase === "in";
+  const overlays = inWorld && !nohud;
+  const labelsOn = inWorld && (!nohud || keepLabels);
+  const paused = false; // ドラッグで見回す方式が既定になったので「クリックで操作にもどる」は出さない
 
   return (
     <div className="world">
-      <canvas ref={canvasRef} />
+      <canvas ref={canvasRef} className={grabbing ? "grabbing" : ""} />
 
-      <div className={`landing ${phase === "in" ? "hidden" : ""}`}>
-        <div className="landing-head">
-          <span>こす.くま ／ ふりっぷ</span>
-          <span>MATHSCAPE</span>
-        </div>
-        <div className="landing-body">
-          <h1 className="landing-title">数式の絶景</h1>
-          <p className="landing-lead">
-            この風景の中に、画像は1枚もありません。<br />
-            3Dモデルも、音のファイルも、<MobileBreak />1つもありません。<br />
-            山も、湖も、木も、雲も、雨の音も、<MobileBreak />全部、<strong>数式</strong>です。<br />
-            裏返すと、確かめられます。
-          </p>
-          <button className="enter" onClick={enter} disabled={phase !== "ready"}>
-            {phase === "ready" ? "入る" : "計算中"}
-          </button>
-          <div className="progress">{phase === "ready" ? "" : progress}</div>
-        </div>
-        <div className="landing-foot">
-          <span>
-            パソコン: WASD で歩く ／ マウスで見回す ／ F で裏返す ／ P で写真<br />
-            携帯: 左側で歩く ／ 右側で見回す
-          </span>
-          <span>制作: こす.くま × Claude Fable 5.1</span>
-        </div>
-      </div>
-
-      {!nohud && phase === "in" && (
-        <div className="hud">
-          <div className="corner tl">
-            <div className="title">数式の絶景</div>
-            <div className="count">画像 <b>0</b> 枚 ／ 3Dモデル <b>0</b> 個 ／ 音源 <b>0</b> 個</div>
-          </div>
-          <div className="corner tr">
-            <div className="panel">
-              <button className={`flip ${flip ? "on" : ""}`} onClick={() => worldRef.current?.toggleFlip()}>
-                {flip ? "もどす" : "裏返す"}
-              </button>
-              <button onClick={() => void photo()}>写真</button>
-              <button className={muted ? "" : "on"} onClick={() => { const w = worldRef.current; if (!w) return; w.audio.setMuted(!w.audio.muted); setMuted(w.audio.muted); }}>
-                {muted ? "音 OFF" : "音 ON"}
-              </button>
-            </div>
-            <div className="panel" style={{ marginTop: 8 }}>
-              {(["clear", "cloudy", "mist", "rain", "storm"] as WeatherPresetName[]).map((w) => (
-                <button key={w} className={weather === w ? "on" : ""} onClick={() => onWeather(w)}>
-                  {{ clear: "晴れ", cloudy: "くもり", mist: "霧", rain: "雨", storm: "嵐" }[w]}
-                </button>
-              ))}
-            </div>
-            <div className="panel" style={{ marginTop: 8, alignItems: "center" }}>
-              <span className="count">{clock}</span>
-              <input type="range" min={0} max={24} step={0.05} value={hour} onChange={(e) => onHour(Number(e.target.value))} />
-            </div>
-          </div>
-          <div className="corner bl hint">WASD 歩く ／ Shift 走る ／ F 裏返す ／ P 写真 ／ H 表示を消す</div>
-          <div className="corner br">
-            {showStats && stats && (
-              <div className="stats">
-                {stats.tier} ／ {stats.width}×{stats.height} ／ {stats.frameMs.toFixed(1)} ms ／ {stats.drawCalls} calls ／ {(stats.triangles / 1000).toFixed(0)}k tris
-              </div>
-            )}
-          </div>
-          <div className="reticle" />
-        </div>
+      {!landingGone && (
+        <Blackboard phase={phase} isMobile={isMobile} full={board} onClose={() => setBoard(false)} />
       )}
+
+      {!landingGone && (
+        <Landing phase={phase} progress={progress} heightmapRes={heightmapRes} isMobile={isMobile} onEnter={enter} onAbout={openAbout} onBoard={() => setBoard(true)} />
+      )}
+
+      {overlays && (
+        <Hud
+          hour={hour}
+          weather={weather}
+          flip={flip}
+          muted={muted}
+          stats={stats}
+          showStats={showStats}
+          isMobile={isMobile}
+          hint={hint}
+          paused={paused}
+          lock={locked}
+          onLock={onLock}
+          gyro={gyro}
+          lab={lab}
+          onLab={toggleLab}
+          onFlip={() => worldRef.current?.toggleFlip()}
+          onPhoto={() => void photoRef.current?.take()}
+          onMute={toggleMute}
+          onAbout={openAbout}
+          onGyro={() => void onGyro()}
+          onHour={onHour}
+          onWeather={onWeather}
+        />
+      )}
+
+      <FormulaOverlay world={world} active={overlays} compact={compact} />
+      <NowFormula world={world} active={overlays} compact={compact} />
+      <WorldLabels world={world} active={labelsOn} compact={compact} maxLabels={compact || isMobile ? 1 : 0} />
+      {isMobile && <Joystick world={world} active={overlays} />}
+      <PhotoMode ref={photoRef} world={world} />
+      <Lab world={world} open={overlays && lab} onClose={() => setLab(false)} sourceLines={sourceLines} isMobile={isMobile} />
+      <About open={about} onClose={closeAbout} sourceLines={sourceLines} isMobile={isMobile} world={world} />
     </div>
   );
 }

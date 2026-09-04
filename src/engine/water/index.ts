@@ -1,152 +1,72 @@
-// 湖。土台版: 平面鏡の映り込み＋屈折（シーンのコピー）＋水深による吸収＋Gerstner波＋岸の泡。
-// 水担当は波（FFT など）・泡・雨の波紋・裏返し表現・端末別の負荷調整を作り込む。
+// 湖。
+//   波     … wavesim.ts（FFT、2 カスケード）＋ 風の斑 ＋ 浅瀬の波 ＋ 雨の波紋
+//   水面   … shaders.ts（屈折・水深・コースティクス・映り込み・GGX のギラつき・泡・裏返し）
+//   岸     … shore.ts（濡れた砂の帯を画面空間のデカールで）
+//   映り込み … 平面鏡（reflRT、ミップ付き。粗さでぼかす）。水中では「水面より上の世界」を広角で撮り直し、スネルの窓に使う
+// メッシュはカメラ中心の極座標格子（近くは細かく、遠くは粗く。段差のない 1 枚）。
 import * as THREE from "three";
 import type { Env } from "../core/env";
 import { LAYER, type Pipeline } from "../core/pipeline";
 import { bindEnvUniforms } from "../core/patch";
 import type { QualitySettings } from "../core/quality";
 import { WORLD } from "../core/heightfield";
+import { lakeRadiusMean } from "../core/height";
+import { WaveSim } from "./wavesim";
+import { WATER_VERT, WATER_FRAG } from "./shaders";
+import { ShoreDecal } from "./shore";
+import { GpuTimer } from "./gputimer";
+import { LAB } from "../lab/store";
 
-const WATER_VERT = /* glsl */ `
-#include <flip_noise>
-uniform float uTime;
-uniform vec3 uWind;
-uniform mat4 uReflMatrix;
-varying vec3 vWorld;
-varying vec4 vReflCoord;
-varying vec3 vWaveN;
-// 3つの Gerstner 波
-vec3 gerstner(vec2 xz, vec2 dir, float amp, float wl, float speed, float t, inout vec3 n){
-  float k = 6.28318 / wl;
-  float f = k * (dot(dir, xz) - speed * t);
-  float q = 0.6;
-  vec3 d = vec3(q * amp * dir.x * cos(f), amp * sin(f), q * amp * dir.y * cos(f));
-  n += vec3(-dir.x * k * amp * cos(f), -q * k * amp * sin(f), -dir.y * k * amp * cos(f));
-  return d;
-}
-void main(){
-  vec3 world = (modelMatrix * vec4(position, 1.0)).xyz;
-  float w = clamp(uWind.z / 8.0, 0.15, 1.5);
-  vec2 wd = normalize(uWind.xy + vec2(0.001, 0.0));
-  vec3 n = vec3(0.0, 1.0, 0.0);
-  vec3 d = vec3(0.0);
-  d += gerstner(world.xz, wd, 0.06 * w, 9.0, 3.0, uTime, n);
-  d += gerstner(world.xz, normalize(wd + vec2(0.6, -0.4)), 0.035 * w, 4.2, 2.2, uTime, n);
-  d += gerstner(world.xz, normalize(wd + vec2(-0.5, 0.7)), 0.02 * w, 2.1, 1.6, uTime, n);
-  world += d;
-  vWorld = world;
-  vWaveN = normalize(n);
-  vReflCoord = uReflMatrix * vec4(world, 1.0);
-  gl_Position = projectionMatrix * viewMatrix * vec4(world, 1.0);
-}
-`;
-
-const WATER_FRAG = /* glsl */ `
-#include <flip_noise>
-#include <flip_atmosphere>
-#include <flip_flip>
-uniform sampler2D tReflection;
-uniform sampler2D tSceneColor;
-uniform sampler2D tSceneDepth;
-uniform vec2 uResolution;
-uniform float uNear;
-uniform float uFar;
-uniform float uRain;
-uniform vec3 uWind;
-varying vec3 vWorld;
-varying vec4 vReflCoord;
-varying vec3 vWaveN;
-
-vec3 waveNormal(vec2 xz, float dist){
-  // 細かい波紋（風で速く）
-  float t = uTime;
-  vec2 wd = normalize(uWind.xy + vec2(0.001, 0.0));
-  float sp = 0.4 + uWind.z * 0.12;
-  float e = 0.08;
-  vec2 p1 = xz * 0.9 + wd * t * sp;
-  vec2 p2 = xz * 2.3 - wd.yx * t * sp * 0.7 + 13.0;
-  float n0 = flip_gnoise(p1) * 0.6 + flip_gnoise(p2) * 0.4;
-  float nx = flip_gnoise(p1 + vec2(e, 0.0)) * 0.6 + flip_gnoise(p2 + vec2(e, 0.0) * 2.3) * 0.4;
-  float nz = flip_gnoise(p1 + vec2(0.0, e)) * 0.6 + flip_gnoise(p2 + vec2(0.0, e) * 2.3) * 0.4;
-  float amp = 0.05 * (0.3 + clamp(uWind.z / 8.0, 0.0, 1.5));
-  amp *= 1.0 - smoothstep(60.0, 700.0, dist) * 0.8;
-  vec3 n = normalize(vec3((n0 - nx) / e * amp, 1.0, (n0 - nz) / e * amp));
-  return normalize(vWaveN * 0.5 + n);
-}
-
-float linearDepth(float z){
-  float ndc = z * 2.0 - 1.0;
-  return (2.0 * uNear * uFar) / (uFar + uNear - ndc * (uFar - uNear));
-}
-
-void main(){
-  vec3 V = normalize(uCamPos - vWorld);
-  float dist = distance(uCamPos, vWorld);
-  vec3 N = waveNormal(vWorld.xz, dist);
-  vec2 screenUv = gl_FragCoord.xy / uResolution;
-
-  // 水深（コピーした線形深度 − この画素の線形深度）
-  float sceneLin = texture2D(tSceneDepth, screenUv).r;
-  float fragLin = linearDepth(gl_FragCoord.z);
-  float depthDiff = max(sceneLin - fragLin, 0.0);
-  // 視線方向の距離差 → 垂直方向の水深に近づける
-  float waterDepth = depthDiff * max(V.y, 0.08);
-
-  // 屈折
-  float distortAmt = clamp(waterDepth * 0.5, 0.0, 1.0) * 0.02;
-  vec2 rUv = screenUv + N.xz * distortAmt;
-  float rLin = texture2D(tSceneDepth, rUv).r;
-  if (rLin < fragLin) rUv = screenUv; // 水面より手前の物が滲まないように
-  vec3 refr = texture2D(tSceneColor, rUv).rgb;
-  vec3 absorb = vec3(0.35, 0.12, 0.06);
-  vec3 deepCol = vec3(0.012, 0.045, 0.06) * (uSkyAmbient_dummy());
-  vec3 water = mix(refr * exp(-absorb * waterDepth * 1.2), deepCol, 1.0 - exp(-waterDepth * 0.12));
-
-  // 反射
-  vec3 rc = vReflCoord.xyz / vReflCoord.w;
-  vec2 reflUv = rc.xy + N.xz * 0.06 * (1.0 - smoothstep(0.0, 400.0, dist));
-  vec3 refl = texture2D(tReflection, clamp(reflUv, 0.001, 0.999)).rgb;
-
-  // フレネル
-  float NdotV = max(dot(N, V), 0.0);
-  float F = 0.02 + 0.98 * pow(1.0 - NdotV, 5.0);
-  F = mix(F, 1.0, 0.0);
-  vec3 col = mix(water, refl, F);
-
-  // 太陽のハイライト
-  vec3 H = normalize(V + uSunDir);
-  float spec = pow(max(dot(N, H), 0.0), 900.0) * 3.0 + pow(max(dot(N, H), 0.0), 60.0) * 0.06;
-  col += uSunColor * spec * step(0.0, uSunDir.y);
-  // 月
-  vec3 Hm = normalize(V + uMoonDir);
-  col += uMoonColor * pow(max(dot(N, Hm), 0.0), 600.0) * 30.0;
-
-  // 岸の泡
-  float foam = (1.0 - smoothstep(0.0, 0.7, waterDepth)) * (0.5 + 0.5 * flip_gnoise(vWorld.xz * 3.0 + uTime * 0.3));
-  col = mix(col, vec3(0.8), foam * 0.35 * (0.3 + 0.7 * max(uSunDir.y, 0.05)));
-
-  col = flip_applyAerial(col, vWorld);
-
-  // 裏返し: 水面は波の関数を等高線で
-  float fm = flip_mask(vWorld);
-  if (fm > 0.0) {
-    vec3 fc = FLIP_BG * 1.5;
-    float ring = flip_line((vWorld.y - 0.0) * 12.0 + N.x * 4.0, 0.05);
-    fc += FLIP_LINE * 0.6 * ring + FLIP_LINE * 0.12 * flip_grid(vWorld.xz, 5.0);
-    fc += FLIP_ACCENT * flip_edgeGlow(vWorld) * 1.5;
-    col = mix(col, fc, fm);
+/** カメラ中心の極座標格子。半径は等比で増える（近くほど細かい） */
+function buildPolarGrid(nr: number, nt: number, rMin: number, rMax: number): THREE.BufferGeometry {
+  const ratio = Math.pow(rMax / rMin, 1 / (nr - 1));
+  const count = 1 + nr * nt;
+  const pos = new Float32Array(count * 3);
+  let k = 3;
+  for (let i = 0; i < nr; i++) {
+    const r = rMin * Math.pow(ratio, i);
+    for (let j = 0; j < nt; j++) {
+      const a = (j / nt) * Math.PI * 2;
+      pos[k++] = Math.cos(a) * r;
+      pos[k++] = 0;
+      pos[k++] = Math.sin(a) * r;
+    }
   }
-  gl_FragColor = vec4(col, 1.0);
+  const idx: number[] = [];
+  const ring = (i: number, j: number) => 1 + i * nt + (j % nt);
+  for (let j = 0; j < nt; j++) idx.push(0, ring(0, j + 1), ring(0, j));
+  for (let i = 0; i < nr - 1; i++) {
+    for (let j = 0; j < nt; j++) {
+      const a = ring(i, j), b = ring(i, j + 1), c = ring(i + 1, j), d = ring(i + 1, j + 1);
+      idx.push(a, d, c, a, b, d);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  geo.setIndex(idx);
+  geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), rMax);
+  return geo;
 }
-`;
 
 export class Water {
   mesh: THREE.Mesh;
   material: THREE.ShaderMaterial;
   reflRT: THREE.WebGLRenderTarget;
+  sim: WaveSim;
+  shore: ShoreDecal;
+  timer: GpuTimer | null = null;
+  /** 濡れた砂のデカールを使うか（地形側が岸の濡れを持ったら false に） */
+  shoreDecalEnabled = true;
+  /** 調査用: ?dbg=nowater で水を全部止める（負荷の差分を測る） */
+  private disabled = typeof location !== "undefined" && /[?&]dbg=[^&]*nowater/.test(location.search);
+  /** 調査用: ?dbg=noshore で岸の濡れ砂デカールだけ止める（水際の線がどちらのものかを切り分ける） */
+  private noShore = typeof location !== "undefined" && /[?&]dbg=[^&]*noshore/.test(location.search);
   private reflCamera = new THREE.PerspectiveCamera();
   private textureMatrix = new THREE.Matrix4();
-  private plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  private lastTime = -1;
+  /** 実験室の「うねりの向き」で回した風向（毎フレームの生成を避ける） */
+  private labWindDir = new THREE.Vector2(1, 0);
+  private camFwd = new THREE.Vector3();
   private tmp = {
     reflectorPlane: new THREE.Plane(),
     normal: new THREE.Vector3(),
@@ -161,120 +81,243 @@ export class Water {
   };
 
   constructor(public scene: THREE.Scene, public env: Env, public q: QualitySettings) {
-    const size = 2600;
-    const geo = new THREE.PlaneGeometry(size, size, 220, 220);
-    geo.rotateX(-Math.PI / 2);
+    const tier = q.tier;
+    const heavy = tier === "high" || tier === "ultra";
+    const N = heavy ? 256 : 128;
+    const L0 = heavy ? 64 : 48;
+    const L1 = 7.3;
+    const kSplit = (2 * Math.PI) / 1.25;
+    this.sim = new WaveSim(N, [
+      { size: L0, kLo: 0, kHi: kSplit },
+      { size: L1, kLo: kSplit, kHi: 1e9 },
+    ], true, 8);
+
+    const nr = heavy ? 380 : 240, nt = heavy ? 256 : 160;
+    const geo = buildPolarGrid(nr, nt, 0.35, 3000);
     const uniforms: Record<string, THREE.IUniform> = {
       tReflection: { value: null },
       tSceneColor: { value: null },
       tSceneDepth: { value: null },
+      tDeriv0: { value: null },
+      tDeriv1: { value: null },
+      tDisp: { value: null },
       uReflMatrix: { value: this.textureMatrix },
+      uViewProj: { value: new THREE.Matrix4() },
+      uCamFwd: { value: new THREE.Vector3(0, 0, -1) },
       uResolution: { value: new THREE.Vector2(1, 1) },
-      uNear: { value: 0.1 },
-      uFar: { value: 9000 },
+      uReflSize: { value: new THREE.Vector2(1, 1) },
+      uTiles: { value: new THREE.Vector4(L0, L1, N, 2) },
+      uWaveAmp: { value: new THREE.Vector4(1, 1, 1, 0.05) },
+      uWaterA: { value: new THREE.Vector4(0, 5, 0, 1) },   // x: 映り込み RT が有効か（最初の描画までは解析的な空で代用）
+      uWaterB: { value: new THREE.Vector4(0, 0.7, heavy ? 3 : 2, 1) },
+      uExtinction: { value: new THREE.Vector3(0.42, 0.13, 0.085) },
+      uDebug: { value: typeof location !== "undefined" ? Number((/[?&]wdbg=(\d+)/.exec(location.search) ?? [0, 0])[1]) : 0 },
+      uScatterColor: { value: new THREE.Vector3(0.022, 0.115, 0.14) },
+      // 近景のうねり（shaders.ts の water_chop）。?dbg=nochop で 0 ＝ 切り分け用
+      uChopAmt: { value: typeof location !== "undefined" && /[?&]dbg=[^&]*nochop/.test(location.search) ? 0 : 1 },
     };
     bindEnvUniforms(uniforms, env);
     this.material = new THREE.ShaderMaterial({
       uniforms,
       vertexShader: WATER_VERT,
-      fragmentShader: WATER_FRAG.replace(
-        "#include <flip_flip>",
-        "#include <flip_flip>\nuniform vec3 uSkyAmbient;\nvec3 uSkyAmbient_dummy(){ return vec3(1.0) + uSkyAmbient * 0.0; }",
-      ),
+      fragmentShader: WATER_FRAG,
       transparent: false,
       depthWrite: true,
+      side: THREE.DoubleSide,
     });
     this.mesh = new THREE.Mesh(geo, this.material);
     this.mesh.position.y = WORLD.lakeLevel;
     this.mesh.layers.set(LAYER.WATER);
     this.mesh.frustumCulled = false;
+    this.mesh.renderOrder = 0;
     scene.add(this.mesh);
+
     this.reflRT = new THREE.WebGLRenderTarget(1, 1, {
       type: THREE.HalfFloatType,
       depthBuffer: true,
       stencilBuffer: false,
-      generateMipmaps: false,
-      minFilter: THREE.LinearFilter,
+      generateMipmaps: true,
+      minFilter: THREE.LinearMipmapLinearFilter,
       magFilter: THREE.LinearFilter,
+      wrapS: THREE.ClampToEdgeWrapping,
+      wrapT: THREE.ClampToEdgeWrapping,
     });
     uniforms.tReflection.value = this.reflRT.texture;
+    this.shore = new ShoreDecal(scene, env);
+
+    const wantTimer = typeof location !== "undefined" && /[?&]wtime=1/.test(location.search);
+    if (wantTimer) {
+      this.mesh.onBeforeRender = () => this.timer?.begin("water");
+      this.mesh.onAfterRender = () => this.timer?.end();
+      this.shore.mesh.onBeforeRender = () => this.timer?.begin("shore");
+      this.shore.mesh.onAfterRender = () => this.timer?.end();
+    }
+  }
+
+  /**
+   * 映り込み RT の倍率。high は core の 0.5 のままだと、映った山が 4〜5px のブロックに見える
+   * （批評ラウンド2）。high/ultra だけ 0.75 に上げる。core の値は変えない。
+   */
+  private reflScale(): number {
+    const t = this.q.tier;
+    return t === "high" || t === "ultra" ? Math.max(this.q.reflectionScale, 0.75) : this.q.reflectionScale;
   }
 
   resize(width: number, height: number) {
-    const s = this.q.reflectionScale;
-    this.reflRT.setSize(Math.max(1, Math.floor(width * s)), Math.max(1, Math.floor(height * s)));
+    const s = this.reflScale();
+    const rw = Math.max(1, Math.floor(width * s)), rh = Math.max(1, Math.floor(height * s));
+    this.reflRT.setSize(rw, rh);
     (this.material.uniforms.uResolution.value as THREE.Vector2).set(width, height);
+    (this.material.uniforms.uReflSize.value as THREE.Vector2).set(rw, rh);
   }
 
-  /** 鏡像カメラでシーンを映り込み用 RT に描く（水面は描かない・草などは省く）。 */
+  /** 斜めニアクリップ。plane は視点座標系で、plane の表側だけを描く */
+  private applyObliqueClip(cam: THREE.PerspectiveCamera, normalWorld: THREE.Vector3, pointWorld: THREE.Vector3) {
+    const t = this.tmp;
+    t.reflectorPlane.setFromNormalAndCoplanarPoint(normalWorld, pointWorld);
+    t.reflectorPlane.applyMatrix4(cam.matrixWorldInverse);
+    t.clipPlane.set(t.reflectorPlane.normal.x, t.reflectorPlane.normal.y, t.reflectorPlane.normal.z, t.reflectorPlane.constant);
+    const p = cam.projectionMatrix;
+    t.q.x = (Math.sign(t.clipPlane.x) + p.elements[8]) / p.elements[0];
+    t.q.y = (Math.sign(t.clipPlane.y) + p.elements[9]) / p.elements[5];
+    t.q.z = -1.0;
+    t.q.w = (1.0 + p.elements[10]) / p.elements[14];
+    t.clipPlane.multiplyScalar(2.0 / t.clipPlane.dot(t.q));
+    p.elements[2] = t.clipPlane.x;
+    p.elements[6] = t.clipPlane.y;
+    p.elements[10] = t.clipPlane.z + 1.0 - 0.0001;
+    p.elements[14] = t.clipPlane.w;
+  }
+
+  /**
+   * 映り込み用 RT を描く。水上: 鏡像カメラで OPAQUE+SKY（水面と MAIN_ONLY は描かない）。
+   * 水中: 同じカメラ位置から広角で「水面より上」だけを描き、スネルの窓の屈折先に使う。
+   */
   renderReflection(pipeline: Pipeline, camera: THREE.PerspectiveCamera) {
+    if (this.disabled) return;
     const t = this.tmp;
     const renderer = pipeline.renderer;
-    // three.js の Reflector と同じ手順
+    const rc = this.reflCamera;
     t.reflectorWorldPosition.set(0, WORLD.lakeLevel, 0);
     t.cameraWorldPosition.setFromMatrixPosition(camera.matrixWorld);
-    if (t.cameraWorldPosition.y < WORLD.lakeLevel) return;
-    t.rotationMatrix.identity();
     t.normal.set(0, 1, 0);
-    t.view.subVectors(t.reflectorWorldPosition, t.cameraWorldPosition);
-    t.view.reflect(t.normal).negate();
-    t.view.add(t.reflectorWorldPosition);
-    t.rotationMatrix.extractRotation(camera.matrixWorld);
-    t.lookAtPosition.set(0, 0, -1);
-    t.lookAtPosition.applyMatrix4(t.rotationMatrix);
-    t.lookAtPosition.add(t.cameraWorldPosition);
-    t.target.subVectors(t.reflectorWorldPosition, t.lookAtPosition);
-    t.target.reflect(t.normal).negate();
-    t.target.add(t.reflectorWorldPosition);
-    const rc = this.reflCamera;
-    rc.position.copy(t.view);
-    rc.up.set(0, 1, 0);
-    rc.up.reflect(t.normal);
-    rc.lookAt(t.target);
+    const under = this.env.underwater > 0.5;
+    if (!under) {
+      t.rotationMatrix.identity();
+      t.view.subVectors(t.reflectorWorldPosition, t.cameraWorldPosition);
+      t.view.reflect(t.normal).negate();
+      t.view.add(t.reflectorWorldPosition);
+      t.rotationMatrix.extractRotation(camera.matrixWorld);
+      t.lookAtPosition.set(0, 0, -1);
+      t.lookAtPosition.applyMatrix4(t.rotationMatrix);
+      t.lookAtPosition.add(t.cameraWorldPosition);
+      t.target.subVectors(t.reflectorWorldPosition, t.lookAtPosition);
+      t.target.reflect(t.normal).negate();
+      t.target.add(t.reflectorWorldPosition);
+      rc.position.copy(t.view);
+      rc.up.set(0, 1, 0);
+      rc.up.reflect(t.normal);
+      rc.lookAt(t.target);
+      rc.fov = camera.fov;
+    } else {
+      rc.position.copy(t.cameraWorldPosition);
+      rc.up.set(0, 1, 0);
+      rc.quaternion.copy(camera.quaternion);
+      rc.fov = Math.min(camera.fov * 1.7, 150);
+    }
     rc.far = camera.far;
     rc.near = camera.near;
-    rc.fov = camera.fov;
     rc.aspect = camera.aspect;
     rc.updateProjectionMatrix();
     rc.updateMatrixWorld();
-    // テクスチャ行列
     this.textureMatrix.set(0.5, 0, 0, 0.5, 0, 0.5, 0, 0.5, 0, 0, 0.5, 0.5, 0, 0, 0, 1);
     this.textureMatrix.multiply(rc.projectionMatrix);
     this.textureMatrix.multiply(rc.matrixWorldInverse);
-    // 斜めニアクリップ（水面より下を映さない）
-    t.reflectorPlane.setFromNormalAndCoplanarPoint(t.normal, t.reflectorWorldPosition);
-    t.reflectorPlane.applyMatrix4(rc.matrixWorldInverse);
-    t.clipPlane.set(t.reflectorPlane.normal.x, t.reflectorPlane.normal.y, t.reflectorPlane.normal.z, t.reflectorPlane.constant);
-    const projectionMatrix = rc.projectionMatrix;
-    t.q.x = (Math.sign(t.clipPlane.x) + projectionMatrix.elements[8]) / projectionMatrix.elements[0];
-    t.q.y = (Math.sign(t.clipPlane.y) + projectionMatrix.elements[9]) / projectionMatrix.elements[5];
-    t.q.z = -1.0;
-    t.q.w = (1.0 + projectionMatrix.elements[10]) / projectionMatrix.elements[14];
-    t.clipPlane.multiplyScalar(2.0 / t.clipPlane.dot(t.q));
-    projectionMatrix.elements[2] = t.clipPlane.x;
-    projectionMatrix.elements[6] = t.clipPlane.y;
-    projectionMatrix.elements[10] = t.clipPlane.z + 1.0 - 0.0001;
-    projectionMatrix.elements[14] = t.clipPlane.w;
+    // 水面より下は映さない（水中モードでも「上だけ」）
+    this.applyObliqueClip(rc, t.normal, t.reflectorWorldPosition);
 
     rc.layers.set(LAYER.OPAQUE);
     rc.layers.enable(LAYER.SKY);
     const prevShadow = renderer.shadowMap.autoUpdate;
     renderer.shadowMap.autoUpdate = false;
+    this.timer?.begin("reflection");
     renderer.setRenderTarget(this.reflRT);
     renderer.clear(true, true, false);
     renderer.render(this.scene, rc);
+    this.timer?.end();
     renderer.shadowMap.autoUpdate = prevShadow;
     renderer.setRenderTarget(null);
+    (this.material.uniforms.uWaterA.value as THREE.Vector4).x = 1;
   }
 
   update(pipeline: Pipeline, camera: THREE.PerspectiveCamera) {
+    const env = this.env;
+    const w = env.weather;
+    if (!this.timer) {
+      const wantTimer = typeof location !== "undefined" && /[?&]wtime=1/.test(location.search);
+      this.timer = new GpuTimer(pipeline.renderer, wantTimer);
+    }
+    this.timer.poll();
+    if (this.disabled) {
+      this.mesh.visible = false;
+      this.shore.mesh.visible = false;
+      return;
+    }
+
+    // 水中かどうか（他モジュールが読む）
+    const cam = env.cameraPos;
+    env.underwater = THREE.MathUtils.clamp((WORLD.lakeLevel - cam.y) / 0.12, 0, 1);
+    const under = env.underwater > 0.5;
+
+    // 波
+    // 実験室の「風速」「うねりの向き」はここに掛かる（既定は 1 と 0 ＝ 天気そのまま）
+    if (LAB.waterWind === 1 && LAB.waterDir === 0) {
+      this.sim.setWind(w.windDir, w.wind, w.storm);
+    } else {
+      const a = (LAB.waterDir * Math.PI) / 180;
+      const ca = Math.cos(a), sa = Math.sin(a);
+      this.labWindDir.set(w.windDir.x * ca - w.windDir.y * sa, w.windDir.x * sa + w.windDir.y * ca);
+      this.sim.setWind(this.labWindDir, w.wind * LAB.waterWind, w.storm);
+    }
+    const dt = this.lastTime < 0 ? 0 : Math.max(env.time - this.lastTime, 0);
+    this.lastTime = env.time;
+    this.timer.begin("sim");
+    this.sim.update(pipeline, env.time, dt);
+    this.timer.end();
+
     const u = this.material.uniforms;
     u.tSceneColor.value = pipeline.copyRT.texture;
     u.tSceneDepth.value = pipeline.copyDepthRT.texture;
-    u.uNear.value = camera.near;
-    u.uFar.value = camera.far;
-    // 水面はカメラの xz に追従（無限に見せる）
-    const cam = this.env.cameraPos;
-    this.mesh.position.set(Math.round(cam.x / 20) * 20, WORLD.lakeLevel, Math.round(cam.z / 20) * 20);
+    u.tDeriv0.value = this.sim.derivTexture(0);
+    u.tDeriv1.value = this.sim.derivTexture(1);
+    u.tDisp.value = this.sim.dispRT.texture;
+    const p = this.sim.params;
+    (u.uWaveAmp.value as THREE.Vector4).set(1, 1, p.chop, p.hs);
+    const A = u.uWaterA.value as THREE.Vector4;
+    A.z = p.foamAmount;
+    A.w = 1.0;
+    A.y = 5;
+    const B = u.uWaterB.value as THREE.Vector4;
+    B.x = under ? 1 : 0;
+    B.y = Math.tan(THREE.MathUtils.degToRad(camera.fov) * 0.5);
+    B.w = p.lambdaP;
+    // 嵐は濁って暗い
+    const storm = w.storm;
+    (u.uExtinction.value as THREE.Vector3).set(0.42, 0.13, 0.085).multiplyScalar(1 + 0.8 * storm + 0.3 * w.rain);
+    (u.uScatterColor.value as THREE.Vector3).set(0.022, 0.115, 0.14).lerp(new THREE.Vector3(0.03, 0.055, 0.055), storm * 0.7);
+
+    camera.getWorldDirection(this.camFwd);
+    (u.uCamFwd.value as THREE.Vector3).copy(this.camFwd);
+    (u.uViewProj.value as THREE.Matrix4).multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    // 水面はカメラの真下を中心に（極座標メッシュ）
+    this.mesh.position.set(cam.x, WORLD.lakeLevel, cam.z);
+    // 岸のデカール: 湖の近くにいるときだけ
+    const nearLake = Math.hypot(cam.x, cam.z) < lakeRadiusMean() + 500 && Math.abs(cam.y - WORLD.lakeLevel) < 120;
+    this.shore.update(pipeline, this.camFwd, this.shoreDecalEnabled && !this.noShore && nearLake && !under);
+  }
+
+  dispose() {
+    this.sim.dispose();
+    this.reflRT.dispose();
   }
 }

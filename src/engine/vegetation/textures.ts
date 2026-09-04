@@ -1,0 +1,326 @@
+// 実行時に Canvas で描く植生のテクスチャ。画像ファイルは使わない。決定的（hash2 ベースの乱数）。
+//   針葉のカード: 2×2 のアトラス。0 = 枝を上から見た扇（top）、1 = 横から見た垂れ（side）、
+//   2 = 梢（spire）、3 = top の別種。縁は乱れ、内側（幹側）ほど暗い。
+import * as THREE from "three";
+import { hash2 } from "../core/noise";
+
+export const NEEDLE_ATLAS_CELLS = 2; // 2×2
+
+/** 決定的な乱数列（seed ごと） */
+function rng(seed: number) {
+  let i = 0;
+  return () => hash2(i++, seed * 7919, 17);
+}
+
+type Ctx = CanvasRenderingContext2D;
+
+/** 針葉の小枝を 1 本描く。(x0,y0) から角度 ang、長さ len。needles = 針の密度 */
+function drawTwig(ctx: Ctx, r: () => number, x0: number, y0: number, ang: number, len: number, needleLen: number, dark: number, hue: number) {
+  const dx = Math.cos(ang), dy = Math.sin(ang);
+  // 芯
+  ctx.strokeStyle = `rgba(${Math.round(26 + dark * 8)}, ${Math.round(27 + dark * 9)}, ${22}, 1)`;
+  ctx.lineWidth = Math.max(1.0, len * 0.04);
+  ctx.beginPath();
+  ctx.moveTo(x0, y0);
+  ctx.lineTo(x0 + dx * len, y0 + dy * len);
+  ctx.stroke();
+  // 針: 芯の両側に、先端ほど短く、少し前へ倒れる
+  // 針は密に。隙間を空けすぎると「羊歯の葉」に見える（充填率およそ 7 割）
+  const n = Math.floor(len / 1.15);
+  for (let i = 0; i < n; i++) {
+    const t = (i + 0.5) / n;
+    if (r() < 0.14) continue; // わずかな隙間（向こうが透ける）
+    const px = x0 + dx * len * t, py = y0 + dy * len * t;
+    for (const s of [-1, 1]) {
+      const a = ang + s * (0.95 + 0.35 * (r() - 0.5)) - 0.25 * t;
+      const l = needleLen * (0.6 + 0.75 * r()) * (1.0 - 0.35 * t);
+      const shade = dark * (0.5 + 0.5 * t) * (0.8 + 0.4 * r());
+      // 針葉の色（線形で およそ (0.021,0.051,0.022)〜(0.055,0.133,0.048) の青緑寄り）
+      const g = Math.round(42 + 52 * shade);
+      const rr = Math.round(25 + 36 * shade * (0.75 + 0.5 * hue));
+      const b = Math.round(29 + 29 * shade * (1.2 - 0.4 * hue));
+      ctx.strokeStyle = `rgb(${rr}, ${g}, ${b})`;
+      ctx.lineWidth = 0.9 + 0.6 * r();
+      ctx.beginPath();
+      ctx.moveTo(px, py);
+      ctx.lineTo(px + Math.cos(a) * l, py + Math.sin(a) * l);
+      ctx.stroke();
+    }
+  }
+}
+
+/** 枝（扇）: 左端（幹側）から右へ伸びる主軸と、斜めに出る小枝 */
+function drawSpray(ctx: Ctx, seed: number, size: number, kind: "top" | "side" | "spire") {
+  const r = rng(seed);
+  const cx0 = size * 0.02, cy0 = size * 0.5;
+  const len = size * 0.94;
+  if (kind === "spire") {
+    // 梢: 下から上へ。細く、小枝は短い
+    const bx = size * 0.5, by = size * 0.98;
+    ctx.strokeStyle = "rgb(38, 30, 20)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(bx, by);
+    ctx.lineTo(bx, size * 0.04);
+    ctx.stroke();
+    const n = 15;
+    for (let i = 0; i < n; i++) {
+      const t = i / n;
+      const y = by - (by - size * 0.06) * t;
+      const l = size * (0.32 - 0.26 * t) * (0.7 + 0.6 * r());
+      const dark = 0.55 + 0.45 * t;
+      drawTwig(ctx, r, bx, y, -Math.PI / 2 - 1.15 - 0.3 * r(), l, size * 0.04, dark, 0.5);
+      drawTwig(ctx, r, bx, y, -Math.PI / 2 + 1.15 + 0.3 * r(), l * (0.7 + 0.6 * r()), size * 0.04, dark, 0.5);
+    }
+    return;
+  }
+  // 主軸
+  // 主軸は暗く細く。ここが明るいと、どのカードにも同じ位置に明るい茶色の点が出て
+  // 「格子状のサーモンの点」に見える（批評 R6 の 5 位③）
+  ctx.strokeStyle = "rgb(36, 29, 19)";
+  ctx.lineWidth = size * 0.012;
+  ctx.beginPath();
+  ctx.moveTo(cx0, cy0);
+  ctx.lineTo(cx0 + len, cy0 + (kind === "side" ? size * 0.05 : 0));
+  ctx.stroke();
+  const n = kind === "top" ? 13 : 12;
+  for (let i = 0; i < n; i++) {
+    const t = (i + 0.3) / n;
+    const x = cx0 + len * t;
+    const y = cy0 + (kind === "side" ? size * 0.05 * t : 0);
+    const dark = 0.35 + 0.65 * t; // 幹側ほど暗い
+    if (kind === "top") {
+      const l = size * (0.40 - 0.27 * t) * (0.7 + 0.6 * r());
+      const spread = 0.7 + 0.3 * r();
+      drawTwig(ctx, r, x, y, -spread - 0.2 * (1 - t), l, size * 0.038, dark, 0.5 + 0.3 * (r() - 0.5));
+      drawTwig(ctx, r, x, y, spread + 0.2 * (1 - t), l * (0.75 + 0.5 * r()), size * 0.038, dark, 0.5 + 0.3 * (r() - 0.5));
+      if (i % 3 === 0) drawTwig(ctx, r, x, y, (r() - 0.5) * 0.5, l * 0.45, size * 0.034, dark, 0.5);
+    } else {
+      // 垂れ下がる小枝（横から見た枝: 下へ長く、上へ短く。先端ほど短い）
+      const l = size * (0.40 - 0.25 * t) * (0.65 + 0.7 * r());
+      drawTwig(ctx, r, x, y, 1.15 + 0.3 * r(), l, size * 0.036, dark, 0.5);
+      drawTwig(ctx, r, x, y, 1.85 + 0.3 * r(), l * (0.6 + 0.5 * r()), size * 0.036, dark, 0.5);
+      drawTwig(ctx, r, x, y, 0.55 + 0.35 * r(), l * (0.5 + 0.4 * r()), size * 0.033, dark, 0.5);
+      if (i % 2 === 0) drawTwig(ctx, r, x, y, -0.75 - 0.3 * r(), l * 0.32, size * 0.03, dark, 0.5);
+    }
+  }
+  // 先端の小枝
+  const tipAng = kind === "side" ? 0.35 : 0;
+  drawTwig(ctx, r, cx0 + len * 0.93, cy0, tipAng, size * 0.09, size * 0.045, 1.0, 0.6);
+}
+
+/**
+ * 針葉カードのアトラス（RGBA・sRGB）。返る texture の colorSpace は sRGB。
+ *
+ * `mipDense` で**ミップの詰め方を 2 通り**作り分ける。同じ絵の 2 枚を使い分けるのが要点:
+ *
+ * - `true`（**メッシュの木が使う**）: 段ごとに 1.6 倍ずつ被覆率を詰める。カードが 2 段目で
+ *   ほぼ不透明になるので、20〜60m の木の樹冠に空が 1px 抜けない（`cloudy_side` のピンホール）。
+ * - `false`（**インポスターを焼くときだけ使う**）: 0〜4 段は被覆率をそのまま保つ。
+ *   焼くとき（コマ 252px ＝ カードが 30px ＝ ミップ 3.5 段）にカードが不透明だと、
+ *   焼き上がる木の輪郭が「上から下まで同じ幅で頭の丸い塊」になる（400m〜1.5km の「緑の杭」）。
+ *
+ * 1 枚で両方は満たせない。焼き込みと表示は見る縮尺が同じなのに、要る性質が逆だから。
+ */
+export function makeNeedleAtlas(cell = 256, mipDense = true): THREE.CanvasTexture {
+  const size = cell * NEEDLE_ATLAS_CELLS;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d")!;
+  ctx.clearRect(0, 0, size, size);
+  ctx.lineCap = "round";
+  const kinds: ("top" | "side" | "spire")[] = ["top", "side", "spire", "top"];
+  for (let i = 0; i < 4; i++) {
+    const cx = (i % NEEDLE_ATLAS_CELLS) * cell, cy = Math.floor(i / NEEDLE_ATLAS_CELLS) * cell;
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.beginPath();
+    ctx.rect(0, 0, cell, cell);
+    ctx.clip();
+    drawSpray(ctx, 11 + i * 3, cell, kinds[i]);
+    ctx.restore();
+  }
+  // ミップで縁が痩せないように、不透明画素の色を透明側へ 1px にじませる（アルファはそのまま）
+  const img = ctx.getImageData(0, 0, size, size);
+  const d = img.data;
+  const out = new Uint8ClampedArray(d);
+  for (let y = 1; y < size - 1; y++) {
+    for (let x = 1; x < size - 1; x++) {
+      const k = (y * size + x) * 4;
+      if (d[k + 3] > 8) continue;
+      let rr = 0, gg = 0, bb = 0, n = 0;
+      for (let oy = -1; oy <= 1; oy++) {
+        for (let ox = -1; ox <= 1; ox++) {
+          const j = ((y + oy) * size + (x + ox)) * 4;
+          if (d[j + 3] > 8) {
+            rr += d[j];
+            gg += d[j + 1];
+            bb += d[j + 2];
+            n++;
+          }
+        }
+      }
+      if (n > 0) {
+        out[k] = rr / n;
+        out[k + 1] = gg / n;
+        out[k + 2] = bb / n;
+      }
+    }
+  }
+  img.data.set(out);
+  // ここでアルファを膨張させてはいけない。針と針の隙間が埋まって、
+  // 1 枚のカードが「すりガラスの半透明な板」に見える（統合担当の指摘・R6）。
+  // ピンホールは穴を塞ぐのではなく、カードを小さく・多くして葉を増やすことで減らす
+  dilateAlpha(img, 1);
+  // アルファの縁だけをぼかす（膨張ではない）。面は触らないので「すりガラスの板」にはならず、
+  // 縁が中間値になることで MSAA のアルファ→カバレッジが効き、
+  // カードとカードの間に残る 1px の空の筋が半分の被覆になって白く抜けなくなる
+  blurAlphaEdge(img, 0);
+  ctx.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = THREE.ClampToEdgeWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  // ミップは自分で作る。GL の自動生成（アルファも単純平均）だと、針の隙間で
+  // アルファがカットオフを割って葉に「白いピンホール」が開く（批評 R3 の最重要破綻）
+  tex.mipmaps = buildCoverageMips(img, ALPHA_CUTOFF, mipDense);
+  tex.generateMipmaps = false;
+  tex.anisotropy = 4;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+/** 葉カードのアルファテストのしきい値。ミップ生成と materials の alphaTest はこの値で揃える。 */
+export const ALPHA_CUTOFF = 0.30;
+
+/** アルファだけを 3x3 の平均でぼかす（色は触らない）。縁が中間値になり MSAA が効く。 */
+function blurAlphaEdge(img: ImageData, n: number) {
+  const w = img.width, h = img.height;
+  for (let it = 0; it < n; it++) {
+    const src = new Uint8ClampedArray(img.data);
+    const d = img.data;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        let sum = 0, cnt = 0;
+        for (let oy = -1; oy <= 1; oy++) {
+          const yy = y + oy;
+          if (yy < 0 || yy >= h) continue;
+          for (let ox = -1; ox <= 1; ox++) {
+            const xx = x + ox;
+            if (xx < 0 || xx >= w) continue;
+            sum += src[(yy * w + xx) * 4 + 3];
+            cnt++;
+          }
+        }
+        d[(y * w + x) * 4 + 3] = sum / cnt;
+      }
+    }
+  }
+}
+
+/** アルファを n テクセル膨張（3x3 の最大アルファのテクセルを色ごと採る）。内側の穴を塞ぐ。 */
+function dilateAlpha(img: ImageData, n: number) {
+  const w = img.width, h = img.height;
+  for (let it = 0; it < n; it++) {
+    const src = new Uint8ClampedArray(img.data);
+    const d = img.data;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const k = (y * w + x) * 4;
+        let ba = src[k + 3], bk = k;
+        for (let oy = -1; oy <= 1; oy++) {
+          const yy = y + oy;
+          if (yy < 0 || yy >= h) continue;
+          for (let ox = -1; ox <= 1; ox++) {
+            const xx = x + ox;
+            if (xx < 0 || xx >= w) continue;
+            const j = (yy * w + xx) * 4;
+            if (src[j + 3] > ba) { ba = src[j + 3]; bk = j; }
+          }
+        }
+        d[k] = src[bk];
+        d[k + 1] = src[bk + 1];
+        d[k + 2] = src[bk + 2];
+        d[k + 3] = ba;
+      }
+    }
+  }
+}
+
+/** ImageData を canvas に包む（three の texture.mipmaps は TexImageSource を受ける） */
+function toCanvas(img: ImageData): HTMLCanvasElement {
+  const c = document.createElement("canvas");
+  c.width = img.width;
+  c.height = img.height;
+  c.getContext("2d")!.putImageData(img, 0, 0);
+  return c;
+}
+
+/**
+ * アルファテストの被覆率を保つミップ列を作る。
+ *
+ * 針葉は 1〜2px の線の集まりなので、2x2 の単純平均で縮小するとアルファが 0.5 → 0.25 → …と落ち、
+ * `alphaTest` を割った画素が穴になる（＝葉の面に白い点が開く）。
+ * 各段で「アルファ×s がしきい値を超える画素の割合」が原寸と同じになる s を二分探索して掛ける。
+ * 色はアルファ重み付き平均（透明画素の色を混ぜると縁が暗くなるため）。
+ */
+function buildCoverageMips(level0: ImageData, cutoff: number, dense: boolean): HTMLCanvasElement[] {
+  const cut = cutoff * 255;
+  let cover = 0;
+  for (let i = 3; i < level0.data.length; i += 4) if (level0.data[i] >= cut) cover++;
+  const target = cover / (level0.data.length / 4);
+  const mips: HTMLCanvasElement[] = [toCanvas(level0)];
+  let cur = level0;
+  let lv = 0;
+  while (cur.width > 1 || cur.height > 1) {
+    lv++;
+    const w = Math.max(1, cur.width >> 1), h = Math.max(1, cur.height >> 1);
+    const next = new ImageData(w, h);
+    const sd = cur.data, nd = next.data;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        let r = 0, g = 0, b = 0, a = 0, wsum = 0;
+        for (let oy = 0; oy < 2; oy++) {
+          for (let ox = 0; ox < 2; ox++) {
+            const sx = Math.min(cur.width - 1, x * 2 + ox), sy = Math.min(cur.height - 1, y * 2 + oy);
+            const k = (sy * cur.width + sx) * 4;
+            const av = sd[k + 3];
+            r += sd[k] * av;
+            g += sd[k + 1] * av;
+            b += sd[k + 2] * av;
+            a += av;
+            wsum += av;
+          }
+        }
+        const k = (y * w + x) * 4;
+        if (wsum > 0) {
+          nd[k] = r / wsum;
+          nd[k + 1] = g / wsum;
+          nd[k + 2] = b / wsum;
+        }
+        nd[k + 3] = a / 4;
+      }
+    }
+    // 被覆率が原寸と同じになるようにアルファを持ち上げる。詰め方は 2 通り（上の makeNeedleAtlas を見ること）:
+    //   dense  = メッシュ用。段ごとに 1.6 倍。カードが早く不透明になり、空が 1px 抜けない
+    //   !dense = 焼き込み用。0〜4 段は被覆率のまま。焼いた木の輪郭が円錐になる
+    const targetL = dense
+      ? Math.min(0.985, target * Math.pow(1.6, lv))
+      : Math.min(0.985, target * Math.pow(1.55, Math.max(0, lv - 4)));
+    let lo = 1, hi = 24, s = 1;
+    for (let it = 0; it < 14; it++) {
+      s = (lo + hi) * 0.5;
+      let n = 0;
+      for (let i = 3; i < nd.length; i += 4) if (nd[i] * s >= cut) n++;
+      if (n / (nd.length / 4) < targetL) lo = s;
+      else hi = s;
+    }
+    for (let i = 3; i < nd.length; i += 4) nd[i] = Math.min(255, Math.round(nd[i] * s));
+    mips.push(toCanvas(next));
+    cur = next;
+  }
+  return mips;
+}

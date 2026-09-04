@@ -1,7 +1,7 @@
 // 世界の状態。時刻・太陽・天気・「裏返し」の進み具合。
 // 全モジュールはここを読む。全マテリアルは env.uniforms を共有する（同じオブジェクト参照）。
 import * as THREE from "three";
-import { clamp, smoothstep } from "./noise";
+import { clamp, fbm2, smoothstep } from "./noise";
 import { WORLD, type Heightmap } from "./heightfield";
 
 export type WeatherPresetName = "clear" | "cloudy" | "mist" | "rain" | "storm";
@@ -21,9 +21,25 @@ export type Weather = {
   wetness: number;
   /** 嵐 0..1（雷・強風・暗い空） */
   storm: number;
+  /** 突風 0..1（時間ノイズ。風速が強いほど激しい。天気モジュールが定義、Env.update が毎フレーム計算） */
+  gust: number;
 };
 
-export const WEATHER_PRESETS: Record<WeatherPresetName, Omit<Weather, "windDir" | "wetness">> = {
+/** 稲光の状態（天気モジュールが毎フレーム更新。音・空・地形が読む） */
+export type Lightning = {
+  /** 閃光 0..1（0→1→減衰。複数ストロークでちらつく） */
+  flash: number;
+  /** 直近の落雷の時刻（env.time 秒）。まだ無ければ -1e9 */
+  lastStrikeTime: number;
+  /** 落雷地点（world、y は地面）。稲妻の上端は position.y + cloudHeight */
+  position: THREE.Vector3;
+  /** 落雷の通し番号（新しい落雷で +1。音担当はこれの変化で雷鳴を鳴らす） */
+  strikeIndex: number;
+  /** 稲妻の上端（雲底）の高さ（world y） */
+  cloudHeight: number;
+};
+
+export const WEATHER_PRESETS: Record<WeatherPresetName, Omit<Weather, "windDir" | "wetness" | "gust">> = {
   clear: { cloud: 0.18, rain: 0, fog: 0.22, wind: 2.0, storm: 0 },
   cloudy: { cloud: 0.62, rain: 0, fog: 0.35, wind: 3.5, storm: 0 },
   mist: { cloud: 0.4, rain: 0, fog: 1.0, wind: 0.8, storm: 0 },
@@ -48,9 +64,12 @@ export class Env {
     ...WEATHER_PRESETS.clear,
     windDir: new THREE.Vector2(1, 0.25).normalize(),
     wetness: 0,
+    gust: 0,
   };
   /** 天気の目標（プリセット切替はここに入れて、update で滑らかに寄せる） */
-  weatherTarget: Omit<Weather, "windDir" | "wetness"> = { ...WEATHER_PRESETS.clear };
+  weatherTarget: Omit<Weather, "windDir" | "wetness" | "gust"> = { ...WEATHER_PRESETS.clear };
+  /** 稲光（天気モジュールが更新） */
+  lightning: Lightning = { flash: 0, lastStrikeTime: -1e9, position: new THREE.Vector3(), strikeIndex: -1, cloudHeight: 700 };
 
   /** 裏返し 0..1。flipRadius は「数式の波」が広がった半径（m） */
   flip = 0;
@@ -78,6 +97,8 @@ export class Env {
   tier: QualityTier = "high";
   isMobile = false;
   heightmap!: Heightmap;
+  /** 水中 0..1（カメラが湖面より下）。水モジュールが毎フレーム更新する。ポスト（水中の霧）・音などが読む */
+  underwater = 0;
 
   /** 全マテリアルで共有する uniforms。参照を渡すこと（コピーしない）。 */
   uniforms = {
@@ -100,11 +121,74 @@ export class Env {
     uFog: { value: 0.22 },
     uCloud: { value: 0.18 },
     uStorm: { value: 0 },
+    /** 突風 0..1（uWind.w 相当。植生・水・雨が揺れの強弱に使う） */
+    uGust: { value: 0 },
+    /** 稲光の閃光 0..1（空・地形・霧が一瞬白くなる） */
+    uLightning: { value: 0 },
+    /** 落雷地点（world、y は地面） */
+    uLightningPos: { value: new THREE.Vector3(0, 0, 0) },
     uExposure: { value: 1 },
     /** 地形ハイトマップ。xyzw = (worldSize, 1/worldSize, res, maxHeight) */
     uHeightmap: { value: null as THREE.Texture | null },
     uHeightmapInfo: { value: new THREE.Vector4(WORLD.size, 1 / WORLD.size, 1024, WORLD.maxHeight) },
     uLakeLevel: { value: WORLD.lakeLevel },
+    /** 水中 0..1（水モジュールが更新） */
+    uUnderwater: { value: 0 },
+    /**
+     * 地形担当が起動時に GPU で焼く補助テクスチャ（RGBA8、texel の対応は uHeightmap と同じ）:
+     * rg = 法線 xz（0..1 に符号化）, b = 空の見え方（AO, 谷底で小さい）, a = 谷筋の陰（cavity, 0.5 = 平ら）。
+     * flip_height チャンクの flip_terrainNormalBaked / flip_terrainAO / flip_terrainCavity で読む。
+     */
+    uTerrainAux: { value: null as THREE.Texture | null },
+    /**
+     * 地平角マップ（RGBA8 × 2、1024²）: 8方位（+X から +Z 回りに 45° 刻み。A = 0..3, B = 4..7）の
+     * 地平の仰角 / (π/2)。flip_terrainSunVis(xz, dir) で「山の影」（太陽・月がその地点から見えるか）を出す。
+     * 地形・木・草・水など、どのモジュールも使ってよい。
+     */
+    uTerrainHorizonA: { value: null as THREE.Texture | null },
+    uTerrainHorizonB: { value: null as THREE.Texture | null },
+    /** 高さの3成分（heightfield.ts の Heightmap.parts）。裏返しの「数式の足し算」表示に使う */
+    uHeightParts: { value: null as THREE.Texture | null },
+    /**
+     * 植生マップ（vegetation/vegmap.ts が起動時に焼く。RGBA8、texel の対応は uHeightmap と同じ）:
+     * r = 草の密度（木の根元で薄い）, g = 林の密度, b = 乾き, a = 岩っぽさ。
+     * 木を実際に置いた密度そのものなので、地形の林床の色もこれを見る（別のノイズで判断すると
+     * 「木の下なのに草原の色」になる）。植生モジュールが焼いた直後に入れる。
+     */
+    uVegMap: { value: null as THREE.Texture | null },
+    /** 遠景の太陽の遮蔽（flip_sunOcclusion）が読む植生マップ。core/lighting.ts が uVegMap を毎フレーム挿す
+     *  （草・小石のシェーダが頂点側で uVegMap を自分で宣言しているので、名前を分けて二重宣言を避ける） */
+    uSunVeg: { value: null as THREE.Texture | null },
+    /** 遠景の遮蔽のつまみ（core/lighting.ts が入れる）。
+     *  x = 林の帯を効かせるか 0/1（?dbg=nosunocc で 0）, y = 帯の強さ, z/w = 効き始める距離/効き切る距離（m） */
+    uSunOccParams: { value: new THREE.Vector4(1, 0.88, 35, 110) },
+    // ---- 空モジュール（sky/）が毎フレーム値を入れる。他モジュールは flip_atmosphere チャンクの関数経由で使う ----
+    /** 大気の透過率 LUT（Hillaire 2020。x = 視線の天頂角, y = 高度。RGBA16F 256×64） */
+    uSkyTransLut: { value: null as THREE.Texture | null },
+    /** 空の放射輝度 LUT（x = 太陽相対の方位（√圧縮）, y = 仰角（地平線に密）。雲・太陽円盤なし） */
+    uSkyViewLut: { value: null as THREE.Texture | null },
+    /** 空気遠近 LUT（3D: 方位 × 仰角 × 距離。rgb = 途中で足される散乱光, a = 透過率） */
+    uAerialLut: { value: null as THREE.Texture | null },
+    /** 雲の影（world xz → 0..1。uSkyParams.x が覆う一辺 m、原点中心） */
+    uCloudShadowMap: { value: null as THREE.Texture | null },
+    /** x = 雲影マップの一辺(m), y = 空気遠近 LUT の最大距離(m), z = 靄(haze)の密度(/km), w = 大気モデル上の地表の海抜(km) */
+    uSkyParams: { value: new THREE.Vector4(8192, 32000, 0.03, 0.5) },
+    /** 地表の霧（ミスト）: x = 湖面での密度(/m), y = 高さスケール(m), zw = むらの流れ(m) */
+    uSkyFog: { value: new THREE.Vector4(0, 14, 0, 0) },
+    /** 地表の霧の第2層（湖面に張り付く薄く濃い層）: x = 密度(/m), y = 高さスケール(m), zw = むらの流れ(m) */
+    uSkyFog2: { value: new THREE.Vector4(0, 6, 0, 0) },
+    /** 霧に当たる光（空からの平均放射輝度） */
+    uSkyFogLight: { value: new THREE.Color(0.3, 0.4, 0.55) },
+    // ---- 実験室（engine/lab）のつまみ。**既定は全部 1 ＝ 何も変わらない**。lab/apply.ts が書き込む ----
+    /** 大気: x = ミー散乱の倍率, y = レイリーの倍率, z = オゾンの倍率, w = 予備 */
+    uLabSky: { value: new THREE.Vector4(1, 1, 1, 1) },
+    /** 植生: x = 草の密度の倍率, yzw = 予備 */
+    uLabVeg: { value: new THREE.Vector4(1, 1, 1, 1) },
+    /**
+     * 世界の体格（core/height.ts の worldShape()）のうち、材質が読むもの。シードで決まる。
+     * x = 雪線のずれ(m), y = 岩の露出の倍率, z = 草の乾きのずれ, w = 予備。既定のシードでは (0, 1, 0, 0)
+     */
+    uSeedWorld: { value: new THREE.Vector4(0, 1, 0, 0) },
   };
 
   setWeather(name: WeatherPresetName) {
@@ -140,14 +224,24 @@ export class Env {
     const wetTarget = clamp(w.rain * 1.4, 0, 1);
     const wk = wetTarget > w.wetness ? 1 - Math.exp(-dt * 0.5) : 1 - Math.exp(-dt * 0.03);
     w.wetness += (wetTarget - w.wetness) * wk;
+    // 突風: 時間のノイズ 0..1。風速が強いほど激しく、速く（嵐では更に速い）。決定的（time だけの関数）
+    {
+      const t = this.time * (0.22 + 0.25 * w.storm);
+      const n = fbm2(t, 13.7, 3) * 2.4; // おおよそ [-1, 1] を広げる
+      const raw = clamp(0.5 + 0.5 * n, 0, 1);
+      const strength = smoothstep(1.0, 12.0, w.wind);
+      w.gust = raw * strength;
+    }
 
     // 裏返し: 目標へ寄せつつ、半径を広げる／縮める
     const fk = 1 - Math.exp(-dt * 3.5);
     this.flip += (this.flipTarget - this.flip) * fk;
     const targetRadius = this.flipTarget > 0.5 ? 6000 : 0;
     const speed = 900; // m/s で「数式の波」が広がる
-    if (this.flipRadius < targetRadius) this.flipRadius = Math.min(targetRadius, this.flipRadius + speed * dt);
-    else if (this.flipRadius > targetRadius) this.flipRadius = Math.max(targetRadius, this.flipRadius - speed * 1.6 * dt);
+    if (!this.freeze) {
+      if (this.flipRadius < targetRadius) this.flipRadius = Math.min(targetRadius, this.flipRadius + speed * dt);
+      else if (this.flipRadius > targetRadius) this.flipRadius = Math.max(targetRadius, this.flipRadius - speed * 1.6 * dt);
+    }
 
     // 太陽・月
     Env.sunDirection(this.hour, this.sunDir);
@@ -191,6 +285,10 @@ export class Env {
     u.uFog.value = w.fog;
     u.uCloud.value = w.cloud;
     u.uStorm.value = w.storm;
+    u.uGust.value = w.gust;
+    u.uLightning.value = this.lightning.flash;
+    u.uLightningPos.value.copy(this.lightning.position);
     u.uExposure.value = this.exposure;
+    u.uUnderwater.value = this.underwater;
   }
 }

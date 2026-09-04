@@ -1,0 +1,35 @@
+// 任意の JS を流してから撮る（調査用）。
+//   node tools/shotjs.mjs <出力名> --url "/?shot=golden" --js "window.__flip.weather.group.children[0].visible=false" [--wait 2500] [--w --h --mobile]
+import puppeteer from "puppeteer-core";
+import fs from "node:fs";
+import path from "node:path";
+const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+const argv = process.argv.slice(2);
+const name = argv[0] && !argv[0].startsWith("--") ? argv[0] : "shotjs";
+const flag = (k, d = null) => { const i = argv.indexOf(`--${k}`); if (i < 0) return d; const v = argv[i + 1]; return v === undefined || v.startsWith("--") ? true : v; };
+const OUT = path.resolve(String(flag("out", "shots"))); fs.mkdirSync(OUT, { recursive: true });
+const mobile = !!flag("mobile");
+const W = Number(flag("w", mobile ? 390 : 1600)), H = Number(flag("h", mobile ? 844 : 900)), DPR = Number(flag("dpr", mobile ? 3 : 1));
+const wait = Number(flag("wait", 2500));
+const base = process.env.FLIP_URL ?? "http://localhost:3051";
+const url = base + String(flag("url", "/?shot=golden"));
+const js = String(flag("js", ""));
+const evalOut = String(flag("eval", ""));
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const browser = await puppeteer.launch({ executablePath: CHROME, args: ["--headless=new", "--hide-scrollbars", "--use-angle=metal", "--ignore-gpu-blocklist"], defaultViewport: { width: W, height: H, deviceScaleFactor: DPR, isMobile: mobile, hasTouch: mobile } });
+const page = await browser.newPage();
+if (mobile) await page.setUserAgent("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1");
+const problems = [];
+page.on("console", (m) => { if (/error/i.test(m.type())) problems.push(m.text().slice(0, 300)); });
+page.on("pageerror", (e) => problems.push(String(e).slice(0, 300)));
+await page.goto(url, { waitUntil: "networkidle0", timeout: 120000 });
+await page.waitForFunction(() => window.__flip && window.__flip.ready, { timeout: 120000 });
+await sleep(800);
+if (js) await page.evaluate(js);
+await sleep(wait);
+if (evalOut) console.log(JSON.stringify(await page.evaluate(evalOut)));
+const file = path.join(OUT, `${name}.png`);
+await page.screenshot({ path: file });
+console.log(file);
+await browser.close();
+for (const p of problems) console.log("[err]", p);
