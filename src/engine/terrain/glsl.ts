@@ -80,14 +80,17 @@ vec3 tn_gnoised(vec2 p){
 // 間隔が画素より細かくなったら消す（潰れて面が白くならないように）
 // 画素幅で太さを決める線。値の幅（tn_line）で決めると、距離と傾きで太さが変わって
 // 「主線 3px / 副線 1px」の 4:1 が画の中で消えてしまう（批評R2→R3 で未達だった原因）
-float tn_linePx(float v, float px){
+float tn_linePx(float v, float px, float aaPx){
   float d = max(fwidth(v), 1e-5);
   float f = abs(fract(v) - 0.5);
   float w = min(px * d * 0.5, 0.42);
-  float aa = d * 0.30;                          // にじみは 0.6 画素。2d だと主線 5px / 副線 3px になり 4:1 が潰れる
+  // にじみは線ごとに変える。両方 0.6 画素だと 3px と 1px が 3.6px と 1.6px になり、
+  // 比が 2.25:1 まで潰れる（批評R2〜R7 で 5 ラウンド「4:1 になっていない」と言われた正体）
+  float aa = d * aaPx;
   float l = smoothstep(0.5 - w - aa, 0.5 - w + aa, f);
   return l * (1.0 - smoothstep(0.30, 0.70, d)); // 間隔が 1.5px を切ったら消す（潰れて面が白くなる）
 }
+float tn_linePx(float v, float px){ return tn_linePx(v, px, 0.30); }
 float tn_line(float v, float w){
   float d = max(fwidth(v), 1e-5);
   float f = abs(fract(v) - 0.5);
@@ -774,8 +777,10 @@ if (uFlipRadius > 0.001) {
   // 5m 間隔で同じ太さだと「バーコード」に見える
   // 主線 3px α0.9 / 副線 1px α0.35 の 4:1。副線は 200m で消していたので遠景に主線しか無く、
   // 「全部同じ太さ」に見えていた（批評R2〜R6 で 5 回指摘）。10m 間隔は 2km 先でも 8px あるので残す
-  float cMinor = tn_linePx(tH / 10.0, 1.0) * (1.0 - smoothstep(1600.0, 2600.0, tDist));
-  float cMajor = tn_linePx(tH / 50.0, 3.0);
+  // 主線 3.4px + にじみ 0.6 = 4.0px / 副線 0.75px + にじみ 0.3 = 1.05px ＝ 太さの比 3.8:1。
+  // 副線は遠景で画素を切って消えるが、それは正しい（潰れて面が白くなるより良い）
+  float cMinor = tn_linePx(tH / 10.0, 0.75, 0.15) * (1.0 - smoothstep(1600.0, 2600.0, tDist));
+  float cMajor = tn_linePx(tH / 50.0, 3.40, 0.30);
   // 成分の族はさらに細く（合計の等高線を邪魔しない）
   float lm = tn_linePx(pm / 20.0, 1.2) * smoothstep(0.5, 3.0, pm) * midR;
   float lb = tn_linePx(pb / 8.0, 1.0) * nearR;
