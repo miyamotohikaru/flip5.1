@@ -65,7 +65,9 @@ URL パラメータ（`src/engine/core/params.ts`）:
 
 **切り分け用（バグの担当を決める前に必ず通す）:**
 `?dbg=noveg` 草も木も出さない ／ `nograss` ／ `notrees` ／ `imponly` 遠景の板だけ ／ `norocks` ／
-`nosunocc` 地平の遮蔽なし ／ `noshadow` ／ `noref` 映り込みなし ／ `nocopy` ／ `notrans` ／ `nopost` ポスト前の絵。
+`nosunocc` 地平の遮蔽なし ／ `noshadow` ／ `noref` 映り込みなし ／ `nocopy` ／ `notrans` ／ `nopost` ポスト前の絵 ／
+`noshore` 濡れ砂のデカールだけ止める ／ `nochop` 近景のうねりだけ止める ／ `nosun` 直射をゼロに ／ `noamb` 半球光と環境マップをゼロに。
+`?wdbg=1..11` 水の層別（1 水の画素・2 水の色・3 映り込みだけ・4 屈折の元・10 近景のうねり・11 映り込みのぼけの折れ目）。
 `?tdbg=1..14` 地形の層別（`terrain/glsl.ts` の `uTerrainDebug`）:
 1 太陽の見え方 ／ 2 AO ／ 3 法線 ／ 4 cavity ／ 5 地平角 ／ 6 影なし ／ 7 林床・土・ガレ ／
 8 地色だけ ／ 9 細部なし ／ 12 砂・土・ガレのマスク ／ **13 距離帯** ／ **14 画素の足跡** ／
