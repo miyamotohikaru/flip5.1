@@ -112,21 +112,25 @@ vec3 tn_cell(vec2 p){
   }
   return vec3(sqrt(f1), sqrt(f2), id);
 }
-// 細胞ノイズ（中心へのベクトルつき）: xy = 最近傍点への向き（正規化前）, z = 距離, w = セル id。
-// 小岩の「丸み」を法線で出すのに要る（距離だけでは向きが分からない）
+// 細胞ノイズ（中心へのベクトルつき）: xy = 最近傍点への向き（正規化前）, z = F1, w = F2。
+// 小岩の「丸み」を法線で出すのに要る（距離だけでは向きが分からない）。
+// F2 も返すのは、石の半径を「隣の点までの半分」に抑えて、
+// 丸みの途中で細胞の境に切られて縁が直線になるのを防ぐため。
+// 個体 id は呼ぶ側で floor(p + xy)（＝特徴点の属する格子）から引ける
 vec4 tn_cellv(vec2 p){
   vec2 i = floor(p), f = fract(p);
-  float f1 = 8.0, id = 0.0;
+  float f1 = 8.0, f2 = 8.0;
   vec2 rb = vec2(0.0);
   for (int y = -1; y <= 1; y++) {
     for (int x = -1; x <= 1; x++) {
       vec2 g = vec2(float(x), float(y));
       vec2 r = g + flip_hash22(i + g) - f;
       float d = dot(r, r);
-      if (d < f1) { f1 = d; id = flip_hash12(i + g); rb = r; }
+      if (d < f1) { f2 = f1; f1 = d; rb = r; }
+      else if (d < f2) { f2 = d; }
     }
   }
-  return vec4(rb, sqrt(f1), id);
+  return vec4(rb, sqrt(f1), sqrt(f2));
 }
 // 倒木: cell（m）ごとの格子に 1 本ずつ、向き・長さ・太さを乱数で決めた線分。
 // x = 芯からの距離を半径で割った値（0 が芯、1 が縁）, y = 個体 id, z = 芯からの符号つき横位置（半径単位）,
@@ -681,15 +685,24 @@ if (fObj > 0.02) {
     tCol = mix(tCol, bark * (0.55 + 0.85 * bs), logM);
     tRoughLog = logM;
   }
-  // 小岩（λ1.1m の細胞の 25%、直径 22〜44cm）。丸みは中心へのベクトルから
-  vec4 rk = tn_cellv(tXZ * 0.9 + 19.0);
-  float rr = 0.10 + 0.10 * fract(rk.w * 5.0);
-  float rockS = (1.0 - smoothstep(rr * 0.55, rr, rk.z)) * step(0.75, rk.w) * fObj;
+  // 小岩（λ1.1m の細胞の 25%、直径 20〜40cm）。丸みは中心へのベクトルから。
+  // 半径は「隣の特徴点までの半分」で頭打ちにする。ここを外すと丸みの途中で細胞の境に切られ、
+  // 縁が直線で落ちて「白い染み」に見える（批評R7 の後の指摘）
+  vec2 rkp = tXZ * 0.9 + 19.0;
+  vec4 rk = tn_cellv(rkp);
+  float rid = flip_hash12(floor(rkp + rk.xy));            // 個体 id（特徴点の格子から）
+  float rr = min(0.09 + 0.09 * fract(rid * 5.0), 0.44 * rk.w);
+  float rockS = (1.0 - smoothstep(rr * 0.60, rr, rk.z)) * step(0.75, rid) * fObj;
   if (rockS > 0.01) {
     float q = clamp(rk.z / max(rr, 1e-3), 0.0, 1.0);
-    og += normalize(rk.xy + 1e-5) * (1.2 * q * q * rockS);
-    vec3 stone = vec3(0.200, 0.196, 0.183) * (0.45 + 1.1 * fract(rk.w * 17.0));
-    stone = mix(stone, vec3(0.050, 0.076, 0.034), 0.5 * smoothstep(0.45, 0.9, fract(rk.w * 41.0))); // 苔
+    og += normalize(rk.xy + 1e-5) * (0.85 * q * q * rockS); // 傾けすぎると縁が光って「白い点」に戻る
+    // 林床の石は苔と落ち葉をかぶっていて、周りの腐植より明るくない。
+    // 地色そのものに比を掛けて作り、粒まで込みで周りの 0.48〜0.94 倍に収める（1 を超えさせない）
+    float fl = max(dot(tCol, vec3(0.2126, 0.7152, 0.0722)), 1e-4);
+    vec3 stone = vec3(1.04, 1.00, 0.94) * fl * (0.55 + 0.30 * fract(rid * 17.0));
+    stone = mix(stone, vec3(0.9, 1.25, 0.75) * fl * 0.62, 0.55 * smoothstep(0.45, 0.9, fract(rid * 41.0))); // 苔
+    // 面の粒（λ5cm）。丸みの陰影だけだと「面」に見える
+    stone *= 0.88 + 0.22 * flip_vnoise(tXZ * 20.0 + 3.0);
     tCol = mix(tCol, stone, rockS);
   }
   // 根張り: 木の根元（植生マップ r = 草の密度が落ちている所）に、地表を這う畝
