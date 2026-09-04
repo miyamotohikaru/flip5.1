@@ -159,7 +159,7 @@ export function buildConifer(v: TreeVariant, lod: 0 | 1): TreeGeo {
       // 枝は 50〜66° 垂れるので水平の届きは枝長のおよそ半分しかない。
       // 実行時にこれを 0.34 まで太らせたら、中景の木が「なめらかな薄緑の円錐」になった。
       // **焼き込みだけ 3.4 倍**にして実効 0.476×L で樹冠の内側を埋める（下の VEG_BAKE）
-      const rr = v.lmax * H * (1 - 0.97 * Math.pow(u, 1.02)) * 0.14 * (1 - Math.pow(u, 6));
+      const rr = v.lmax * H * (1 - 0.97 * Math.pow(u, 1.02)) * 0.44 * (1 - Math.pow(u, 6));
       for (let k = 0; k <= shellSeg; k++) {
         const a = (k / shellSeg) * Math.PI * 2;
         const ca = Math.cos(a), sa = Math.sin(a);
@@ -291,8 +291,10 @@ export function buildConifer(v: TreeVariant, lod: 0 | 1): TreeGeo {
         const side = new THREE.Vector3().crossVectors(dc, up).normalize();
         dc.applyAxisAngle(side, -(0.45 + 0.25 * rnd())).normalize();
         // 幹に沿って垂れる 3 枚は一回り大きく。ここが小さいと幹が上から下まで
-        // 1 本のピンクの棒として見通せる（批評 R6 の 6 番）
-        inner = 1.38;
+        // 1 本のピンクの棒として見通せる（批評 R6 の 6 番）。
+        // さらに、樹冠の**内側**をこの 3 枚で埋める。ここが薄いと近景の木の樹冠の中に
+        // 空が 3〜10px の白い塊として点々と抜ける（`cloudy_side` のピンホール 248 個）
+        inner = 1.85;
       }
       // 幅方向は「下」。カードごとに捻りを変えて、平らな面が揃わないようにする
       let dn = new THREE.Vector3().crossVectors(new THREE.Vector3().crossVectors(dc, up).normalize(), dc).normalize();
@@ -303,6 +305,8 @@ export function buildConifer(v: TreeVariant, lod: 0 | 1): TreeGeo {
       // 3 つのコマに散らし、さらに半分は上下を反転して同じ模様が並ばないようにする
       const cr = rnd();
       const cell = nCards === 1 ? 1 : cr < 0.46 ? 1 : cr < 0.73 ? 0 : 3;
+      // 幅を 1.10·L に広げてみたが、コマの上下の透明な余白まで引くことになり
+      // ピンホールが 168 → 180 に**増えた**ので戻した
       let v0 = cell === 1 ? 0.34 : 0.16, v1 = cell === 1 ? 0.94 : 0.88;
       if (rnd() < 0.5) { const t = v0; v0 = v1; v1 = t; }
       // 幅は長さの 0.62 倍。ほぼ正方形（0.98 倍）だとアトラスの絵が縦に 1.6 倍伸びて
@@ -407,7 +411,7 @@ void veg_tree(out vec3 p, out vec3 n){
   // 遠いカードだけアルファを持ち上げる（＝しきい値を 0.30 → 0.19 に下げるのと同じ）。
   // カードとカードの間に残る 1〜2px の空の穴が塞がる。7m 以内は素通しなので
   // 近景が「板」に戻ることはない（批評 R6 のピンホール代案 1）
-  vAlphaK = 1.0 + 1.15 * smoothstep(7.0, 40.0, dist);
+  vAlphaK = 1.0 + 0.60 * smoothstep(7.0, 40.0, dist);
   #ifdef VEG_BAKE
   vAlphaK = 1.0;
   #endif
@@ -429,7 +433,7 @@ void veg_tree(out vec3 p, out vec3 n){
   #ifdef VEG_BAKE
   if (false) {
   #else
-  if (aData.x > 1.5 && dist < 14.0) {
+  if (aData.x > 1.5 && dist < 6.0) {
   #endif
     p = aAxis;
     n = vec3(0.0, 1.0, 0.0);
@@ -446,14 +450,14 @@ void veg_tree(out vec3 p, out vec3 n){
   // 遠景で細いと葉と葉の 1px の隙間から空が抜けて白い点（ピンホール）になる。
   // **1.0 を超えさせないこと**（0.14×1.3 = 0.182×L が上限。枝の水平の届きは 0.59〜0.87×L）
   #ifndef VEG_BAKE
-  if (aData.x > 1.5) lp = aAxis + (lp - aAxis) * mix(0.55, 1.30, smoothstep(9.0, 18.0, dist));
+  if (aData.x > 1.5) lp = aAxis + (lp - aAxis) * mix(0.75, 1.10, smoothstep(9.0, 18.0, dist));
   #endif
   #ifdef VEG_BAKE
   // 焼き込みのときは殻を**細らせる**。殻は 8 面のなめらかな円錐なので、
   // 枝の水平の届き（0.62〜0.87×L）に並ぶ太さで焼くと、殻が輪郭を決めてしまい、
   // 遠景の木が**縁のなめらかな三角形（クリスマスツリーの型抜き）**になる。
   // 輪郭はカードが決め、殻は内側を埋めるだけにする
-  if (aData.x > 1.5) lp = aAxis + (lp - aAxis) * 3.4;
+  if (aData.x > 1.5) lp = aAxis + (lp - aAxis) * 1.08;
   #endif
   float hN = clamp(lp.y / uTreeH, 0.0, 1.0);
   vec2 wd = veg_windDir();
@@ -549,10 +553,14 @@ vec4 veg_treeAlbedo(out float relief){
     // **1 色の面にしない。** 殻は 8 面のなめらかな円錐なので、針葉の隙間から見えたときに
     // 「アイスクリームのコーン」として読めてしまう。針葉と同じ細かさのむらを乗せて、
     // 見えても「葉の奥のざらざらした暗がり」に見えるようにする
-    float shellM = flip_vnoise(vBark * 26.0) * 0.62 + flip_vnoise(vBark * 78.0) * 0.38;
+    float shellM = flip_vnoise(vBark * 11.0) * 0.60 + flip_vnoise(vBark * 31.0) * 0.40;
     relief = shellM;
     vec3 deep = vec3(0.030, 0.066, 0.030) * (0.8 + 0.4 * flip_hash11(vTree.w * 5.0 + 1.0));
-    return vec4(deep * (0.5 + 1.05 * shellM), 1.0);
+    // **穴あきの殻**。半径を 0.14 → 0.42×L に広げて樹冠の中の空の抜けを塞ぐが、
+    // 面のままだと「なめらかな緑の円錐」になる。ノイズでアルファを抜いて、
+    // 輪郭がぎざぎざの「葉の奥の暗がり」にする
+    float shellA = smoothstep(0.04, 0.34, shellM + 0.10);
+    return vec4(deep * (0.5 + 1.05 * shellM), shellA);
   }
   if (vTree.z < 0.5) return vec4(veg_bark(vBark, vTree.w, relief), 1.0);
   // アルファのミップは textures.ts が被覆率を保つように作ってあるので、ここでは持ち上げない

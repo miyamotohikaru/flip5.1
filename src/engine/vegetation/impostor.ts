@@ -344,6 +344,7 @@ export function makeImpostorMaterial(env: Env, lighting: Lighting, atlas: Impost
         varying vec3 vFace;
         varying float vSeed;
         varying float vImpFar;
+        varying float vImpDark;
 `,
         "imp vs common",
       );
@@ -365,6 +366,8 @@ export function makeImpostorMaterial(env: Env, lighting: Lighting, atlas: Impost
         scl *= 1.0 + 0.30 * thin;
         // 遠景の度合い。0 = 近景（r0 のすぐ外）/ 1 = 視程の端
         vImpFar = smoothstep(uImp.z * 0.22, uImp.z * 0.85, dist);
+        // 800m 以遠を地形より暗くするための係数（視程比ではなく**絶対距離**で決める）
+        vImpDark = smoothstep(250.0, 900.0, dist);
         int vi = int(aVar + 0.5);
         vec4 fr = uFrames[vi];
         vec2 toCam2 = cameraPosition.xz - root.xz;
@@ -375,7 +378,7 @@ export function makeImpostorMaterial(env: Env, lighting: Lighting, atlas: Impost
         float W = fr.x * scl * (0.70 + 0.66 * flip_hash11(seed * 23.0 + 9.0));
         float Hh = fr.y * scl;
         // 遠いほど横に広げて、隣の木と輪郭がつながった「林の塊」にする（1 本ずつ立てない）
-        W *= 1.0 + 1.15 * vImpFar;
+        W *= 1.0 + 2.30 * vImpFar;
         vec2 wd = veg_windDir();
         float gust = veg_gust(root.xz);
         float sway = (0.004 + 0.010 * uWind.z) * gust * Hh * position.y * position.y;
@@ -428,6 +431,7 @@ export function makeImpostorMaterial(env: Env, lighting: Lighting, atlas: Impost
         varying vec3 vFace;
         varying float vSeed;
         varying float vImpFar;
+        varying float vImpDark;
         vec2 veg_impUv(float c, float row){
           float col = vImp2.z * uAtlasN2.x + mod(c, uAtlasN2.x);
           // コマの縁から 2% 内側までしか引かない（余白の中で止める）
@@ -457,7 +461,7 @@ export function makeImpostorMaterial(env: Env, lighting: Lighting, atlas: Impost
           // 「幽霊」になる。本物の針葉樹の樹冠は奥行きがあって 8〜9 割の光を止めるので、
           // 「重なった層」として被覆率を持ち上げる（1-(1-a)^n）。**縁の薄いところは薄いまま**なので
           // 細り・尖った梢は消えない
-          float cov = 1.0 - pow(1.0 - a, 3.0);
+          float cov = 1.0 - pow(1.0 - a, 6.0);
           // L=0.7（1.6 テクセル/画素）から L=2（4 テクセル/画素）にかけて被覆率へ渡す
           return mix(sharp, cov, smoothstep(0.7, 2.0, L));
         }
@@ -494,7 +498,9 @@ export function makeImpostorMaterial(env: Env, lighting: Lighting, atlas: Impost
             vec3 tint = mix(vec3(1.08, 1.0, 0.78), vec3(0.82, 1.0, 1.2), vSeed) * (0.8 + 0.4 * flip_hash11(vSeed * 3.0 + 0.2));
             // 遠景の林は「上から陽の当たる樹冠の塊」。ただし**地形より明るくしない**。
             // 明るくすると遠いほど目立って「緑のクレヨンで引いた線」になる（批評R7 の 7 番②）
-            diffuseColor = vec4(alb.rgb * tint * (1.0 - 0.10 * vImpFar), alb.a);
+            // **遠景ほど暗く。** 木が地形より明るいと、遠いほど目立って「緑の棒」に読める。
+            // 目標は木÷地形の輝度 0.75 以下（夜は 0.6 以下）
+            diffuseColor = vec4(alb.rgb * tint * (1.0 - 0.55 * vImpDark), alb.a);
             vec3 nl = nrm.xyz * 2.0 - 1.0;
             impN = normalize(vRight * nl.x + vec3(0.0, 1.0, 0.0) * nl.y + vFace * nl.z);
           }
