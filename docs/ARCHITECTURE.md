@@ -221,3 +221,8 @@ mid 60.1fps / CPU 2.2ms / 98 calls / 47万 tris / ヒープ 43MB、JS は gzip �
 
 - **湖面の雨の波紋は天気側で実装済み**（`weather.rain.ripples`）。水担当が法線リングを入れるときは
   `weather.rain.ripples.visible = false` で天気側を止めること（二重描画になる）。2026-09-04 天気担当より。
+  **R8 で作り直した**（`weather/ripples.ts`）: 板を撒くのをやめ、画面いっぱいの 1 パスで
+  視線と湖面（y = `uLakeLevel`）の交点を出し、格子のセルごとに 1 つの波紋を画素シェーダで評価する。
+  `LAYER.TRANSPARENT` の `renderOrder = 6`（水面 0 の後、霧の合成 10 の前）、`depthTest = false` で
+  `tWxDepth` を自分で見て手前の物に隠す。合成は `dst *= 1 + m`（`CustomBlending` の `DstColor`+`One`）で、
+  水の色に明暗を掛けるだけ＝色相を動かさない。`visible = false` は毎フレーム書き戻さず尊重する。
